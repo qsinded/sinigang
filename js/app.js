@@ -91,7 +91,41 @@ function shuffleAll() {
   }
   cur.ans = {}; wipe(); save(); quiz(); scrollTo(0, 0);
 }
-function open(r) { cur = r; const ts = Object.keys(TABS).filter(k => r.items.some(i => i.type === k)); tab = ts[0]; quiz(); }
+function open(r) { cur = r; const ts = Object.keys(TABS).filter(k => r.items.some(i => i.type === k)); tab = ts[0]; r.flashKnown ||= []; quiz(); }
+
+// Turn generated reviewer questions into front/back study cards. Progress is saved with the reviewer.
+let flashIndex = 0, flashRevealed = false;
+function flashAnswer(it) {
+  if (it.type === 'mc') return it.options[it.answer] || '';
+  if (it.type === 'id') return it.answer || '';
+  return (it.items || []).join(', ');
+}
+function flipcards() {
+  const r = cur; if (!r) return;
+  const items = r.items || [];
+  if (!items.length) { quiz(); return; }
+  flashIndex = Math.max(0, Math.min(flashIndex, items.length - 1));
+  const it = items[flashIndex];
+  const known = new Set(r.flashKnown || []);
+  const face = flashRevealed
+    ? h('div', { class: 'flip-face answer-face' }, h('div', { class: 'k' }, 'ANSWER'), h('div', { class: 'flip-copy' }, flashAnswer(it)), h('p', { class: 'flip-source' }, it.exp ? 'From your reviewer notes: ' + it.exp : ''))
+    : h('div', { class: 'flip-face question-face' }, h('div', { class: 'k' }, 'QUESTION · TAP TO FLIP'), h('div', { class: 'flip-copy' }, it.q));
+  const node = h('div', null,
+    h('div', { class: 'row' }, h('button', { class: 'btn alt', onclick: () => { home(); } }, '← Back'), h('span', { class: 'k' }, 'FLASHCARDS')),
+    h('h1', null, r.title),
+    h('p', { class: 'sub' }, 'Try to answer from memory, then flip the card. Mark what you know to track your progress.'),
+    h('div', { class: 'flip-progress-row' }, h('span', { class: 'mono' }, (flashIndex + 1) + ' / ' + items.length), h('span', { class: 'k' }, known.size + ' mastered'), h('div', { class: 'bar' }, h('i', { style: 'width:' + (known.size / items.length * 100) + '%' }))),
+    h('button', { class: 'flip-card' + (flashRevealed ? ' revealed' : ''), 'aria-label': flashRevealed ? 'Answer side, click to show question' : 'Question side, click to reveal answer', onclick: () => { flashRevealed = !flashRevealed; flipcards(); } }, face, h('span', { class: 'flip-hint' }, flashRevealed ? 'Click to see question' : 'Click to reveal answer')),
+    h('div', { class: 'row flip-actions' },
+      h('button', { class: 'btn alt', disabled: flashIndex === 0 ? '' : null, onclick: () => { flashIndex--; flashRevealed = false; flipcards(); } }, '← Previous'),
+      h('button', { class: 'btn alt', onclick: () => { flashRevealed = !flashRevealed; flipcards(); } }, flashRevealed ? 'Show question' : 'Reveal answer'),
+      h('button', { class: 'btn', onclick: () => { const set = new Set(r.flashKnown || []); set.add(it.id); r.flashKnown = [...set]; save(); nextFlash(items); } }, '✓ I knew it'),
+      h('button', { class: 'btn alt', onclick: () => { r.flashKnown = (r.flashKnown || []).filter(id => id !== it.id); save(); nextFlash(items); } }, '↻ Review again'),
+      h('button', { class: 'btn alt', disabled: flashIndex >= items.length - 1 ? '' : null, onclick: () => { flashIndex++; flashRevealed = false; flipcards(); } }, 'Next →')),
+    h('p', { class: 'k flip-footnote' }, 'Tip: use “I knew it” only when you recalled the answer before flipping.'));
+  draw(node);
+}
+function nextFlash(items) { flashIndex = flashIndex < items.length - 1 ? flashIndex + 1 : 0; flashRevealed = false; flipcards(); }
 
 function answer(it, val) {
   let ok, exp;
@@ -117,7 +151,8 @@ function quiz() {
       h('span', { class: 'k' }, 'correct so far · ' + n + ' items'),
       h('div', { class: 'bar' }, h('i', { style: 'width:' + (n ? total / n * 100 : 0) + '%' }))),
     h('div', { class: 'tabs' }, ts.map(k => h('button', { class: 'tab' + (k === tab ? ' on' : ''), onclick: () => { tab = k; quiz(); scrollTo(0, 0); } },
-      TABS[k] + ' ', h('span', { class: 'k' }, good(r.items.filter(i => i.type === k)) + '/' + r.items.filter(i => i.type === k).length)))),
+      TABS[k] + ' ', h('span', { class: 'k' }, good(r.items.filter(i => i.type === k)) + '/' + r.items.filter(i => i.type === k).length))),
+      h('button', { class: 'tab', onclick: () => { flashIndex = 0; flashRevealed = false; flipcards(); scrollTo(0, 0); } }, '✦ Flipcards')),
     h('div', { class: 'row' },
       h('button', { class: 'btn', disabled: missed.length ? null : '', onclick: () => clear(missed) }, 'Retry missed (' + missed.length + ')'),
       h('button', { class: 'btn alt', onclick: () => clear(mine) }, 'Reset this part')),
