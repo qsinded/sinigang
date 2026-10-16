@@ -1,8 +1,14 @@
 const app = document.getElementById('app');
 const KEY = 'reviewer_gen_v1';
 let mem = [];
+let saveWarn = ''; // shown to the student when the device cannot store their reviewers
+const STORAGE_FULL = 'Not saved: this device\'s storage is full. Delete a saved reviewer to free space. Your work is kept only until you close this page.';
 const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || mem; } catch (e) { return mem; } };
-const save = () => { try { localStorage.setItem(KEY, JSON.stringify(R)); } catch (e) { mem = R; } };
+const save = () => {
+  try { localStorage.setItem(KEY, JSON.stringify(R)); saveWarn = ''; }
+  catch (e) { mem = R; saveWarn = STORAGE_FULL; }
+};
+const warn = () => saveWarn && h('p', { class: 'err', role: 'alert' }, saveWarn);
 let R = load();
 let cur = null, tab = null, files = [], status = '', err = '', busy = false;
 const draft = {};
@@ -62,6 +68,7 @@ function home() {
     h('div', { class: 'k' }, '; Offline reviewer generator'),
     h('h1', null, 'Reviewer Generator'),
     h('p', { class: 'sub' }, 'Pick a PDF, PowerPoint (.pptx) or text file. The reviewer is built on this device, no internet needed.'),
+    warn(),
     h('div', { class: 'card' },
       h('input', { type: 'file', id: 'file', accept: '.pdf,.pptx,.ppt,.txt,.md,text/plain,application/pdf', multiple: '', onchange: e => { files = [...e.target.files]; home(); } }),
       h('p', { class: 'k' }, files.length ? files.length + ' file(s): ' + files.map(f => f.name).join(', ') : 'No file chosen'),
@@ -89,9 +96,15 @@ function shuffleAll() {
     cur.items = shuffle(cur.items);
     cur.items.forEach(it => { if (it.type === 'mc') { const t = it.options[it.answer]; it.options = shuffle(it.options); it.answer = it.options.indexOf(t); } });
   }
-  cur.ans = {}; wipe(); save(); quiz(); scrollTo(0, 0);
+  // Item ids are rebuilt (type + index), so old "mastered" flashcards would point at different questions.
+  cur.ans = {}; cur.flashKnown = []; flashIndex = 0; flashRevealed = false;
+  wipe(); save(); quiz(); scrollTo(0, 0);
 }
-function open(r) { cur = r; const ts = Object.keys(TABS).filter(k => r.items.some(i => i.type === k)); tab = ts[0]; r.flashKnown ||= []; quiz(); }
+function open(r) {
+  cur = r; const ts = Object.keys(TABS).filter(k => r.items.some(i => i.type === k)); tab = ts[0];
+  r.flashKnown ||= []; flashIndex = 0; flashRevealed = false; // start every reviewer on its first card
+  quiz();
+}
 
 // Turn generated reviewer questions into front/back study cards. Progress is saved with the reviewer.
 let flashIndex = 0, flashRevealed = false;
@@ -107,13 +120,15 @@ function flipcards() {
   flashIndex = Math.max(0, Math.min(flashIndex, items.length - 1));
   const it = items[flashIndex];
   const known = new Set(r.flashKnown || []);
+  // Spans, not divs: a <button> may only contain phrasing content. CSS makes them flex/block.
   const face = flashRevealed
-    ? h('div', { class: 'flip-face answer-face' }, h('div', { class: 'k' }, 'ANSWER'), h('div', { class: 'flip-copy' }, flashAnswer(it)), h('p', { class: 'flip-source' }, it.exp ? 'From your reviewer notes: ' + it.exp : ''))
-    : h('div', { class: 'flip-face question-face' }, h('div', { class: 'k' }, 'QUESTION · TAP TO FLIP'), h('div', { class: 'flip-copy' }, it.q));
+    ? h('span', { class: 'flip-face answer-face' }, h('span', { class: 'k' }, 'ANSWER'), h('span', { class: 'flip-copy' }, flashAnswer(it)), h('span', { class: 'flip-source' }, it.exp ? 'From your reviewer notes: ' + it.exp : ''))
+    : h('span', { class: 'flip-face question-face' }, h('span', { class: 'k' }, 'QUESTION · TAP TO FLIP'), h('span', { class: 'flip-copy' }, it.q));
   const node = h('div', null,
     h('div', { class: 'row' }, h('button', { class: 'btn alt', onclick: () => { home(); } }, '← Back'), h('span', { class: 'k' }, 'FLASHCARDS')),
     h('h1', null, r.title),
     h('p', { class: 'sub' }, 'Try to answer from memory, then flip the card. Mark what you know to track your progress.'),
+    warn(),
     h('div', { class: 'flip-progress-row' }, h('span', { class: 'mono' }, (flashIndex + 1) + ' / ' + items.length), h('span', { class: 'k' }, known.size + ' mastered'), h('div', { class: 'bar' }, h('i', { style: 'width:' + (known.size / items.length * 100) + '%' }))),
     h('button', { class: 'flip-card' + (flashRevealed ? ' revealed' : ''), 'aria-label': flashRevealed ? 'Answer side, click to show question' : 'Question side, click to reveal answer', onclick: () => { flashRevealed = !flashRevealed; flipcards(); } }, face, h('span', { class: 'flip-hint' }, flashRevealed ? 'Click to see question' : 'Click to reveal answer')),
     h('div', { class: 'row flip-actions' },
@@ -147,6 +162,7 @@ function quiz() {
     h('button', { class: 'btn alt', onclick: home }, '← Back'),
     h('h1', null, r.title),
     h('p', { class: 'sub' }, 'Answer each item. You get the result and an explanation right away. Missed items stay marked so you can retry them.'),
+    warn(),
     h('div', { class: 'row' }, h('span', { class: 'mono', style: 'font-size:28px;font-weight:700' }, total + '/' + n),
       h('span', { class: 'k' }, 'correct so far · ' + n + ' items'),
       h('div', { class: 'bar' }, h('i', { style: 'width:' + (n ? total / n * 100 : 0) + '%' }))),
