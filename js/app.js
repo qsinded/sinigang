@@ -22,6 +22,12 @@ function h(tag, p, ...kids) {
   kids.flat().forEach(c => { if (c != null && c !== false) e.append(c.nodeType ? c : document.createTextNode(c)); });
   return e;
 }
+// Header, footer and the screen-reader announcer live outside #app so redraws do not remove them.
+const live = h('p', { class: 'sr', 'aria-live': 'polite' });
+const say = msg => { live.textContent = ''; live.textContent = msg; };
+app.before(h('header', { class: 'site' }, h('nav', { 'aria-label': 'Main' }, h('button', { class: 'btn alt', onclick: () => home() }, 'Home')), live));
+app.after(h('footer', { class: 'site' }, 'Works offline. Progress is saved on this device only. ',
+  h('span', { class: 'keys' }, 'Keys: 1–4 pick an answer, Ctrl+Enter checks a list, ← → cards, Space flips.')));
 function draw(node) { const y = scrollY; app.replaceChildren(node); scrollTo(0, y); }
 
 // Classic scripts, worker runs on the main thread: phone HTML viewers block module imports and Workers.
@@ -63,6 +69,7 @@ async function run() {
 }
 
 function home() {
+  flashing = false;
   const t = document.getElementById('title'), tv = t ? t.value : '';
   const node = h('div', null,
     h('div', { class: 'k' }, '; Offline reviewer generator'),
@@ -76,10 +83,10 @@ function home() {
       h('p', null, h('button', { class: 'btn', disabled: busy || !files.length ? '' : null, onclick: run }, busy ? 'Working…' : 'Generate reviewer')),
       status && h('p', { class: 'k' }, status), err && h('p', { class: 'err' }, err)),
     R.length > 0 && h('div', { class: 'k' }, 'Saved reviewers'),
-    R.map(r => h('div', { class: 'card row' },
+    h('div', { class: 'list' }, R.map(r => h('div', { class: 'card row' },
       h('div', { style: 'flex:1' }, h('b', null, r.title), h('div', { class: 'k' }, r.items.length + ' items · ' + Object.values(r.ans).filter(a => a.ok).length + ' correct')),
       h('button', { class: 'btn', onclick: () => open(r) }, 'Open'),
-      h('button', { class: 'btn alt', onclick: () => { if (confirm('Delete "' + r.title + '"?')) { R = R.filter(x => x !== r); save(); home(); } } }, 'Delete'))));
+      h('button', { class: 'btn alt', onclick: () => { if (confirm('Delete "' + r.title + '"?')) { R = R.filter(x => x !== r); save(); home(); } } }, 'Delete')))));
   cur = null; draw(node);
   const nt = document.getElementById('title'); if (nt) nt.value = tv;
 }
@@ -107,7 +114,7 @@ function open(r) {
 }
 
 // Turn generated reviewer questions into front/back study cards. Progress is saved with the reviewer.
-let flashIndex = 0, flashRevealed = false;
+let flashIndex = 0, flashRevealed = false, flashing = false;
 function flashAnswer(it) {
   if (it.type === 'mc') return it.options[it.answer] || '';
   if (it.type === 'id') return it.answer || '';
@@ -117,6 +124,7 @@ function flipcards() {
   const r = cur; if (!r) return;
   const items = r.items || [];
   if (!items.length) { quiz(); return; }
+  flashing = true;
   flashIndex = Math.max(0, Math.min(flashIndex, items.length - 1));
   const it = items[flashIndex];
   const known = new Set(r.flashKnown || []);
@@ -139,6 +147,7 @@ function flipcards() {
       h('button', { class: 'btn alt', disabled: flashIndex >= items.length - 1 ? '' : null, onclick: () => { flashIndex++; flashRevealed = false; flipcards(); } }, 'Next →')),
     h('p', { class: 'k flip-footnote' }, 'Tip: use “I knew it” only when you recalled the answer before flipping.'));
   draw(node);
+  document.querySelector('.flip-card').focus({ preventScroll: true }); // keep keyboard users on the card after a redraw
 }
 function nextFlash(items) { flashIndex = flashIndex < items.length - 1 ? flashIndex + 1 : 0; flashRevealed = false; flipcards(); }
 
@@ -148,6 +157,9 @@ function answer(it, val) {
   else if (it.type === 'id') { ok = idOk(it.answer, val); exp = it.answer; }
   else { const c = enumCheck(it.items, val); ok = c.ok; exp = it.items.join(', '); }
   cur.ans[it.id] = { val, ok, exp }; save(); quiz();
+  const part = cur.items.filter(i => i.type === tab), done = part.every(i => cur.ans[i.id]);
+  say((ok ? 'Correct. ' : 'Not quite. Answer: ' + exp + '. ') + (done ? 'Part finished: ' + part.filter(i => cur.ans[i.id].ok).length + ' of ' + part.length + ' correct.' : ''));
+  const fb = document.getElementById('fb-' + it.id); if (fb) fb.focus({ preventScroll: true });
 }
 
 function quiz() {
@@ -157,6 +169,7 @@ function quiz() {
   const total = good(r.items), n = r.items.length;
   const mine = r.items.filter(i => i.type === tab);
   const missed = mine.filter(i => r.ans[i.id] && !r.ans[i.id].ok);
+  const done = mine.length > 0 && mine.every(i => r.ans[i.id]), partGood = good(mine);
   const clear = list => { list.forEach(i => delete r.ans[i.id]); save(); quiz(); };
   const node = h('div', null,
     h('button', { class: 'btn alt', onclick: home }, '← Back'),
@@ -174,21 +187,39 @@ function quiz() {
       h('button', { class: 'btn alt', onclick: () => clear(mine) }, 'Reset this part')),
     h('div', { class: 'row', style: 'margin-top:8px' },
       h('button', { class: 'btn alt', onclick: shuffleAll }, r.src ? 'Shuffle · new questions' : 'Shuffle')),
-    mine.map((it, idx) => {
+    h('div', { class: 'items' }, mine.map((it, idx) => {
       const a = r.ans[it.id];
       return h('div', { class: 'item' },
         h('div', { class: 'k' }, 'Q' + (idx + 1) + (a ? ' · ' : ''), a && h('span', { class: a.ok ? 'good' : 'miss' }, a.ok ? 'correct' : 'missed')),
         h('div', { class: 'q' }, it.q),
         it.type === 'mc'
-          ? it.options.map((o, oi) => h('button', { class: 'opt' + (a ? (oi === it.answer ? ' ok' : oi === a.val ? ' bad' : '') : ''), disabled: a ? '' : null, onclick: () => answer(it, oi) }, h('b', null, 'ABCD'[oi]), o))
+          ? it.options.map((o, oi) => h('button', { class: 'opt' + (a ? (oi === it.answer ? ' ok' : oi === a.val ? ' bad' : '') : ''), disabled: a ? '' : null, onclick: () => answer(it, oi) }, h('b', null, 'ABCD'[oi]), o, a && oi === it.answer && h('span', { class: 'mark' }, '✓ Correct answer'), a && oi === a.val && oi !== it.answer && h('span', { class: 'mark' }, '✗ Your answer')))
           : h('div', null,
             it.type === 'enum'
-              ? h('textarea', { rows: 4, placeholder: 'One per line or separated by commas', disabled: a ? '' : null, oninput: e => { draft[it.id] = e.target.value; } }, a ? a.val : draft[it.id] || '')
-              : h('input', { type: 'text', placeholder: 'Your answer', value: a ? a.val : draft[it.id] || '', disabled: a ? '' : null, oninput: e => { draft[it.id] = e.target.value; } }),
+              ? h('textarea', { rows: 4, placeholder: 'One per line or separated by commas', disabled: a ? '' : null, oninput: e => { draft[it.id] = e.target.value; }, onkeydown: e => { if (e.key === 'Enter' && e.ctrlKey) answer(it, draft[it.id] || ''); } }, a ? a.val : draft[it.id] || '')
+              : h('input', { type: 'text', placeholder: 'Your answer', value: a ? a.val : draft[it.id] || '', disabled: a ? '' : null, oninput: e => { draft[it.id] = e.target.value; }, onkeydown: e => { if (e.key === 'Enter') answer(it, draft[it.id] || ''); } }),
             !a && h('p', null, h('button', { class: 'btn', onclick: () => answer(it, draft[it.id] || '') }, 'Check'))),
-        a && h('div', { class: 'fb' + (a.ok ? '' : ' bad') }, h('b', null, a.ok ? 'Correct.' : 'Not quite.'),
+        a && h('div', { class: 'fb' + (a.ok ? '' : ' bad'), id: 'fb-' + it.id, tabindex: '-1' }, h('b', null, a.ok ? 'Correct.' : 'Not quite.'),
           h('div', null, (a.ok ? '' : 'Answer: ' + a.exp + '. ') + 'Source: ' + it.exp)));
-    }));
+    })),
+    done && h('div', { class: 'card done', role: 'status' }, h('b', null, 'Part finished: ' + partGood + ' of ' + mine.length + ' correct (' + Math.round(partGood / mine.length * 100) + '%)'),
+      h('p', null, partGood === mine.length ? 'Perfect. Try another part or the flashcards.' : 'Use "Retry missed" at the top to practice the ones you got wrong.')));
+  flashing = false;
   draw(node);
 }
+
+// Keys for laptops. Typing fields keep their own keys; Enter on a text answer is wired on the field itself.
+document.addEventListener('keydown', e => {
+  if (!cur || e.ctrlKey || e.metaKey || e.altKey) return;
+  const t = e.target.tagName; if (t === 'INPUT' || t === 'TEXTAREA') return;
+  if (flashing) {
+    const last = cur.items.length - 1;
+    if (e.key === 'ArrowRight' && flashIndex < last) { flashIndex++; flashRevealed = false; flipcards(); }
+    else if (e.key === 'ArrowLeft' && flashIndex > 0) { flashIndex--; flashRevealed = false; flipcards(); }
+    else if (e.key === ' ' && t !== 'BUTTON') { e.preventDefault(); flashRevealed = !flashRevealed; flipcards(); }
+    return;
+  }
+  const pick = Number(e.key) - 1, it = tab === 'mc' && cur.items.find(i => i.type === 'mc' && !cur.ans[i.id]);
+  if (it && pick >= 0 && pick < it.options.length) answer(it, pick);
+});
 home();
