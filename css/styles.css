@@ -1,11 +1,17 @@
 :root{--bg:#eef0f4;--ink:#14213d;--mut:#6b7280;--acc:#c28f00;--ok:#1f8a4c;--okbg:#e3f2e8;--bad:#c0392b;--badbg:#fbe9e7;--card:#fff;--line:#d5d9e0;--shadow:#00000012}
-@media(prefers-color-scheme:dark){:root{--bg:#10141c;--ink:#e8ebf2;--mut:#98a1b3;--acc:#e0aa1a;--ok:#4cc17f;--okbg:#14301f;--bad:#ff7b6b;--badbg:#3a1a17;--card:#1a2030;--line:#2c3446;--shadow:#00000040}}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#10141c;--ink:#e8ebf2;--mut:#98a1b3;--acc:#e0aa1a;--ok:#4cc17f;--okbg:#14301f;--bad:#ff7b6b;--badbg:#3a1a17;--card:#1a2030;--line:#2c3446;--shadow:#00000040}}
+:root[data-theme=dark]{--bg:#10141c;--ink:#e8ebf2;--mut:#98a1b3;--acc:#e0aa1a;--ok:#4cc17f;--okbg:#14301f;--bad:#ff7b6b;--badbg:#3a1a17;--card:#1a2030;--line:#2c3446;--shadow:#00000040}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,sans-serif}
 main,.site{max-width:1100px;margin:0 auto;padding:20px 16px 60px}
 .site{padding:12px 16px 0}
 footer.site{padding:0 16px 40px;color:var(--mut);font-size:14px}
 .keys{display:none}
+nav{display:flex;gap:8px;flex-wrap:wrap}
+label{display:flex;align-items:center;gap:8px;min-height:44px;color:var(--mut)}
+select{font:inherit;min-height:44px;padding:0 10px;border:1.5px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink)}
+input[type=checkbox]{width:24px;height:24px;margin:0}
+.ans-print{display:none}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 :focus-visible{outline:3px solid var(--ink);outline-offset:2px}
 .tab:focus-visible{outline-offset:-3px}
@@ -58,3 +64,11 @@ a.l{color:var(--acc);cursor:pointer;text-decoration:underline;background:none;bo
 /* Laptop: wider page, two columns for lists of items. */
 @media(min-width:768px){.items,.list{display:grid;grid-template-columns:1fr 1fr;gap:0 28px;align-items:start}.keys{display:inline}}
 @media(min-width:1024px){main{padding:28px 24px 60px}.site{padding-left:24px;padding-right:24px}h1{font-size:34px}}
+
+@media print{
+:root:root:root{--bg:#fff;--ink:#000;--mut:#333;--card:#fff;--line:#999;--ok:#000;--bad:#000;--okbg:#fff;--badbg:#fff}
+.site,.btn,.tabs,.row,.bar,.fb,.mark,.done,.sub,textarea,input,.err{display:none}
+.items{display:block}.item{break-inside:avoid}
+.opt{border:0;min-height:0;padding:2px 0;background:none}
+.ans-print{display:block;font-weight:700}
+}
