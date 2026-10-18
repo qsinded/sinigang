@@ -9,6 +9,6 @@
 - `js/reviewer-generator.js` — reviewer-generation logic
 - `js/pptx-reader.js` — PowerPoint text-reading logic
 - `js/app.js` — interface and application behavior
-- `tests/check.js` — run `node tests/check.js` to check the generator and the .pptx/.docx readers
+- `tests/check.js` — run `node tests/check.js` to check the generator and the .ppt/.pptx/.docx readers
 
-Supported input: PDF, PowerPoint (.pptx), Word (.docx) and text files. Old .ppt and .doc must be saved as .pptx/.docx or PDF first.
+Supported input: PDF, PowerPoint (.pptx and old .ppt), Word (.docx) and text files. Old .doc must be saved as .docx or PDF first.

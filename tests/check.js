@@ -1,7 +1,7 @@
 // Run: node tests/check.js   (Node 18+, no packages). Checks the generator and the .pptx/.docx readers.
 const assert = require('assert'), zlib = require('zlib');
 const { generate, enumCheck } = require('../js/reviewer-generator.js');
-const { pptxLines, docxLines } = require('../js/pptx-reader.js');
+const { pptxLines, pptLines, docxLines } = require('../js/pptx-reader.js');
 
 // Minimal zip writer (deflate) so the readers are tested on real zip bytes.
 function zip(files) {
@@ -18,7 +18,38 @@ function zip(files) {
 }
 const slide = ps => '<p:sld><p:txBody>' + ps.map(t => '<a:p><a:r><a:t>' + t + '</a:t></a:r></a:p>').join('') + '</p:txBody></p:sld>';
 
+// Minimal OLE2 file holding one stream, small (mini stream) or big (regular sectors), to test both read paths.
+function cfb(stream) {
+  const mini = stream.length < 4096, END = 0xFFFFFFFE, pad = (b, n) => Buffer.concat([b, Buffer.alloc((n - b.length % n) % n)]);
+  const data = pad(stream, mini ? 64 : 512), nUnits = data.length / (mini ? 64 : 512), u32 = a => { const b = Buffer.alloc(512, 0xFF); a.forEach((v, i) => b.writeUInt32LE(v, i * 4)); return b; };
+  const chain = (first, n) => Array.from({ length: n }, (_, i) => i === n - 1 ? END : first + i + 1);
+  const dataSectors = mini ? pad(data, 512) : data;
+  const fat = [0xFFFFFFFD, END, ...(mini ? [END] : []), ...chain(mini ? 3 : 2, Math.ceil(dataSectors.length / 512))];
+  const ent = (name, type, start, size) => { const b = Buffer.alloc(128); b.write(name, 0, 'utf16le'); b.writeUInt16LE((name.length + 1) * 2, 64); b[66] = type; b[67] = 1; b.writeUInt32LE(start, 116); b.writeUInt32LE(size, 120); return b; };
+  const dir = Buffer.concat([ent('Root Entry', 5, mini ? 3 : END, mini ? data.length : 0), ent('PowerPoint Document', 2, mini ? 0 : 2, stream.length), Buffer.alloc(256)]);
+  const head = Buffer.alloc(512); Buffer.from('d0cf11e0a1b11ae1', 'hex').copy(head);
+  head.writeUInt16LE(9, 30); head.writeUInt16LE(6, 32); head.writeUInt32LE(1, 44); head.writeUInt32LE(1, 48); head.writeUInt32LE(4096, 56);
+  head.writeUInt32LE(mini ? 2 : END, 60); head.writeUInt32LE(mini ? 1 : 0, 64); head.writeUInt32LE(END, 68); head.writeUInt32LE(0, 72);
+  head.writeUInt32LE(0, 76); head.fill(0xFF, 80, 512);
+  const miniFat = u32(chain(0, nUnits)), b = Buffer.concat([head, u32(fat), dir, ...(mini ? [miniFat] : []), dataSectors]);
+  return b.buffer.slice(b.byteOffset, b.byteOffset + b.length);
+}
+const rec = (ver, type, body) => { const h = Buffer.alloc(8); h.writeUInt16LE(ver, 0); h.writeUInt16LE(type, 2); h.writeUInt32LE(body.length, 4); return Buffer.concat([h, body]); };
+const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
+  rec(15, 0x03F8, rec(0, 0x0FA8, Buffer.from('Click to edit Master title style'))), // master text must be skipped
+  extra,
+  rec(15, 0x03EE, Buffer.concat([rec(0, 0x0FA8, Buffer.from('Intro:\rCPU\rRAM')), rec(0, 0x0FA0, Buffer.from('Caf\u00e9 notes', 'utf16le'))])),
+  rec(15, 0x03EE, rec(0, 0x0FA8, Buffer.from('Second slide'))),
+]);
+
 (async () => {
+  // old .ppt: small file (mini stream) and big file (regular sectors), master skipped, per-slide tags
+  for (const big of [false, true]) {
+    const tg = [], got = pptLines(cfb(pptStream(big ? rec(0, 0x1234, Buffer.alloc(5000)) : undefined)), tg);
+    assert.deepStrictEqual(got, ['Intro:', '• CPU', '• RAM', 'Café notes', 'Second slide'], 'ppt ' + (big ? 'big' : 'mini'));
+    assert.deepStrictEqual(tg, ['slide 1', 'slide 1', 'slide 1', 'slide 1', 'slide 2']);
+  }
+  assert.throws(() => pptLines(new ArrayBuffer(600)), /not a valid \.ppt/);
   // pptx: slide order, entities, bullets, tags
   const tags = [];
   const lines = await pptxLines(zip({ 'ppt/slides/slide2.xml': slide(['Second &amp; last']), 'ppt/slides/slide1.xml': slide(['Topics:', 'Alpha', 'Beta']) }), tags);

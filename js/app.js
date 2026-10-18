@@ -112,7 +112,7 @@ async function run() {
       else if (/\.pptx$/i.test(f.name)) l = await pptxLines(await f.arrayBuffer(), t);
       else if (/\.docx$/i.test(f.name)) l = await docxLines(await f.arrayBuffer());
       else if (/\.doc$/i.test(f.name)) throw new Error('Old .doc files cannot be read. In Word use Save As > .docx (or PDF), then pick that file.');
-      else if (/\.ppt$/i.test(f.name)) throw new Error('Old .ppt files cannot be read. In PowerPoint use Save As > .pptx (or PDF), then pick that file.');
+      else if (/\.ppt$/i.test(f.name)) l = pptLines(await f.arrayBuffer(), t);
       else l = (await f.text()).split(/\r?\n/);
       lines.push(...l); tags.push(...l.map((_, i) => t[i] || ''));
     }
