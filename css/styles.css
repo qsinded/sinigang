@@ -69,8 +69,8 @@ a.l{color:var(--acc);cursor:pointer;text-decoration:underline;background:none;bo
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}.flip-card:hover{transform:none}}
 @media(forced-colors:active){.bar>i{background:Highlight}.opt.ok,.opt.bad,.fb{border:2px solid CanvasText}}
 
-/* Laptop: wider page, two columns for lists of items. */
-@media(min-width:768px){.items,.list{display:grid;grid-template-columns:1fr 1fr;gap:0 28px;align-items:start}.keys{display:inline}}
+/* Laptop: wider page; saved reviewers in two columns, questions stay one per row. */
+@media(min-width:768px){.list{display:grid;grid-template-columns:1fr 1fr;gap:0 28px;align-items:start}.keys{display:inline}}
 @media(min-width:1024px){main{padding:28px 24px 60px}.site{padding-left:24px;padding-right:24px}h1{font-size:2.125rem}}
 
 @media print{
