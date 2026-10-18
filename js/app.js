@@ -44,7 +44,7 @@ function draw(node, screen) {
   const y = scrollY, first = !lastScreen; app.replaceChildren(node); scrollTo(0, y);
   if (!screen || screen === lastScreen) return;
   lastScreen = screen;
-  const t = node.querySelector('h1'); document.title = t && t.textContent !== 'Reviewer Generator' ? t.textContent + ' · Reviewer Generator' : 'Reviewer Generator';
+  const t = node.querySelector('h1'); document.title = (t ? t.textContent + ' · ' : '') + 'Reviewer Generator';
   if (t && !first) { t.tabIndex = -1; t.focus(); }
 }
 const bar = (pct, label) => h('div', { class: 'bar', role: 'progressbar', 'aria-label': label, 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': Math.round(pct) }, h('i', { style: 'width:' + pct + '%' }));
@@ -157,6 +157,132 @@ function preview() {
   removedAt = null;
 }
 
+// AI Study Companion: document text stays in this browser until the user sends a question.
+let aiText = '', aiFileLabel = '', aiHistory = [], aiBusy = false, aiChunks = [];
+const AI_MAX_FILE = 25 * 1024 * 1024, AI_MAX_TEXT = 80000;
+const AI_PROFILE_KEY = 'sinigang.ai.learningProfile.v1';
+let aiLastPrompt = ''; 
+function loadAIProfile() {
+  const base = { level: 'beginner', goal: 'understand', style: 'friendly', understood: 0, review: 0, weakTopics: [] };
+  try { const saved = JSON.parse(localStorage.getItem(AI_PROFILE_KEY) || '{}'); return { ...base, ...saved, weakTopics: Array.isArray(saved.weakTopics) ? saved.weakTopics.slice(0, 12) : [] }; }
+  catch (_) { return base; }
+}
+let aiProfile = loadAIProfile();
+function saveAIProfile() { try { localStorage.setItem(AI_PROFILE_KEY, JSON.stringify(aiProfile)); } catch (_) {} }
+function splitStudyText(text) {
+  // Keep source markers (e.g. [page 4], [slide 2]) attached to their paragraph.
+  const paras = text.split(/\n+/).map(x => x.trim()).filter(Boolean);
+  const chunks = []; let current = '', source = 'source not specified';
+  const flush = () => { if (current.trim()) chunks.push({ id: chunks.length + 1, source, text: current.trim() }); current = ''; };
+  for (const para of paras) {
+    const marker = para.match(/^\[(page\s+\d+|slide\s+\d+|paragraph\s+\d+)\]/i);
+    if (marker) source = marker[1];
+    if (current && (current.length + para.length + 1 > 1100)) flush();
+    if (para.length > 1100) {
+      flush();
+      for (let i = 0; i < para.length; i += 900) chunks.push({ id: chunks.length + 1, source, text: para.slice(i, i + 1100).trim() });
+    } else current += (current ? '\n' : '') + para;
+  }
+  flush();
+  return chunks;
+}
+function retrieveStudyChunks(query, chunks, limit = 6) {
+  const words = query.toLowerCase().normalize('NFKD').replace(/[^a-z0-9\s-]/g, ' ').split(/\s+/).filter(w => w.length > 2);
+  const unique = [...new Set(words)];
+  const ranked = chunks.map(c => {
+    const text = c.text.toLowerCase(); let score = 0;
+    for (const word of unique) { const re = new RegExp('\\b' + word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g'); const hits = (text.match(re) || []).length; score += Math.min(hits, 4) * (word.length > 6 ? 1.5 : 1); }
+    if (query.length > 5 && text.includes(query.toLowerCase())) score += 8;
+    return { ...c, score };
+  }).filter(c => c.score > 0).sort((a,b) => b.score - a.score || a.id - b.id);
+  // Broad requests like 'summarize this chapter' may not share keywords with the notes.
+  return (ranked.length ? ranked : chunks.map(c => ({ ...c, score: 0 }))).slice(0, limit);
+}
+async function extractForAI(f) {
+  if (!f) throw new Error('Choose a study file first.');
+  if (f.size > AI_MAX_FILE) throw new Error('This file is over 25 MB. Choose a smaller file.');
+  const tags = []; let lines;
+  if (/\.pdf$/i.test(f.name)) lines = await pdfLines(loadPdfjs(), await f.arrayBuffer(), tags);
+  else if (/\.pptx$/i.test(f.name)) lines = await pptxLines(await f.arrayBuffer(), tags);
+  else if (/\.docx$/i.test(f.name)) lines = await docxLines(await f.arrayBuffer());
+  else if (/\.ppt$/i.test(f.name)) lines = pptLines(await f.arrayBuffer(), tags);
+  else if (/\.(txt|md)$/i.test(f.name)) lines = (await f.text()).split(/\r?\n/);
+  else throw new Error('Supported formats: PDF, PPT, PPTX, DOCX, TXT, and MD. Old .doc files must be converted first.');
+  const text = lines.map((line, i) => (tags[i] ? '[' + tags[i] + '] ' : '') + line).join('\n').trim();
+  if (text.length < 40) throw new Error('Not enough readable text was found. Scanned PDFs and image-only slides need OCR.');
+  aiText = text.slice(0, AI_MAX_TEXT); aiChunks = splitStudyText(aiText); aiFileLabel = f.name; aiHistory = [];
+  if (text.length > AI_MAX_TEXT) aiFileLabel += ' (first 80,000 characters indexed)';
+  return 'Loaded ' + f.name + ' and indexed ' + aiChunks.length + ' searchable sections.' + (text.length > AI_MAX_TEXT ? ' The document was truncated at 80,000 characters.' : '');
+}
+function aiStudy() {
+  const messages = h('div', { class: 'ai-messages', 'aria-live': 'polite' });
+  const status = h('p', { class: 'k', role: 'status' }, aiText ? 'Study material: ' + aiFileLabel : 'No study material loaded yet.');
+  const fileInput = h('input', { type: 'file', accept: '.pdf,.ppt,.pptx,.docx,.txt,.md', 'aria-label': 'Choose study material' });
+  const level = h('select', { 'aria-label': 'Learning level', onchange: e => { aiProfile.level = e.target.value; saveAIProfile(); } }, ...[['beginner','Beginner'],['intermediate','Intermediate'],['advanced','Advanced']].map(([v,t]) => h('option', { value: v, selected: aiProfile.level === v ? '' : null }, t)));
+  const goal = h('select', { 'aria-label': 'Study goal', onchange: e => { aiProfile.goal = e.target.value; saveAIProfile(); } }, ...[['understand','Understand concepts'],['exam','Prepare for an exam'],['memorize','Memorize key facts'],['oral','Practice oral answers']].map(([v,t]) => h('option', { value: v, selected: aiProfile.goal === v ? '' : null }, t)));
+  const style = h('select', { 'aria-label': 'Tutor style', onchange: e => { aiProfile.style = e.target.value; saveAIProfile(); } }, ...[['friendly','Friendly tutor'],['strict','Strict professor'],['buddy','Casual study buddy'],['coach','Exam coach']].map(([v,t]) => h('option', { value: v, selected: aiProfile.style === v ? '' : null }, t)));
+  const weakInput = h('input', { type: 'text', value: aiProfile.weakTopics.join(', '), placeholder: 'Topics I struggle with (comma-separated)', 'aria-label': 'Topics to focus on', onchange: e => { aiProfile.weakTopics = e.target.value.split(',').map(x => x.trim()).filter(Boolean).slice(0,12); saveAIProfile(); } });
+  const progress = h('p', { class: 'k', role: 'status' }, 'Learning check-ins saved on this device: understood ' + aiProfile.understood + ' · review again ' + aiProfile.review);
+  const question = h('textarea', { rows: 3, placeholder: 'Ask about your notes, request a summary, or say “quiz me”…', 'aria-label': 'Message the AI tutor' });
+  const send = h('button', { class: 'btn', onclick: sendAI, disabled: '' }, 'Send');
+  const speakBtn = h('button', { class: 'btn alt', onclick: startAIListening }, '🎙 Speak');
+  const stopSpeakBtn = h('button', { class: 'btn alt', onclick: () => { if ('speechSynthesis' in window) speechSynthesis.cancel(); } }, 'Stop voice');
+  const readBtn = h('button', { class: 'btn alt', onclick: () => { const last = [...aiHistory].reverse().find(x => x.role === 'assistant'); if (last && 'speechSynthesis' in window) { speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(last.content)); } else say('Spoken output is not supported in this browser.'); } }, '🔊 Read last answer');
+  const uploadBtn = h('button', { class: 'btn alt', onclick: async () => { try { status.textContent = 'Reading file…'; const msg = await extractForAI(fileInput.files[0]); send.disabled = false; status.className = 'k'; status.textContent = msg + ' Your file text is processed in this browser and is sent to the AI provider only when you ask a question.'; messages.replaceChildren(); } catch (e) { status.textContent = e.message || 'Could not read file.'; status.className = 'err'; } } }, 'Load study file');
+  const addMessage = (role, content) => {
+    aiHistory.push({ role, content });
+    const card = h('div', { class: 'ai-message ' + (role === 'user' ? 'ai-user' : 'ai-assistant') }, h('b', null, role === 'user' ? 'You' : 'Sinigang AI'), h('p', null, content));
+    if (role === 'assistant') {
+      card.append(h('div', { class: 'row' },
+        h('button', { class: 'btn alt', onclick: () => { aiProfile.understood++; saveAIProfile(); progress.textContent = 'Learning check-ins saved on this device: understood ' + aiProfile.understood + ' · review again ' + aiProfile.review; status.textContent = 'Great — I’ll keep the next explanation moving forward.'; } }, '✓ I understood'),
+        h('button', { class: 'btn alt', onclick: () => { aiProfile.review++; const topic = aiLastPrompt.toLowerCase().replace(/^(please\s+)?(explain|teach me|help me understand|quiz me on|ask me about)\s+/i, '').slice(0, 80).trim(); if (topic && topic.length < 60 && !aiProfile.weakTopics.includes(topic)) aiProfile.weakTopics = [...aiProfile.weakTopics, topic].slice(-12); saveAIProfile(); progress.textContent = 'Learning check-ins saved on this device: understood ' + aiProfile.understood + ' · review again ' + aiProfile.review; status.textContent = 'I’ll prioritize review and simpler explanations next time.'; } }, '↻ Review again')));
+    }
+    messages.append(card); messages.scrollTop = messages.scrollHeight;
+  };
+  async function sendAI() {
+    const prompt = question.value.trim();
+    if (!prompt || aiBusy) return;
+    if (!aiText) { status.textContent = 'Load a study file first so the tutor can ground its answers in your material.'; status.className = 'err'; return; }
+    if (prompt.length > 4000) { status.textContent = 'Please keep each message under 4,000 characters.'; status.className = 'err'; return; }
+    aiLastPrompt = prompt;
+    aiBusy = true; send.disabled = true; question.disabled = true; status.className = 'k'; status.textContent = 'Sinigang AI is thinking…';
+    addMessage('user', prompt); question.value = '';
+    try {
+      const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: prompt, history: aiHistory.slice(-9, -1), documentName: aiFileLabel, chunks: retrieveStudyChunks(prompt, aiChunks, 6).map(c => ({ source: c.source, text: c.text })), profile: { level: aiProfile.level, goal: aiProfile.goal, style: aiProfile.style, weakTopics: aiProfile.weakTopics, understood: aiProfile.understood, review: aiProfile.review } }) });
+      let data = {}; try { data = await response.json(); } catch (_) {}
+      if (!response.ok) throw new Error(data.error || 'AI request failed (' + response.status + '). Check server configuration and try again.');
+      if (!data.answer || typeof data.answer !== 'string') throw new Error('The AI returned an empty response. Please try again.');
+      addMessage('assistant', data.answer); status.textContent = 'Answer based on your uploaded study material. Verify important facts with your notes or instructor.';
+    } catch (e) { aiHistory.pop(); addMessage('assistant', 'I could not connect to the AI service. ' + (e.message || 'Please try again.')); status.textContent = 'Check that the backend is deployed and OPENAI_API_KEY is configured. The regular reviewer generator still works without AI.'; }
+    finally { aiBusy = false; send.disabled = false; question.disabled = false; question.focus(); }
+  }
+  function startAIListening() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { status.textContent = 'Speech recognition is not supported in this browser. You can still type and use Read last answer.'; return; }
+    const recognition = new SR(); recognition.lang = 'en-US'; recognition.interimResults = false; recognition.maxAlternatives = 1;
+    status.textContent = 'Listening…';
+    recognition.onresult = e => { question.value = e.results[0][0].transcript; question.focus(); status.textContent = 'Speech captured. Review your words, then press Send.'; };
+    recognition.onerror = e => { status.textContent = 'Microphone error: ' + e.error + '. You can type instead.'; };
+    recognition.onend = () => { if (status.textContent === 'Listening…') status.textContent = aiText ? 'Study material: ' + aiFileLabel : 'No study material loaded yet.'; };
+    try { recognition.start(); } catch (_) { status.textContent = 'Could not start microphone. Check browser permissions.'; }
+  }
+  question.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAI(); } });
+  draw(h('div', null,
+    h('button', { class: 'btn alt', onclick: home }, '← Back to reviewers'),
+    h('h1', null, 'AI Study Companion'),
+    h('p', { class: 'sub' }, 'Ask questions about your notes, request explanations, or practice with a conversational tutor. AI use requires an internet connection and a configured server API key.'),
+    h('div', { class: 'card' }, h('h2', { class: 'k' }, '1 · Study material'), fileInput, h('div', { class: 'row' }, uploadBtn), status,
+      h('p', { class: 'k' }, 'Privacy: document text is kept in this page until a question is sent. When you chat, relevant document text and recent messages are sent to the configured AI provider.')),
+    h('div', { class: 'card' }, h('h2', { class: 'k' }, '2 · Personalize your tutor'),
+      h('p', { class: 'k' }, 'These preferences and check-ins stay in this browser. They are sent with your question to personalize the AI response.'),
+      h('div', { class: 'row' }, level, goal, style), weakInput, progress),
+    h('div', { class: 'card' }, h('h2', { class: 'k' }, '3 · Chat with your tutor'), messages,
+      h('div', { class: 'row' }, question), h('div', { class: 'row' }, send, speakBtn, readBtn, stopSpeakBtn),
+      h('p', { class: 'k' }, 'Enter to send · Shift+Enter for a new line. Voice input availability depends on your browser.')), warn()), 'ai-study');
+  messages.replaceChildren(...aiHistory.map(m => h('div', { class: 'ai-message ' + (m.role === 'user' ? 'ai-user' : 'ai-assistant') }, h('b', null, m.role === 'user' ? 'You' : 'Sinigang AI'), h('p', null, m.content))));
+  send.disabled = !aiText;
+}
+
 function home() {
   pending = null;
   const list = h('div', { class: 'list' });
@@ -166,6 +292,9 @@ function home() {
   const node = h('div', null,
     h('h1', null, 'Reviewer Generator'),
     h('p', { class: 'sub' }, 'Pick a PDF, PowerPoint (.pptx), Word (.docx) or text file. The reviewer is built on this device, no internet needed.'),
+    h('div', { class: 'card ai-launch' }, h('h2', { class: 'k' }, '✨ AI Study Companion'),
+      h('p', null, 'Ask questions about your notes, get explanations, and speak with a study tutor. Requires AI backend setup.'),
+      h('button', { class: 'btn', onclick: aiStudy }, 'Study with AI')),
     warn(),
     h('div', { class: 'card' },
       h('input', { type: 'file', id: 'file', 'aria-label': 'Choose a PDF, PowerPoint, Word or text file', accept: '.pdf,.pptx,.ppt,.docx,.doc,.txt,.md,text/plain,application/pdf', multiple: '', onchange: e => { files = [...e.target.files]; home(); } }),
