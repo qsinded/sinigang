@@ -44,7 +44,7 @@ function draw(node, screen) {
   const y = scrollY, first = !lastScreen; app.replaceChildren(node); scrollTo(0, y);
   if (!screen || screen === lastScreen) return;
   lastScreen = screen;
-  const t = node.querySelector('h1'); document.title = (t ? t.textContent + ' · ' : '') + 'Reviewer Generator';
+  const t = node.querySelector('h1'); document.title = t && t.textContent !== 'Reviewer Generator' ? t.textContent + ' · Reviewer Generator' : 'Reviewer Generator';
   if (t && !first) { t.tabIndex = -1; t.focus(); }
 }
 const bar = (pct, label) => h('div', { class: 'bar', role: 'progressbar', 'aria-label': label, 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': Math.round(pct) }, h('i', { style: 'width:' + pct + '%' }));
