@@ -34,10 +34,20 @@ const themeBtn = h('button', { class: 'btn alt', onclick: () => {
   try { localStorage.setItem(THEME, root.dataset.theme); } catch (e) { /* kept for this visit only */ }
   themeBtn.textContent = themeLabel();
 } }, themeLabel());
-app.before(h('header', { class: 'site' }, h('nav', { 'aria-label': 'Main' }, h('button', { class: 'btn alt', onclick: () => home() }, 'Home'), themeBtn), live));
+app.tabIndex = -1; // lets the skip link move focus into the page
+app.before(h('header', { class: 'site' }, h('a', { class: 'skip', href: '#app' }, 'Skip to content'), h('nav', { 'aria-label': 'Main' }, h('button', { class: 'btn alt', onclick: () => home() }, 'Home'), themeBtn), live));
 app.after(h('footer', { class: 'site' }, 'Works offline. Progress is saved on this device only. ',
   h('span', { class: 'keys' }, 'Keys: 1–4 pick an answer, Ctrl+Enter checks a list, ← → cards, Space flips.')));
-function draw(node) { const y = scrollY; app.replaceChildren(node); scrollTo(0, y); }
+// A new screen gets its own page title and focus on its heading, so screen readers hear the change. Redraws of the same screen keep focus alone.
+let lastScreen = '';
+function draw(node, screen) {
+  const y = scrollY, first = !lastScreen; app.replaceChildren(node); scrollTo(0, y);
+  if (!screen || screen === lastScreen) return;
+  lastScreen = screen;
+  const t = node.querySelector('h1'); document.title = (t ? t.textContent + ' · ' : '') + 'Reviewer Generator';
+  if (t && !first) { t.tabIndex = -1; t.focus(); }
+}
+const bar = (pct, label) => h('div', { class: 'bar', role: 'progressbar', 'aria-label': label, 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': Math.round(pct) }, h('i', { style: 'width:' + pct + '%' }));
 
 // Classic scripts, worker runs on the main thread: phone HTML viewers block module imports and Workers.
 function loadPdfjs() { pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.js'; return pdfjsLib; }
@@ -130,6 +140,7 @@ function savePending() {
   const p = pending, r = { id: Date.now(), title: p.title, items: p.items, ans: {}, src: p.src, tags: p.tags, opts: p.opts };
   pending = null; R.unshift(r); save(); open(r);
 }
+let removedAt = null;
 function preview() {
   const p = pending, few = p.items.length < 3;
   draw(h('div', null,
@@ -140,7 +151,10 @@ function preview() {
       few && h('span', { class: 'err' }, 'Keep at least 3 questions.')),
     h('div', { class: 'items' }, p.items.map((it, i) => h('div', { class: 'card' },
       h('div', { class: 'k' }, TABS[it.type]), h('div', { class: 'q' }, it.q), h('p', null, 'Answer: ' + flashAnswer(it)),
-      h('button', { class: 'btn alt', 'aria-label': 'Remove question ' + (i + 1), onclick: () => { p.items.splice(i, 1); preview(); say('Removed. ' + p.items.length + ' questions left.'); } }, 'Remove'))))));
+      h('button', { class: 'btn alt', 'aria-label': 'Remove question ' + (i + 1), onclick: () => { p.items.splice(i, 1); removedAt = i; preview(); say('Removed. ' + p.items.length + ' questions left.'); } }, 'Remove'))))), 'preview');
+  // The removed card is gone; put focus on the Remove button that took its place.
+  const rm = app.querySelectorAll('.card .btn'); if (rm.length && removedAt !== null) rm[Math.min(removedAt, rm.length - 1)].focus();
+  removedAt = null;
 }
 
 function home() {
@@ -150,25 +164,24 @@ function home() {
   const n = note; note = '';
   const t = document.getElementById('title'), tv = t ? t.value : '';
   const node = h('div', null,
-    h('div', { class: 'k' }, '; Offline reviewer generator'),
     h('h1', null, 'Reviewer Generator'),
     h('p', { class: 'sub' }, 'Pick a PDF, PowerPoint (.pptx), Word (.docx) or text file. The reviewer is built on this device, no internet needed.'),
     warn(),
     h('div', { class: 'card' },
-      h('input', { type: 'file', id: 'file', accept: '.pdf,.pptx,.ppt,.docx,.doc,.txt,.md,text/plain,application/pdf', multiple: '', onchange: e => { files = [...e.target.files]; home(); } }),
+      h('input', { type: 'file', id: 'file', 'aria-label': 'Choose a PDF, PowerPoint, Word or text file', accept: '.pdf,.pptx,.ppt,.docx,.doc,.txt,.md,text/plain,application/pdf', multiple: '', onchange: e => { files = [...e.target.files]; home(); } }),
       h('p', { class: 'k' }, files.length ? files.length + ' file(s): ' + files.map(f => f.name).join(', ') : 'No file chosen'),
-      h('input', { type: 'text', id: 'title', placeholder: 'Reviewer title (optional)', value: tv }),
+      h('input', { type: 'text', id: 'title', 'aria-label': 'Reviewer title (optional)', placeholder: 'Reviewer title (optional)', value: tv }),
       h('div', { class: 'row' },
         h('label', null, 'Questions: ', h('select', { onchange: e => { optMax = Number(e.target.value); } }, [[0, 'All'], [10, '10'], [20, '20']].map(([v, t]) => h('option', { value: v, selected: v === optMax ? '' : null }, t)))),
         h('label', null, h('input', { type: 'checkbox', checked: optMc ? '' : null, onchange: e => { optMc = e.target.checked; } }), 'Multiple choice only')),
       h('p', null, h('button', { class: 'btn', disabled: busy || !files.length ? '' : null, onclick: run }, busy ? 'Working…' : 'Generate reviewer')),
-      status && h('p', { class: 'k' }, status), err && h('p', { class: 'err' }, err)),
-    h('div', { class: 'card' }, h('b', null, 'Backup'),
+      status && h('p', { class: 'k', role: 'status' }, status), err && h('p', { class: 'err', role: 'alert' }, err)),
+    h('div', { class: 'card' }, h('h2', { class: 'k' }, 'Backup'),
       h('p', { class: 'k' }, 'Save your reviewers to a file to move them to another device or keep a copy.'),
       h('div', { class: 'row' }, h('button', { class: 'btn alt', disabled: R.length ? null : '', onclick: exportAll }, 'Export all'),
         h('label', null, 'Import a backup: ', h('input', { type: 'file', accept: '.json,application/json', onchange: e => { if (e.target.files[0]) importFile(e.target.files[0]); } }))),
       n && h('p', { role: 'status' }, n)),
-    R.length > 0 && h('div', { class: 'k' }, 'Saved reviewers'),
+    R.length > 0 && h('h2', { class: 'k' }, 'Saved reviewers'),
     R.length > 5 && h('input', { type: 'text', 'aria-label': 'Search saved reviewers', placeholder: 'Search saved reviewers', value: q, oninput: e => { q = e.target.value; fill(); } }),
     list);
   const match = r => R.length <= 5 || r.title.toLowerCase().includes(q.trim().toLowerCase());
@@ -177,7 +190,7 @@ function home() {
       h('div', { style: 'flex:1' }, h('b', null, r.title), h('div', { class: 'k' }, r.items.length + ' items · ' + Object.values(r.ans).filter(a => a.ok).length + ' correct')),
       h('button', { class: 'btn', onclick: () => open(r) }, 'Open'),
       h('button', { class: 'btn alt', onclick: () => { if (confirm('Delete "' + r.title + '"?')) { R = R.filter(x => x !== r); save(); home(); } } }, 'Delete'));
-  fill(); cur = null; draw(node); if (n) say(n);
+  fill(); cur = null; draw(node, 'home'); if (n) say(n);
   const nt = document.getElementById('title'); if (nt) nt.value = tv;
 }
 
@@ -224,7 +237,7 @@ function flipcards() {
   if (!items.length) {
     flashing = false;
     draw(h('div', null, h('button', { class: 'btn alt', onclick: () => home() }, '← Back'), h('h1', null, r.title),
-      h('p', null, 'You marked every card as known. Nice work.'), h('button', { class: 'btn', onclick: () => startFlash(false) }, 'Study all cards')));
+      h('p', null, 'You marked every card as known. Nice work.'), h('button', { class: 'btn', onclick: () => startFlash(false) }, 'Study all cards')), 'flash');
     return;
   }
   flashing = true;
@@ -242,9 +255,9 @@ function flipcards() {
     h('h1', null, r.title),
     h('p', { class: 'sub' }, 'Try to answer from memory, then flip the card. Mark what you know to track your progress.'),
     warn(),
-    h('div', { class: 'flip-progress-row' }, h('span', { class: 'mono' }, (flashIndex + 1) + ' / ' + items.length), h('span', { class: 'k' }, (r.items.length - nKnown - nLearn) + ' new · ' + nLearn + ' learning · ' + nKnown + ' known'), h('div', { class: 'bar' }, h('i', { style: 'width:' + (nKnown / r.items.length * 100) + '%' }))),
+    h('div', { class: 'flip-progress-row' }, h('span', { class: 'mono' }, (flashIndex + 1) + ' / ' + items.length), h('span', { class: 'k' }, (r.items.length - nKnown - nLearn) + ' new · ' + nLearn + ' learning · ' + nKnown + ' known'), bar(nKnown / r.items.length * 100, 'Cards known')),
     h('p', null, h('button', { class: 'btn alt', onclick: () => startFlash(!flashOnly) }, flashOnly ? 'Study all cards' : 'Study only cards not known yet (' + (r.items.length - nKnown) + ')')),
-    h('button', { class: 'flip-card' + (flashRevealed ? ' revealed' : ''), 'aria-label': flashRevealed ? 'Answer side, click to show question' : 'Question side, click to reveal answer', onclick: () => { flashRevealed = !flashRevealed; flipcards(); } }, face, h('span', { class: 'flip-hint' }, flashRevealed ? 'Click to see question' : 'Click to reveal answer')),
+    h('button', { class: 'flip-card' + (flashRevealed ? ' revealed' : ''), onclick: () => { flashRevealed = !flashRevealed; flipcards(); } }, face, h('span', { class: 'flip-hint' }, flashRevealed ? 'Click to see question' : 'Click to reveal answer')),
     h('div', { class: 'row flip-actions' },
       h('button', { class: 'btn alt', disabled: flashIndex === 0 ? '' : null, onclick: () => { flashIndex--; flashRevealed = false; flipcards(); } }, '← Previous'),
       h('button', { class: 'btn alt', onclick: () => { flashRevealed = !flashRevealed; flipcards(); } }, flashRevealed ? 'Show question' : 'Reveal answer'),
@@ -252,7 +265,7 @@ function flipcards() {
       h('button', { class: 'btn alt', onclick: () => { mark(false); const [x] = flashOrder.splice(flashIndex, 1); flashOrder.splice(Math.min(flashIndex + 3, flashOrder.length), 0, x); flashRevealed = false; flipcards(); } }, '↻ Review again'),
       h('button', { class: 'btn alt', disabled: flashIndex >= items.length - 1 ? '' : null, onclick: () => { flashIndex++; flashRevealed = false; flipcards(); } }, 'Next →')),
     h('p', { class: 'k flip-footnote' }, 'Tip: use “I knew it” only when you recalled the answer before flipping.'));
-  draw(node);
+  draw(node, 'flash');
   document.querySelector('.flip-card').focus({ preventScroll: true }); // keep keyboard users on the card after a redraw
 }
 function nextFlash(items) { flashIndex = flashIndex < items.length - 1 ? flashIndex + 1 : 0; flashRevealed = false; flipcards(); }
@@ -303,10 +316,10 @@ function quiz() {
     h('h1', null, r.title),
     h('p', { class: 'sub' }, 'Answer each item. You get the result and an explanation right away. Missed items stay marked so you can retry them.'),
     warn(),
-    h('div', { class: 'row' }, h('span', { class: 'mono', style: 'font-size:28px;font-weight:700' }, total + '/' + n),
+    h('div', { class: 'row' }, h('span', { class: 'mono big' }, total + '/' + n),
       h('span', { class: 'k' }, 'correct so far · ' + n + ' items'),
-      h('div', { class: 'bar' }, h('i', { style: 'width:' + (n ? total / n * 100 : 0) + '%' }))),
-    h('div', { class: 'tabs' }, ts.map(k => h('button', { class: 'tab' + (k === tab ? ' on' : ''), onclick: () => { tab = k; quiz(); scrollTo(0, 0); } },
+      bar(n ? total / n * 100 : 0, 'Correct answers')),
+    h('div', { class: 'tabs' }, ts.map(k => h('button', { class: 'tab' + (k === tab ? ' on' : ''), 'aria-current': k === tab ? 'true' : null, onclick: () => { tab = k; quiz(); scrollTo(0, 0); } },
       TABS[k] + ' ', h('span', { class: 'k' }, good(r.items.filter(i => i.type === k)) + '/' + r.items.filter(i => i.type === k).length))),
       h('button', { class: 'tab', onclick: () => startFlash(false) }, '✦ Flipcards')),
     h('div', { class: 'row' },
@@ -322,13 +335,13 @@ function quiz() {
       const a = r.ans[it.id];
       return h('div', { class: 'item' },
         h('div', { class: 'k' }, 'Q' + (idx + 1) + (a ? ' · ' : ''), a && h('span', { class: a.ok ? 'good' : 'miss' }, a.ok ? 'correct' : 'missed')),
-        h('div', { class: 'q' }, it.q),
+        h('div', { class: 'q', id: 'q-' + it.id }, it.q),
         it.type === 'mc'
-          ? it.options.map((o, oi) => h('button', { class: 'opt' + (a ? (oi === it.answer ? ' ok' : oi === a.val ? ' bad' : '') : ''), disabled: a || over ? '' : null, onclick: () => answer(it, oi) }, h('b', null, 'ABCD'[oi]), o, a && oi === it.answer && h('span', { class: 'mark' }, '✓ Correct answer'), a && oi === a.val && oi !== it.answer && h('span', { class: 'mark' }, '✗ Your answer')))
+          ? h('div', { role: 'group', 'aria-labelledby': 'q-' + it.id }, it.options.map((o, oi) => h('button', { class: 'opt' + (a ? (oi === it.answer ? ' ok' : oi === a.val ? ' bad' : '') : ''), disabled: a || over ? '' : null, onclick: () => answer(it, oi) }, h('b', null, 'ABCD'[oi]), o, a && oi === it.answer && h('span', { class: 'mark' }, '✓ Correct answer'), a && oi === a.val && oi !== it.answer && h('span', { class: 'mark' }, '✗ Your answer'))))
           : h('div', null,
             it.type === 'enum'
-              ? h('textarea', { rows: 4, placeholder: 'One per line or separated by commas', disabled: a || over ? '' : null, oninput: e => { draft[it.id] = e.target.value; }, onkeydown: e => { if (e.key === 'Enter' && e.ctrlKey) answer(it, draft[it.id] || ''); } }, a ? a.val : draft[it.id] || '')
-              : h('input', { type: 'text', placeholder: 'Your answer', value: a ? a.val : draft[it.id] || '', disabled: a || over ? '' : null, oninput: e => { draft[it.id] = e.target.value; }, onkeydown: e => { if (e.key === 'Enter') answer(it, draft[it.id] || ''); } }),
+              ? h('textarea', { rows: 4, 'aria-labelledby': 'q-' + it.id, placeholder: 'One per line or separated by commas', disabled: a || over ? '' : null, oninput: e => { draft[it.id] = e.target.value; }, onkeydown: e => { if (e.key === 'Enter' && e.ctrlKey) answer(it, draft[it.id] || ''); } }, a ? a.val : draft[it.id] || '')
+              : h('input', { type: 'text', 'aria-labelledby': 'q-' + it.id, placeholder: 'Your answer', value: a ? a.val : draft[it.id] || '', disabled: a || over ? '' : null, oninput: e => { draft[it.id] = e.target.value; }, onkeydown: e => { if (e.key === 'Enter') answer(it, draft[it.id] || ''); } }),
             !a && !over && h('p', null, h('button', { class: 'btn', onclick: () => answer(it, draft[it.id] || '') }, 'Check'))),
         a && h('div', { class: 'fb' + (a.ok ? '' : ' bad'), id: 'fb-' + it.id, tabindex: '-1' }, h('b', null, a.ok ? 'Correct.' : 'Not quite.'),
           h('div', null, (a.ok ? '' : 'Answer: ' + a.exp + '. ') + 'Source: ' + it.exp)),
@@ -337,7 +350,7 @@ function quiz() {
     (done || over) && h('div', { class: 'card done', role: 'status' }, h('b', null, (over && !done ? 'Time is up. ' : '') + 'Part score: ' + partGood + ' of ' + mine.length + ' correct (' + Math.round(partGood / mine.length * 100) + '%)'),
       h('p', null, partGood === mine.length ? 'Perfect. Try another part or the flashcards.' : 'Use "Retry missed" at the top to practice the ones you got wrong.')));
   flashing = false;
-  draw(node);
+  draw(node, 'quiz');
 }
 
 // Keys for laptops. Typing fields keep their own keys; Enter on a text answer is wired on the field itself.
