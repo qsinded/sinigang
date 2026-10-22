@@ -193,7 +193,20 @@ function isDue(r, it) {
 }
 function dueIds(r) { return r.items.filter(it => isDue(r, it)).map(it => it.id); }
 function dueCount(r) { return dueIds(r).length; }
+// Streak: consecutive days with at least one graded answer or card. Kept per device, apart from the reviewers.
+const STREAK_KEY = 'reviewer_gen_streak';
+function streakAfter(s, today) { // s = { last, count } or null
+  if (s && s.last === today) return s;
+  return { last: today, count: s && s.last === today - 1 ? s.count + 1 : 1 };
+}
+// A streak still counts on the day after, so the student has until midnight to keep it.
+function streakNow(s, today) { return s && Number.isInteger(s.count) && (s.last === today || s.last === today - 1) ? s.count : 0; }
+function readStreak() { try { const s = JSON.parse(localStorage.getItem(STREAK_KEY)); return s && Number.isInteger(s.last) && Number.isInteger(s.count) ? s : null; } catch (e) { return null; } }
+function bumpStreak() { try { localStorage.setItem(STREAK_KEY, JSON.stringify(streakAfter(readStreak(), todayNumber()))); } catch (e) { /* streak just will not show */ } }
+const firstDue = () => R.find(r => dueCount(r) > 0);
+function studyToday(r) { open(r); startFlash('due'); }
 function reviewItem(r, id, ok) {
+  bumpStreak();
   r.plan = planOf(r); r.plan.srs ||= {};
   const s = r.plan.srs[id] || { box: 0 };
   s.box = ok ? Math.min(s.box + 1, BOX_DAYS.length - 1) : 0;
@@ -209,6 +222,8 @@ function planCard() {
   return h('div', { class: 'card' },
     h('h2', { class: 'k' }, 'Today'),
     h('p', null, due ? due + ' item' + (due === 1 ? '' : 's') + ' due in ' + withDue + ' reviewer' + (withDue === 1 ? '' : 's') + '.' : 'Nothing is due today — study ahead if you like.'),
+    h('p', null, h('b', null, streakNow(readStreak(), todayNumber()) + '-day streak'), streakNow(readStreak(), todayNumber()) && readStreak().last !== todayNumber() ? ' · study today to keep it' : ''),
+    due > 0 && h('p', null, h('button', { class: 'btn', onclick: () => studyToday(firstDue()) }, 'Study today (' + due + ' due)')),
     next && h('p', null, h('b', null, next.r.title), ' · ' + examText(next.r.plan.exam)),
     h('p', { class: 'k' }, 'Open a reviewer to set its exam date, or use Review to study what is due.'));
 }
@@ -640,7 +655,9 @@ function flipcards() {
     flashing = false;
     const due = flashMode === 'due';
     draw(h('div', null, h('button', { class: 'btn alt', onclick: () => home() }, '← Back'), h('h1', null, r.title),
-      h('p', null, due ? 'Nothing is due today. Come back tomorrow, or study ahead.' : 'You marked every card as known. Nice work.'),
+      h('p', null, due ? 'Nothing is due in this reviewer.' : 'You marked every card as known. Nice work.'),
+      due && firstDue() && h('p', null, h('button', { class: 'btn', onclick: () => studyToday(firstDue()) }, 'Next: ' + firstDue().title + ' (' + dueCount(firstDue()) + ' due)')),
+      due && !firstDue() && h('p', null, 'All done for today. Come back tomorrow, or study ahead.'),
       h('button', { class: 'btn', onclick: () => startFlash('all') }, 'Study all cards')), 'flash');
     return;
   }

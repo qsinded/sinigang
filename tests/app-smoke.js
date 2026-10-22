@@ -97,6 +97,25 @@ assert.ok(appEl.children.length > 0, 'home screen rendered');
 assert.match(screenText(appEl), /Today/, 'home shows the study summary');
 assert.match(screenText(appEl), /Seeded notes/, 'saved reviewers are listed');
 
+// 1b. Today card: one button across reviewers, and a day streak
+assert.match(screenText(appEl), /Study today \(1 due\)/, 'home offers one study button with the due count');
+assert.match(screenText(appEl), /0-day streak/, 'no streak before any study');
+assert.strictEqual(JSON.stringify(ctx.streakAfter(null, 100)), JSON.stringify({ last: 100, count: 1 }), 'first study day starts a streak');
+assert.strictEqual(JSON.stringify(ctx.streakAfter({ last: 100, count: 1 }, 100)), JSON.stringify({ last: 100, count: 1 }), 'same day does not double count');
+assert.strictEqual(JSON.stringify(ctx.streakAfter({ last: 100, count: 3 }, 101)), JSON.stringify({ last: 101, count: 4 }), 'next day extends the streak');
+assert.strictEqual(JSON.stringify(ctx.streakAfter({ last: 100, count: 3 }, 103)), JSON.stringify({ last: 103, count: 1 }), 'a missed day restarts it');
+assert.strictEqual(ctx.streakNow({ last: 100, count: 3 }, 101), 3, 'streak survives until the end of the next day');
+assert.strictEqual(ctx.streakNow({ last: 100, count: 3 }, 102), 0, 'streak is gone after a missed day');
+assert.strictEqual(ctx.streakNow(null, 100), 0, 'no saved streak reads as zero');
+store.set('reviewer_gen_streak', '{bad json');
+assert.strictEqual(ctx.readStreak(), null, 'a corrupt streak is ignored');
+ctx.reviewItem(vm.runInContext('R[0]', ctx), 's1', true);
+assert.strictEqual(ctx.readStreak().count, 1, 'grading an item records today');
+assert.strictEqual(ctx.readStreak().last, ctx.todayNumber(), 'the streak is dated today');
+ctx.home();
+assert.match(screenText(appEl), /1-day streak/, 'home shows the streak after studying');
+assert.doesNotMatch(screenText(appEl), /Study today/, 'no study button once nothing is due');
+
 // 2. source text is capped before it is stored
 const bulky = Array.from({ length: 2000 }, (_, i) => 'line ' + i + ' ' + 'x'.repeat(90));
 const capped = ctx.capSrc(bulky);
