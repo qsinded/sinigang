@@ -1,0 +1,12 @@
+{
+  "name": "reviewer-generator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Offline reviewer, flashcard and exam-plan generator built from your own notes.",
+  "scripts": {
+    "test": "node tests/check.js && node tests/app-smoke.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

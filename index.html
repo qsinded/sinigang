@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Build practice questions and flashcards from your PDF, PowerPoint, Word or text notes. Works offline.">
   <title>Reviewer Generator</title>
   <link rel="stylesheet" href="./css/styles.css">
 </head>
 <body>
   <main id="app"></main>
 
-  <!-- PDF.js worker bundle and library; keep these before the application scripts. -->
-  <script src="./js/pdfjs-worker-bundle.js"></script>
-  <script src="./js/pdfjs-viewer-bundle.js"></script>
+  <!-- The PDF.js bundles (js/pdfjs-*-bundle.js) are loaded on demand by js/app.js the first
+       time a PDF is chosen, so first paint does not wait for ~1.5 MB of library code. -->
 
   <!-- Reviewer generation, PowerPoint reading, and application interface. -->
   <script src="./js/reviewer-generator.js"></script>
