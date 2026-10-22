@@ -5,9 +5,12 @@ let saveWarn = ''; // shown to the student when the device cannot store their re
 const STORAGE_FULL = 'Not saved: this device\'s storage is full. Delete a saved reviewer to free space. Your work is kept only until you close this page.';
 const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || mem; } catch (e) { return mem; } };
 const save = () => {
-  try { localStorage.setItem(KEY, JSON.stringify(R)); saveWarn = ''; }
+  try { const s = JSON.stringify(R); localStorage.setItem(KEY, s); saveWarn = s.length > 3.5e6 ? STORAGE_NEAR : ''; } // ponytail: ~5M chars is the usual browser cap; move source text to IndexedDB if this fires often
   catch (e) { mem = R; saveWarn = STORAGE_FULL; }
 };
+const STORAGE_NEAR = 'Storage is almost full. Use "Export all" to save a backup, then delete reviewers you no longer need.';
+const BACKUP_KEY = 'reviewer_gen_backup';
+const backupOld = () => { try { const t = Number(localStorage.getItem(BACKUP_KEY)); return !t || Date.now() - t > 14 * 864e5; } catch (e) { return false; } };
 const warn = () => saveWarn && h('p', { class: 'err', role: 'alert' }, saveWarn);
 let R = load();
 let q = '', optMax = 0, optMc = false, pending = null, cur = null, tab = null, files = [], status = '', err = '', busy = false;
@@ -44,7 +47,7 @@ function draw(node, screen) {
   const y = scrollY, first = !lastScreen; app.replaceChildren(node); scrollTo(0, y);
   if (!screen || screen === lastScreen) return;
   lastScreen = screen;
-  const t = node.querySelector('h1'); document.title = (t ? t.textContent + ' · ' : '') + 'Reviewer Generator';
+  const t = node.querySelector('h1'); document.title = t && t.textContent !== 'Reviewer Generator' ? t.textContent + ' · Reviewer Generator' : 'Reviewer Generator';
   if (t && !first) { t.tabIndex = -1; t.focus(); }
 }
 const bar = (pct, label) => h('div', { class: 'bar', role: 'progressbar', 'aria-label': label, 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': Math.round(pct) }, h('i', { style: 'width:' + pct + '%' }));
@@ -323,6 +326,7 @@ async function exportAll() {
   for (const id of ids) {
     try { const blob = await idbGet(id); if (blob) images[id] = await blobToDataURL(blob); } catch (_) { /* keep the reviewer without this image */ }
   }
+  try { localStorage.setItem(BACKUP_KEY, String(Date.now())); } catch (_) { /* nudge just repeats */ }
   const payload = { version: 2, reviewers: R, images };
   const a = h('a', { href: URL.createObjectURL(new Blob([JSON.stringify(payload)], { type: 'application/json' })), download: 'reviewers.json' });
   document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
@@ -553,6 +557,7 @@ function home() {
     h('p', { class: 'sub' }, 'Pick a PDF, PowerPoint (.pptx), Word (.docx) or text file. The reviewer is built on this device, no internet needed.'),
     warn(),
     R.length > 0 && planCard(),
+    R.length > 0 && backupOld() && h('p', { class: 'k', role: 'status' }, 'No backup in the last 14 days. Your reviewers live only in this browser, so use "Export all" below.'),
     h('div', { class: 'card' },
       h('input', { type: 'file', id: 'file', 'aria-label': 'Choose a PDF, PowerPoint, Word or text file', accept: '.pdf,.pptx,.ppt,.docx,.txt,.md,text/plain,application/pdf', multiple: '', onchange: e => { files = [...e.target.files]; home(); } }),
       h('p', { class: 'k' }, files.length ? files.length + ' file(s): ' + files.map(f => f.name).join(', ') : 'No file chosen'),
@@ -854,11 +859,14 @@ function quiz() {
       h('button', { class: 'btn', disabled: missed.length ? null : '', onclick: () => clear(missed) }, 'Retry missed (' + missed.length + ')'),
       h('button', { class: 'btn alt', onclick: () => clear(mine) }, 'Reset this part')),
     h('div', { class: 'row', style: 'margin-top:8px' },
-      h('button', { class: 'btn alt', onclick: shuffleAll }, r.src ? 'Shuffle · new questions' : 'Shuffle'),
-      h('button', { class: 'btn alt', onclick: running ? () => { stopTimer(); quiz(); } : () => startTimed(mine) }, running ? 'Stop timer' : 'Timed practice (' + fmt(mine.length * 30000) + ')'),
-      h('button', { class: 'btn alt', onclick: rename }, 'Rename'),
       h('button', { class: 'btn alt', onclick: openRecite }, '🎧 Recite'),
-      h('button', { class: 'btn alt', onclick: () => window.print() }, 'Print this part')),
+      h('button', { class: 'btn alt', onclick: running ? () => { stopTimer(); quiz(); } : () => startTimed(mine) }, running ? 'Stop timer' : 'Timed practice (' + fmt(mine.length * 30000) + ')')),
+    h('details', { class: 'more', open: running ? '' : null }, h('summary', null, 'More options'),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn alt', onclick: shuffleAll }, r.src ? 'Shuffle · new questions' : 'Shuffle'),
+        h('button', { class: 'btn alt', onclick: rename }, 'Rename'),
+        h('button', { class: 'btn alt', onclick: () => window.print() }, 'Print this part'))),
+    tab === 'mc' && h('p', { class: 'k keys' }, 'Keys: 1–4 answer the next question.'),
     running && h('p', { class: 'k' }, 'Time left: ', h('b', { id: 'clock', class: 'mono' }, fmt(timed.end - Date.now()))),
     h('div', { class: 'items' }, mine.map((it, idx) => {
       const a = r.ans[it.id];
@@ -874,7 +882,8 @@ function quiz() {
               : h('input', { type: 'text', 'aria-labelledby': 'q-' + it.id, placeholder: 'Your answer', value: a ? a.val : draft[it.id] || '', disabled: a || over ? '' : null, oninput: e => { draft[it.id] = e.target.value; }, onkeydown: e => { if (e.key === 'Enter') answer(it, draft[it.id] || ''); } }),
             !a && !over && h('p', null, h('button', { class: 'btn', onclick: () => answer(it, draft[it.id] || '') }, 'Check'))),
         a && h('div', { class: 'fb' + (a.ok ? '' : ' bad'), id: 'fb-' + it.id, tabindex: '-1' }, h('b', null, a.ok ? 'Correct.' : 'Not quite.'),
-          h('div', null, 'Answer: ' + a.exp + '.')),
+          h('div', null, 'Answer: ' + a.exp + '.'),
+          !a.ok && it.type !== 'mc' && h('button', { class: 'btn alt', onclick: () => { a.ok = true; reviewItem(r, it.id, true); save(); quiz(); say('Marked correct.'); } }, 'Count it correct')),
         a && it.type !== 'img' && sourcePanel(r, it),
         h('div', { class: 'ans-print' }, 'Answer: ' + flashAnswer(it)));
     })),
