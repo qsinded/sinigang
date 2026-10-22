@@ -100,6 +100,76 @@ function capSrc(lines) {
 let ridSeq = 0;
 const newRid = () => Date.now() * 1000 + (ridSeq = (ridSeq + 1) % 1000);
 
+// Diagram images live in IndexedDB: one photo is megabytes, and localStorage is shared with every
+// reviewer. Items keep only an image id and a normalized hotspot, so the JSON stays small.
+const IMG_DB = 'reviewer_images_v1', IMG_STORE = 'images';
+let imgDB = null;
+function openImageDB() {
+  if (imgDB) return imgDB;
+  if (typeof indexedDB === 'undefined') return Promise.reject(new Error('This browser cannot store diagram images.'));
+  imgDB = new Promise((resolve, reject) => {
+    const req = indexedDB.open(IMG_DB, 1);
+    req.onupgradeneeded = () => { if (!req.result.objectStoreNames.contains(IMG_STORE)) req.result.createObjectStore(IMG_STORE); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error('Could not open image storage.'));
+  }).catch(e => { imgDB = null; throw e; });
+  return imgDB;
+}
+function idbOp(mode, run) {
+  return openImageDB().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(IMG_STORE, mode), req = run(tx.objectStore(IMG_STORE));
+    tx.oncomplete = () => resolve(req ? req.result : undefined);
+    tx.onerror = () => reject(tx.error || new Error('Image storage failed.'));
+    tx.onabort = () => reject(tx.error || new Error('Image storage failed.'));
+  }));
+}
+function idbPut(id, blob) { return idbOp('readwrite', s => s.put(blob, id)); }
+function idbGet(id) { return idbOp('readonly', s => s.get(id)); }
+function idbDelete(id) { return idbOp('readwrite', s => s.delete(id)); }
+const imgURLs = new Map(), imgMissing = new Set();
+function imageURL(id) {
+  if (!id || imgMissing.has(id)) return Promise.resolve('');
+  if (imgURLs.has(id)) return Promise.resolve(imgURLs.get(id));
+  return idbGet(id).then(blob => {
+    if (!blob) { imgMissing.add(id); return ''; }
+    const url = URL.createObjectURL(blob);
+    imgURLs.set(id, url);
+    return url;
+  }).catch(() => { imgMissing.add(id); return ''; });
+}
+function dropImage(id) {
+  const url = imgURLs.get(id);
+  if (url) { URL.revokeObjectURL(url); imgURLs.delete(id); }
+  imgMissing.delete(id);
+  return idbDelete(id).catch(() => {});
+}
+const blobToDataURL = blob => new Promise((resolve, reject) => {
+  const fr = new FileReader();
+  fr.onload = () => resolve(String(fr.result));
+  fr.onerror = () => reject(fr.error || new Error('Could not read the image.'));
+  fr.readAsDataURL(blob);
+});
+function dataURLToBlob(data) {
+  const m = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(data || ''));
+  if (!m) throw new Error('Not a supported image.');
+  const bin = atob(m[2]), bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: m[1] });
+}
+function imageBlock(it, big) {
+  const wrap = h('span', { class: 'diagram' });
+  const img = h('img', { alt: 'Diagram with the part to identify marked', decoding: 'async' });
+  const pin = h('span', { class: 'pin' + (big ? ' big' : ''), 'aria-hidden': 'true' });
+  if (it.hotspot) { pin.style.left = (it.hotspot.x * 100) + '%'; pin.style.top = (it.hotspot.y * 100) + '%'; }
+  wrap.append(img, pin);
+  imageURL(it.imageId).then(url => {
+    if (url) { img.src = url; return; }
+    pin.remove();
+    wrap.append(h('span', { class: 'err' }, 'Diagram image is not on this device.'));
+  });
+  return wrap;
+}
+
 // Study plan: a light Leitner schedule per reviewer plus an optional exam date. Boxes 0-4 wait
 // 0, 1, 3, 7 and 16 days, so an item you missed comes back tomorrow instead of disappearing.
 const BOX_DAYS = [0, 1, 3, 7, 16];
@@ -186,9 +256,14 @@ function sourcePanel(r, it) {
     wrap);
 }
 function cleanItem(x) {
-  if (!x || !['mc', 'id', 'enum'].includes(x.type)) return null;
+  if (!x || !['mc', 'id', 'enum', 'img'].includes(x.type)) return null;
   const id = str(x.id, 40), q = str(x.q), exp = str(x.exp) ?? '';
   if (!id || !q) return null;
+  if (x.type === 'img') {
+    const answer = str(x.answer), imageId = str(x.imageId, 80), p = x.hotspot;
+    const hotspot = p && typeof p === 'object' && Number.isFinite(p.x) && Number.isFinite(p.y) && p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1 ? { x: p.x, y: p.y } : null;
+    return answer && imageId && hotspot ? { id, type: 'img', q, answer, imageId, hotspot, exp } : null;
+  }
   if (x.type === 'mc') {
     const options = Array.isArray(x.options) ? x.options.map(o => str(o)) : [];
     if (options.length < 2 || options.length > 4 || options.includes(null) || !Number.isInteger(x.answer) || x.answer < 0 || x.answer >= options.length) return null;
@@ -224,19 +299,56 @@ function cleanReviewer(x) {
   return { id: newRid(), title, items, ans, flashKnown: idList(x.flashKnown), flashLearn: idList(x.flashLearn), src, tags, opts, plan };
 }
 let note = ''; // one-time message shown on the home screen after export or import
-function exportAll() {
-  const a = h('a', { href: URL.createObjectURL(new Blob([JSON.stringify(R)], { type: 'application/json' })), download: 'reviewers.json' });
+// Backups carry reviewer data plus any diagram images as data URLs, so a file still works on
+// another device. Old array-only backups keep importing unchanged.
+function cleanBackup(data) {
+  const list = Array.isArray(data) ? data : data && Array.isArray(data.reviewers) ? data.reviewers : [data];
+  const reviewers = list.map(cleanReviewer).filter(Boolean);
+  const images = {};
+  const raw = data && !Array.isArray(data) && data.images && typeof data.images === 'object' ? data.images : {};
+  const referenced = new Set();
+  reviewers.forEach(r => r.items.forEach(it => { if (it.type === 'img' && it.imageId) referenced.add(it.imageId); }));
+  for (const id in raw) {
+    const entry = raw[id];
+    const value = entry && typeof entry.data === 'string' ? entry.data : '';
+    if (typeof id !== 'string' || id.length > 80 || !referenced.has(id)) continue;
+    if (value.length > 8 * 1024 * 1024 || !/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value)) continue;
+    images[id] = value;
+  }
+  return { reviewers, images };
+}
+async function exportAll() {
+  const ids = new Set(), images = {};
+  R.forEach(r => r.items.forEach(it => { if (it.type === 'img' && it.imageId) ids.add(it.imageId); }));
+  for (const id of ids) {
+    try { const blob = await idbGet(id); if (blob) images[id] = await blobToDataURL(blob); } catch (_) { /* keep the reviewer without this image */ }
+  }
+  const payload = { version: 2, reviewers: R, images };
+  const a = h('a', { href: URL.createObjectURL(new Blob([JSON.stringify(payload)], { type: 'application/json' })), download: 'reviewers.json' });
   document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  note = 'Saved ' + R.length + ' reviewer(s) to reviewers.json. Check your Downloads.'; home();
+  const nImg = Object.keys(images).length;
+  note = 'Saved ' + R.length + ' reviewer(s)' + (nImg ? ' with ' + nImg + ' diagram image(s)' : '') + ' to reviewers.json. Check your Downloads.';
+  home();
 }
 async function importFile(f) {
   try {
-    const data = JSON.parse(await f.text());
-    const list = (Array.isArray(data) ? data : [data]).map(cleanReviewer).filter(Boolean);
-    if (!list.length) throw new Error('no reviewers');
-    R.unshift(...list); save(); note = 'Imported ' + list.length + ' reviewer(s).';
+    const { reviewers, images } = cleanBackup(JSON.parse(await f.text()));
+    if (!reviewers.length) throw new Error('no reviewers');
+    const ids = Object.keys(images);
+    for (const id of ids) {
+      try { await idbPut(id, dataURLToBlob(images[id])); imgMissing.delete(id); } catch (_) { /* reviewer still imports; the item shows a missing image */ }
+    }
+    R.unshift(...reviewers); save();
+    note = 'Imported ' + reviewers.length + ' reviewer(s)' + (ids.length ? ' with ' + ids.length + ' image(s)' : '') + '.';
   } catch (e) { note = 'Could not import: this is not a reviewer backup file.'; }
   home();
+}
+function deleteReviewer(r) {
+  R = R.filter(x => x !== r);
+  const used = new Set();
+  R.forEach(x => x.items.forEach(it => { if (it.type === 'img' && it.imageId) used.add(it.imageId); }));
+  r.items.forEach(it => { if (it.type === 'img' && it.imageId && !used.has(it.imageId)) dropImage(it.imageId); });
+  save(); home();
 }
 
 async function run() {
@@ -288,9 +400,150 @@ function preview() {
   removedAt = null;
 }
 
+// Diagram reviewer: one image, tap the parts, name each one, then practice naming them offline.
+let diagBlob = null, diagURL = '', diagTitleText = '', diagParts = [], diagPending = null, diagNameText = '', diagBusy = false, diagErr = '', diagToken = 0;
+function clearDiagram() {
+  diagToken++;
+  if (diagURL) URL.revokeObjectURL(diagURL);
+  diagBlob = null; diagURL = ''; diagTitleText = ''; diagParts = []; diagPending = null; diagNameText = ''; diagBusy = false; diagErr = '';
+}
+function loadImage(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Could not read that image.'));
+    img.src = url;
+  });
+}
+// Phone photos are far larger than a diagram needs; cap the longest side and compress so a
+// reviewer with a few diagrams stays small.
+async function prepareImage(file) {
+  if (!file || !/^image\/(png|jpeg|webp)$/.test(file.type)) throw new Error('Choose a PNG, JPEG or WebP image.');
+  const original = URL.createObjectURL(file);
+  let img;
+  try { img = await loadImage(original); }
+  catch (e) { URL.revokeObjectURL(original); throw new Error('Could not read that image.'); }
+  if (!img.width || !img.height) { URL.revokeObjectURL(original); throw new Error('That image has no readable size.'); }
+  const scale = Math.min(1, 1600 / Math.max(img.width, img.height));
+  if (scale === 1 && file.size <= 900 * 1024) return { blob: file, url: original };
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(img.width * scale));
+    canvas.height = Math.max(1, Math.round(img.height * scale));
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    let blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/webp', 0.85));
+    if (!blob) blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.88));
+    if (!blob) throw new Error('Could not prepare that image.');
+    URL.revokeObjectURL(original);
+    return { blob, url: URL.createObjectURL(blob) };
+  } catch (e) {
+    URL.revokeObjectURL(original);
+    throw new Error(e && e.message ? e.message : 'Could not prepare that image.');
+  }
+}
+async function pickDiagram(file) {
+  if (!file) return;
+  const token = ++diagToken;
+  diagErr = ''; diagBusy = true; diagramSetup();
+  try {
+    const { blob, url } = await prepareImage(file);
+    // The student may have gone home or picked another image while this was decoding.
+    if (token !== diagToken) { URL.revokeObjectURL(url); return; }
+    if (diagURL) URL.revokeObjectURL(diagURL);
+    diagBlob = blob; diagURL = url; diagParts = []; diagPending = null; diagNameText = '';
+    if (!diagTitleText) diagTitleText = file.name.replace(/\.[^.]+$/, '').slice(0, 120);
+  } catch (e) { if (token === diagToken) diagErr = e && e.message ? e.message : 'Could not read that image.'; }
+  if (token !== diagToken) return;
+  diagBusy = false; diagramSetup();
+}
+function addPart() {
+  if (!diagPending) { diagErr = 'Tap the part on the image first.'; diagramSetup(); return; }
+  const name = diagNameText.trim().replace(/\s+/g, ' ').slice(0, 80);
+  if (!name) return;
+  if (diagParts.some(p => p.name.toLowerCase() === name.toLowerCase())) { diagErr = 'That part is already labeled.'; diagramSetup(); return; }
+  diagParts.push({ x: diagPending.x, y: diagPending.y, name });
+  diagPending = null; diagNameText = ''; diagErr = ''; diagramSetup();
+  const input = document.getElementById('part-name'); if (input) input.focus();
+  say(name + ' added. ' + diagParts.length + ' parts labeled.');
+}
+async function createDiagram() {
+  if (!diagBlob || diagParts.length < 3 || diagBusy) return;
+  const token = ++diagToken;
+  diagBusy = true; diagErr = ''; diagramSetup();
+  try {
+    const imageId = 'img_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    await idbPut(imageId, diagBlob);
+    if (token !== diagToken) { dropImage(imageId); return; }
+    const title = (diagTitleText.trim() || 'Diagram').slice(0, 120);
+    const items = diagParts.map((p, i) => ({ id: 'img' + i, type: 'img', q: 'Identify the part marked on the diagram.', answer: p.name, imageId, hotspot: { x: p.x, y: p.y }, exp: '' }));
+    const r = { id: newRid(), title, items, ans: {}, src: undefined, tags: undefined, opts: { max: 0, mcOnly: false }, plan: { exam: '', srs: {} } };
+    R.unshift(r); save(); clearDiagram(); open(r);
+  } catch (e) {
+    if (token !== diagToken) return;
+    diagBusy = false;
+    diagErr = e && e.message ? e.message : 'Could not save the diagram reviewer.';
+    diagramSetup();
+  }
+}
+function diagramSetup() {
+  const canCreate = !!diagBlob && diagParts.length >= 3 && !diagBusy;
+  const pins = diagParts.map((p, i) => {
+    const el = h('span', { class: 'pin', 'aria-hidden': 'true' }, h('b', null, i + 1));
+    el.style.left = (p.x * 100) + '%'; el.style.top = (p.y * 100) + '%';
+    return el;
+  });
+  if (diagPending) {
+    const el = h('span', { class: 'pin pending', 'aria-hidden': 'true' }, h('b', null, '?'));
+    el.style.left = (diagPending.x * 100) + '%'; el.style.top = (diagPending.y * 100) + '%';
+    pins.push(el);
+  }
+  draw(h('div', null,
+    h('button', { class: 'btn alt', onclick: () => { clearDiagram(); home(); } }, '← Cancel'),
+    h('h1', null, 'Diagram reviewer'),
+    h('p', { class: 'sub' }, 'Upload a diagram, tap each part you want to learn, and type its name. Each label becomes an identification question that works offline.'),
+    warn(),
+    h('div', { class: 'card' },
+      h('h2', { class: 'k' }, '1 · Image'),
+      h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp', 'aria-label': 'Choose a diagram image', onchange: e => pickDiagram(e.target.files[0]) }),
+      diagURL
+        ? h('span', { class: 'diagram' },
+            h('img', { src: diagURL, alt: 'Diagram to label. Tap a part to place a marker.', onclick: e => {
+              const r = e.currentTarget.getBoundingClientRect();
+              if (!r.width || !r.height) return;
+              diagPending = { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) };
+              diagErr = ''; diagramSetup();
+              const input = document.getElementById('part-name'); if (input) input.focus();
+              say('Point placed. Type the name of that part.');
+            } }), pins)
+        : h('p', { class: 'k' }, diagBusy ? 'Preparing the image…' : 'No image chosen yet. PNG, JPEG or WebP.'),
+      diagURL && h('p', { class: 'k' }, 'Tap the image to place a marker. Choosing another image starts over; images are resized to 1600 px and stay on this device.')),
+    diagURL && h('div', { class: 'card' },
+      h('h2', { class: 'k' }, '2 · Parts'),
+      diagParts.length
+        ? h('div', null, diagParts.map((p, i) => h('div', { class: 'part row' },
+            h('span', { class: 'mono' }, String(i + 1)),
+            h('span', { style: 'flex:1' }, p.name),
+            h('button', { class: 'btn alt', 'aria-label': 'Remove part ' + (i + 1) + ': ' + p.name, onclick: () => { diagParts.splice(i, 1); diagramSetup(); say(p.name + ' removed.'); } }, 'Remove'))))
+        : h('p', { class: 'k' }, 'No parts labeled yet.'),
+      h('div', { class: 'row' },
+        h('input', { type: 'text', id: 'part-name', 'aria-label': 'Name of the marked part', placeholder: diagPending ? 'Name the marked part' : 'Tap the image first', value: diagNameText, oninput: e => {
+          diagNameText = e.target.value;
+          const btn = document.getElementById('add-part'); if (btn) btn.disabled = !diagNameText.trim();
+        }, onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); addPart(); } } }),
+        h('button', { class: 'btn', id: 'add-part', disabled: !diagPending || !diagNameText.trim() ? '' : null, onclick: addPart }, 'Add part')),
+      h('p', { class: 'k' }, 'Label at least 3 parts.')),
+    diagURL && h('div', { class: 'card' },
+      h('h2', { class: 'k' }, '3 · Name and practice'),
+      h('input', { type: 'text', 'aria-label': 'Reviewer title', placeholder: 'Reviewer title (for example: Parts of the heart)', value: diagTitleText, oninput: e => { diagTitleText = e.target.value; } }),
+      h('p', null, h('button', { class: 'btn', disabled: canCreate ? null : '', onclick: createDiagram }, diagBusy ? 'Saving…' : 'Create diagram reviewer')),
+      diagParts.length < 3 && h('p', { class: 'k' }, 'Add at least 3 parts first.')),
+    diagErr && h('p', { class: 'err', role: 'alert' }, diagErr)), 'diagram');
+}
+
 function home() {
   pending = null;
   if (reciteActive) stopVoice();
+  if (lastScreen === 'diagram') clearDiagram();
   const list = h('div', { class: 'list' });
   flashing = false; stopTimer();
   const n = note; note = '';
@@ -309,6 +562,10 @@ function home() {
         h('label', null, h('input', { type: 'checkbox', checked: optMc ? '' : null, onchange: e => { optMc = e.target.checked; } }), 'Multiple choice only')),
       h('p', null, h('button', { class: 'btn', disabled: busy || !files.length ? '' : null, onclick: run }, busy ? 'Working…' : 'Generate reviewer')),
       status && h('p', { class: 'k', role: 'status' }, status), err && h('p', { class: 'err', role: 'alert' }, err)),
+    h('div', { class: 'card' },
+      h('h2', { class: 'k' }, 'Diagrams'),
+      h('p', { class: 'k' }, 'Upload a heart, cell, map or any diagram, tap its parts and name them. Each part becomes an identification question that works offline.'),
+      h('button', { class: 'btn alt', onclick: () => { clearDiagram(); diagramSetup(); } }, 'Make a diagram reviewer')),
     h('div', { class: 'card' }, h('h2', { class: 'k' }, 'Backup'),
       h('p', { class: 'k' }, 'Save your reviewers to a file to move them to another device or keep a copy.'),
       h('div', { class: 'row' }, h('button', { class: 'btn alt', disabled: R.length ? null : '', onclick: exportAll }, 'Export all'),
@@ -326,12 +583,12 @@ function home() {
           + (examDaysLeft(r.plan && r.plan.exam) !== null ? ' · ' + examText(r.plan.exam) : ''))),
       dueCount(r) > 0 && h('button', { class: 'btn', onclick: () => { open(r); startFlash('due'); } }, 'Review ' + dueCount(r)),
       h('button', { class: 'btn alt', onclick: () => open(r) }, 'Open'),
-      h('button', { class: 'btn alt', onclick: () => { if (confirm('Delete "' + r.title + '"?')) { R = R.filter(x => x !== r); save(); home(); } } }, 'Delete'));
+      h('button', { class: 'btn alt', onclick: () => { if (confirm('Delete "' + r.title + '"?')) deleteReviewer(r); } }, 'Delete'));
   fill(); cur = null; draw(node, 'home'); if (n) say(n);
   const nt = document.getElementById('title'); if (nt) nt.value = tv;
 }
 
-const TABS = { mc: 'Multiple choice', id: 'Identification', enum: 'Enumeration' };
+const TABS = { mc: 'Multiple choice', id: 'Identification', enum: 'Enumeration', img: 'Diagram' };
 function wipe() { for (const k in draft) delete draft[k]; }
 // Shuffle = rebuild a new question set from the saved file text (random pick, new wrong options, new order).
 // Reviewers saved before source text was kept can only reorder what they have.
@@ -367,7 +624,7 @@ function startFlash(mode = 'all') {
 }
 function flashAnswer(it) {
   if (it.type === 'mc') return it.options[it.answer] || '';
-  if (it.type === 'id') return it.answer || '';
+  if (it.type === 'id' || it.type === 'img') return it.answer || '';
   return (it.items || []).join(', ');
 }
 function flipcards() {
@@ -390,8 +647,8 @@ function flipcards() {
   const mark = isKnown => { known[isKnown ? 'add' : 'delete'](it.id); learn[isKnown ? 'delete' : 'add'](it.id); r.flashKnown = [...known]; r.flashLearn = [...learn]; reviewItem(r, it.id, isKnown); save(); };
   // Spans, not divs: a <button> may only contain phrasing content. CSS makes them flex/block.
   const face = flashRevealed
-    ? h('span', { class: 'flip-face answer-face' }, h('span', { class: 'k' }, 'ANSWER'), h('span', { class: 'flip-copy' }, flashAnswer(it)), h('span', { class: 'flip-source' }, it.exp ? 'From your reviewer notes: ' + it.exp : ''))
-    : h('span', { class: 'flip-face question-face' }, h('span', { class: 'k' }, 'QUESTION · TAP TO FLIP'), h('span', { class: 'flip-copy' }, it.q));
+    ? h('span', { class: 'flip-face answer-face' }, h('span', { class: 'k' }, 'ANSWER'), it.type === 'img' && imageBlock(it, true), h('span', { class: 'flip-copy' }, flashAnswer(it)), h('span', { class: 'flip-source' }, it.exp ? 'From your reviewer notes: ' + it.exp : ''))
+    : h('span', { class: 'flip-face question-face' }, h('span', { class: 'k' }, 'QUESTION · TAP TO FLIP'), it.type === 'img' && imageBlock(it), h('span', { class: 'flip-copy' }, it.q));
   const node = h('div', null,
     h('div', { class: 'row' }, h('button', { class: 'btn alt', onclick: () => { home(); } }, '← Back'), h('span', { class: 'k' }, 'FLASHCARDS')),
     h('h1', null, r.title),
@@ -418,13 +675,14 @@ let reciteIndex = 0, reciteToken = 0, reciteActive = false, recitePhase = 'idle'
 let reciteRate = 1, reciteThink = 4000, reciteAnswers = true, reciteAuto = true;
 function ttsReady() { return 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined'; }
 function reciteQuestion(it) {
+  if (it.type === 'img') return 'Look at the diagram. Identify the part marked.';
   const q = it.q.replace(/_{3,}/g, 'blank');
   if (it.type !== 'mc') return q;
   return q + ' Options: ' + it.options.map((o, i) => 'ABCD'[i] + '. ' + o).join('. ') + '.';
 }
 function reciteAnswer(it) {
   if (it.type === 'mc') return 'The answer is ' + 'ABCD'[it.answer] + ': ' + it.options[it.answer] + '.';
-  if (it.type === 'id') return 'The answer is ' + it.answer + '.';
+  if (it.type === 'id' || it.type === 'img') return 'The answer is ' + it.answer + '.';
   return 'The answers are: ' + (it.items || []).join(', ') + '.';
 }
 function voice() {
@@ -512,6 +770,7 @@ function recite() {
     h('div', { class: 'flip-progress-row' }, h('span', { class: 'mono' }, (idx + 1) + ' / ' + items.length), h('span', { class: 'k', role: 'status' }, label), bar((idx + 1) / items.length * 100, 'Recitation progress')),
     h('div', { class: 'recite-card' },
       h('div', { class: 'k' }, TABS[it.type] + (showAnswer ? ' · ANSWER' : ' · QUESTION')),
+      it.type === 'img' && imageBlock(it, showAnswer),
       h('p', { class: 'recite-text' }, showAnswer ? flashAnswer(it) : it.q),
       showAnswer && it.exp && h('p', { class: 'k' }, it.exp)),
     h('div', { class: 'row' },
@@ -548,7 +807,7 @@ function startTimed(list) {
 function answer(it, val) {
   let ok, exp;
   if (it.type === 'mc') { ok = val === it.answer; exp = it.options[it.answer]; }
-  else if (it.type === 'id') { ok = idOk(it.answer, val); exp = it.answer; }
+  else if (it.type === 'id' || it.type === 'img') { ok = idOk(it.answer, val); exp = it.answer; }
   else { const c = enumCheck(it.items, val); ok = c.ok; exp = it.items.join(', ') + (c.ok ? '' : ' (you missed: ' + c.missing.join(', ') + ')'); }
   cur.ans[it.id] = { val, ok, exp };
   reviewItem(cur, it.id, ok);
@@ -609,13 +868,14 @@ function quiz() {
         it.type === 'mc'
           ? h('div', { role: 'group', 'aria-labelledby': 'q-' + it.id }, it.options.map((o, oi) => h('button', { class: 'opt' + (a ? (oi === it.answer ? ' ok' : oi === a.val ? ' bad' : '') : ''), disabled: a || over ? '' : null, onclick: () => answer(it, oi) }, h('b', null, 'ABCD'[oi]), o, a && oi === it.answer && h('span', { class: 'mark' }, '✓ Correct answer'), a && oi === a.val && oi !== it.answer && h('span', { class: 'mark' }, '✗ Your answer'))))
           : h('div', null,
+            it.type === 'img' && imageBlock(it),
             it.type === 'enum'
               ? h('textarea', { rows: 4, 'aria-labelledby': 'q-' + it.id, placeholder: 'One per line or separated by commas', disabled: a || over ? '' : null, oninput: e => { draft[it.id] = e.target.value; }, onkeydown: e => { if (e.key === 'Enter' && e.ctrlKey) answer(it, draft[it.id] || ''); } }, a ? a.val : draft[it.id] || '')
               : h('input', { type: 'text', 'aria-labelledby': 'q-' + it.id, placeholder: 'Your answer', value: a ? a.val : draft[it.id] || '', disabled: a || over ? '' : null, oninput: e => { draft[it.id] = e.target.value; }, onkeydown: e => { if (e.key === 'Enter') answer(it, draft[it.id] || ''); } }),
             !a && !over && h('p', null, h('button', { class: 'btn', onclick: () => answer(it, draft[it.id] || '') }, 'Check'))),
         a && h('div', { class: 'fb' + (a.ok ? '' : ' bad'), id: 'fb-' + it.id, tabindex: '-1' }, h('b', null, a.ok ? 'Correct.' : 'Not quite.'),
           h('div', null, 'Answer: ' + a.exp + '.')),
-        a && sourcePanel(r, it),
+        a && it.type !== 'img' && sourcePanel(r, it),
         h('div', { class: 'ans-print' }, 'Answer: ' + flashAnswer(it)));
     })),
     (done || over) && h('div', { class: 'card done', role: 'status' }, h('b', null, (over && !done ? 'Time is up. ' : '') + 'Part score: ' + partGood + ' of ' + mine.length + ' correct (' + Math.round(partGood / mine.length * 100) + '%)'),

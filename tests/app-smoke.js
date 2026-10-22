@@ -1,6 +1,6 @@
 // Run: node tests/app-smoke.js   (Node 18+)
-// Boots js/app.js against a small DOM stub: storage cap, import guard, study plan, source lookup
-// and on-demand PDF.js loading, plus a render pass over the home, quiz and flashcard screens.
+// Boots js/app.js against a small DOM stub: storage cap, import guard, study plan, source lookup,
+// diagram items and image storage, plus a render pass over the home, quiz and flashcard screens.
 const fs = require('fs');
 const vm = require('vm');
 const assert = require('assert');
@@ -186,6 +186,65 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   await ctx.playFrom(0);
   assert.deepStrictEqual(spoken, ['q0', 'The answer is a.', 'q1', 'The answer is b.', 'q2', 'The answer is c.'], 'question and answer are read in order');
   assert.match(screenText(appEl), /Finished/, 'the session ends on the finished state');
+
+  // 8. image storage, diagrams: validation, backup envelope, setup and quiz rendering
+  function fakeIndexedDB() {
+    const data = new Map();
+    return {
+      open() {
+        const db = {
+          objectStoreNames: { contains: () => true },
+          transaction() {
+            const tx = { oncomplete: null, onerror: null, onabort: null };
+            tx.objectStore = () => ({
+              put(value, key) { data.set(key, value); return { result: key }; },
+              get(key) { return { result: data.get(key) }; },
+              delete(key) { data.delete(key); return { result: undefined }; }
+            });
+            setTimeout(() => tx.oncomplete && tx.oncomplete(), 3);
+            return tx;
+          }
+        };
+        const req = { result: db, onupgradeneeded: null, onsuccess: null, onerror: null };
+        setTimeout(() => req.onsuccess && req.onsuccess(), 1);
+        return req;
+      }
+    };
+  }
+  sandbox.indexedDB = fakeIndexedDB();
+  sandbox.Blob = class { constructor(parts, opts) { this.parts = parts; this.type = (opts && opts.type) || ''; } };
+  const demoBlob = new sandbox.Blob(['pixels'], { type: 'image/png' });
+  await ctx.idbPut('img_demo', demoBlob);
+  assert.strictEqual(await ctx.idbGet('img_demo'), demoBlob, 'an image round-trips through storage');
+  assert.strictEqual(await ctx.imageURL('img_demo'), 'blob:x', 'the stored image becomes an object URL');
+  assert.strictEqual(await ctx.imageURL('img_demo'), 'blob:x', 'the object URL is reused');
+  await ctx.dropImage('img_demo');
+  assert.strictEqual(await ctx.idbGet('img_demo'), undefined, 'deleting a reviewer removes its image');
+  const imgItem = (i, name) => ({ id: 'img' + i, type: 'img', q: 'Identify the part marked on the diagram.', answer: name, imageId: 'img_demo', hotspot: { x: 0.3, y: 0.4 }, exp: '' });
+  const imgReviewer = ctx.cleanReviewer({ title: 'Heart', opts: {}, items: [imgItem(0, 'Right atrium'), imgItem(1, 'Left ventricle'), imgItem(2, 'Aorta')] });
+  assert.ok(imgReviewer && imgReviewer.items.every(i => i.type === 'img'), 'diagram items survive validation');
+  assert.strictEqual(ctx.cleanItem({ ...imgItem(0, 'X'), hotspot: { x: 2, y: 0 } }), null, 'a hotspot outside the image is rejected');
+  assert.strictEqual(ctx.cleanItem({ ...imgItem(0, 'X'), imageId: '' }), null, 'an image id is required');
+  assert.strictEqual(ctx.flashAnswer(imgReviewer.items[0]), 'Right atrium');
+  assert.strictEqual(ctx.reciteAnswer(imgReviewer.items[0]), 'The answer is Right atrium.');
+  assert.match(ctx.reciteQuestion(imgReviewer.items[0]), /Look at the diagram/);
+  const restored = ctx.cleanBackup({ version: 2, reviewers: [imgReviewer], images: { img_demo: { data: 'data:image/png;base64,AAAA' }, bad: { data: 'https://example.com/x.png' } } });
+  assert.strictEqual(restored.reviewers.length, 1);
+  assert.deepStrictEqual(Object.keys(restored.images), ['img_demo'], 'only real image payloads are restored');
+  const oldBackup = ctx.cleanBackup([imgReviewer]);
+  assert.strictEqual(oldBackup.reviewers.length, 1, 'old array backups still import');
+  assert.strictEqual(Object.keys(oldBackup.images).length, 0, 'no images in an old backup');
+  ctx.clearDiagram();
+  ctx.diagramSetup();
+  assert.match(screenText(appEl), /Diagram reviewer/, 'the diagram setup screen renders');
+  assert.match(screenText(appEl), /No image chosen/, 'it asks for an image first');
+  await ctx.idbPut('img_demo', new sandbox.Blob(['pixels'], { type: 'image/png' }));
+  ctx.open(imgReviewer);
+  assert.match(screenText(appEl), /Identify the part marked/, 'a diagram question renders');
+  await new Promise(resolve => setTimeout(resolve, 15));
+  const diagramImgs = find(appEl, e => e.tagName === 'IMG');
+  assert.ok(diagramImgs.length > 0, 'the image element is present');
+  assert.strictEqual(diagramImgs[0].src, 'blob:x', 'the stored diagram is shown on the question');
 
   // 9. PDF.js is fetched on demand, in worker-before-viewer order, and only once
   assert.deepStrictEqual(scripts, [], 'nothing loaded at boot');

@@ -80,6 +80,17 @@ a.l{color:var(--acc);cursor:pointer;text-decoration:underline;background:none;bo
 .recite-card{display:flex;flex-direction:column;justify-content:center;gap:14px;min-height:240px;margin:18px 0;padding:26px 24px;border:1.5px solid var(--edge);border-radius:16px;background:linear-gradient(145deg,var(--card),color-mix(in srgb,var(--acc) 8%,var(--card)));box-shadow:0 10px 28px var(--shadow)}
 .recite-text{margin:0;font-size:clamp(1.25rem,3.5vw,1.75rem);line-height:1.4;font-weight:700;white-space:pre-wrap;overflow-wrap:anywhere}
 
+/* Diagrams */
+.diagram{position:relative;display:inline-block;width:fit-content;max-width:100%;margin:10px 0;line-height:0;vertical-align:top}
+.diagram img{display:block;max-width:100%;height:auto;border:1px solid var(--line);border-radius:8px;background:var(--card)}
+.pin{position:absolute;left:50%;top:50%;width:26px;height:26px;transform:translate(-50%,-50%);border-radius:50%;background:var(--acc);border:3px solid var(--card);box-shadow:0 0 0 1px var(--acc)}
+.pin b{position:absolute;inset:0;display:grid;place-items:center;font:700 12px ui-monospace,Menlo,monospace;color:#14213d}
+.pin.pending{background:var(--bad);box-shadow:0 0 0 1px var(--bad)}
+.pin.pending b{color:#fff}
+.part{padding:8px 0;border-top:1px solid var(--line)}
+.part:first-child{border-top:0;padding-top:0}
+@media print{.diagram{break-inside:avoid}}
+
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}.flip-card:hover{transform:none}}
 @media(forced-colors:active){.bar>i{background:Highlight}.opt.ok,.opt.bad,.fb{border:2px solid CanvasText}}
 
