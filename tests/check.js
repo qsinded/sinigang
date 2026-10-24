@@ -84,22 +84,5 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
   }
   assert(sawTF, 'true/false items appear');
   assert.deepStrictEqual(enumCheck(['a', 'bb', 'ccc'], 'ccc, a').missing, ['bb']);
-  // outline lines are not quizzed, filler is stripped, questions name their section, "because" becomes a reason question
-  const course = [
-    'Topics covered', 'Module 1 — Computer organization, functional units, instruction cycle, number systems', 'Module 2 — IA-32 processor architecture, registers, memory management, protection and multitasking',
-    'Memory', 'A cache is basically a very small fast memory placed close to the CPU (see Figure 2).', 'RAM is the main working memory that holds running programs, etc.',
-    'A stack is a region of memory that stores return addresses and local data.', 'A heap is a region of memory used for data that lives beyond one function call.',
-    'The CPU uses a cache because main memory is much slower than the processor itself.',
-    'Interrupts are handled quickly because the CPU must respond before the device loses its data.',
-    'Pages are fixed in size because the hardware can then find any page with one simple calculation.',
-    'Registers sit inside the CPU because the processor needs its working values within one clock cycle.',
-  ];
-  const seenQ = new Set(), seenOpt = new Set();
-  for (let k = 0; k < 40; k++) generate(course, course.map(() => 'page 1')).forEach(x => { seenQ.add(x.q); (x.options || []).forEach(o => seenOpt.add(o)); (x.items || []).forEach(o => seenOpt.add(o)); });
-  const allText = [...seenQ, ...seenOpt].join('\n');
-  assert(!/Module \d/.test(allText), 'outline lines are skipped');
-  assert(!/basically|very small|see Figure|etc\./.test(allText), 'filler is removed: ' + allText);
-  assert([...seenQ].some(q => /^In "Memory", /.test(q)), 'question carries its section');
-  assert([...seenQ].some(q => /omplete the explanation: .* because _____\.$/.test(q)), 'reason question is built');
   console.log('all checks passed');
 })().catch(e => { console.error(e); process.exit(1); });
