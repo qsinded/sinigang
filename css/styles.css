@@ -138,3 +138,11 @@ p.k,.card>.k:not(h2),.err+.k{font:inherit;text-transform:none;letter-spacing:0}
 .card>h2.k:first-child{margin-top:0}
 .more>summary::before{content:'▸';margin-right:8px;display:inline-block;transition:transform .12s}
 .more[open]>summary::before{transform:rotate(90deg)}
+
+/* Saved reviewers: same box shape every time. Details on top, buttons share one row at the bottom. */
+.list{align-items:stretch!important}
+.card.saved{display:flex;flex-direction:column;gap:12px;margin:0 0 16px;overflow-wrap:anywhere}
+.card.saved .actions{margin-top:auto}
+.card.saved .actions .btn{flex:0 0 auto;padding:6px 14px;font-size:.9rem}
+.list{grid-auto-rows:1fr}
+.card.saved{min-height:7.5rem}

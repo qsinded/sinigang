@@ -596,14 +596,15 @@ function home() {
     list);
   const match = r => R.length <= 5 || r.title.toLowerCase().includes(q.trim().toLowerCase());
   const fill = () => { const m = R.filter(match); list.replaceChildren(...(m.length || !R.length ? m.map(card) : [h('p', { class: 'k' }, 'No saved reviewer matches "' + q + '".')])); };
-  const card = r => h('div', { class: 'card row' },
-      h('div', { style: 'flex:1' }, h('b', null, r.title),
+  const card = r => h('div', { class: 'card saved' },
+      h('div', null, h('b', null, r.title),
         h('div', { class: 'k' }, r.items.length + ' items · ' + Object.values(r.ans).filter(a => a.ok).length + ' correct'
           + (dueCount(r) ? ' · ' + dueCount(r) + ' due' : '')
           + (examDaysLeft(r.plan && r.plan.exam) !== null ? ' · ' + examText(r.plan.exam) : ''))),
-      dueCount(r) > 0 && h('button', { class: 'btn', onclick: () => { open(r); startFlash('due'); } }, 'Review ' + dueCount(r)),
-      h('button', { class: 'btn alt', onclick: () => open(r) }, 'Open'),
-      h('button', { class: 'btn alt', onclick: () => { if (confirm('Delete "' + r.title + '"?')) deleteReviewer(r); } }, 'Delete'));
+      h('div', { class: 'row actions' },
+        dueCount(r) > 0 && h('button', { class: 'btn', onclick: () => { open(r); startFlash('due'); } }, 'Review ' + dueCount(r)),
+        h('button', { class: 'btn alt', onclick: () => open(r) }, 'Open'),
+        h('button', { class: 'btn alt', onclick: () => { if (confirm('Delete "' + r.title + '"?')) deleteReviewer(r); } }, 'Delete')));
   fill(); cur = null; draw(node, 'home'); if (n) say(n);
   const nt = document.getElementById('title'); if (nt) nt.value = tv;
 }
