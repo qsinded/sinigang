@@ -5,7 +5,7 @@
 const fs = require('fs'), path = require('path');
 const { generate, norm } = require('../js/reviewer-generator.js');
 
-const BASELINE = { leak: 0, dupOptions: 0, badKey: 0, outlineOption: 0, tooShort: 0, ungrounded: 0, dupQuestion: 0, falseTrueMismatch: 0, filler: 0, ambiguous: 0, variant: 0 };
+const BASELINE = { leak: 0, dupOptions: 0, badKey: 0, outlineOption: 0, tooShort: 0, ungrounded: 0, dupQuestion: 0, falseTrueMismatch: 0, filler: 0, ambiguous: 0, variant: 0, tfFragment: 0, tfMeta: 0 };
 const RUNS = 25;
 
 function seeded(seed) { // mulberry32
@@ -41,6 +41,12 @@ function check(q, bad) {
     if (q.options.some(o => OUTLINE_OPT.test(o)) || OUTLINE_OPT.test(q.q.replace(/^.*?"/, ''))) bad.outlineOption++;
   }
   if (q.q.replace(/_+/g, '').trim().length < 20) bad.tooShort++;
+  // True/false must state a claim: a full sentence, not a slide lead-in or a fragment.
+  if (/^True or false: /.test(q.q)) {
+    const st = q.q.slice('True or false: '.length);
+    if (!/^[A-Z]/.test(st) || !/\.$/.test(st) || /[:;,]-?\s*$/.test(st.replace(/\.$/, '')) || /\?$/.test(st) || /\S:\s/.test(st)) bad.tfFragment++;
+    if (/matches this description|is described by/.test(q.q)) bad.tfMeta++;
+  }
   // the answer must come from the source sentence it cites
   if (q.type === 'enum' ? !q.items.every(i => covered(i, rawSrc(q)) >= 0.8) : !/^True$|^False$/.test(ans) && covered(ans, rawSrc(q)) < 0.8) bad.ungrounded++;
   // a "true" statement must come from the source; a "false" one must not be a statement the source makes
@@ -61,7 +67,9 @@ function check(q, bad) {
   check({ type: 'id', q: 'Which term is a very small storage place?', answer: 'register', exp: '(page 1) register' }, b);
   check({ type: 'mc', q: 'Which term runs code? CPU', options: ['CPU', 'RAM'], answer: 0, exp: '(page 1) The CPU and RAM hold code.' }, b);
   check({ type: 'mc', q: 'Which term holds the top address?', options: ['stack pointer', 'stack'], answer: 0, exp: '(page 1) The stack pointer holds the top address.' }, b);
-  for (const k of ['ambiguous', 'variant', 'filler', 'leak', 'dupOptions', 'badKey', 'outlineOption', 'tooShort', 'ungrounded', 'falseTrueMismatch']) if (!b[k]) throw new Error('quality check "' + k + '" no longer catches a bad question');
+  check({ type: 'mc', q: 'True or false: The primary function of the Control Unit (CU) is to:', options: ['True', 'False'], answer: 0, exp: '(page 1) x' }, b);
+  check({ type: 'mc', q: 'True or false: "cache" matches this description: a small memory', options: ['True', 'False'], answer: 0, exp: '(page 1) x' }, b);
+  for (const k of ['ambiguous', 'variant', 'filler', 'leak', 'dupOptions', 'badKey', 'outlineOption', 'tooShort', 'ungrounded', 'falseTrueMismatch', 'tfFragment', 'tfMeta']) if (!b[k]) throw new Error('quality check "' + k + '" no longer catches a bad question');
 })();
 
 const dir = path.join(__dirname, 'corpus'), bad = Object.fromEntries(Object.keys(BASELINE).map(k => [k, 0]));

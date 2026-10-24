@@ -55,12 +55,13 @@ const words = s => new Set((String(s).toLowerCase().match(/[a-z0-9]{4,}/g) || []
 const overlap = (a, b) => { const x = words(a), y = words(b); let n = 0; x.forEach(w => { if (y.has(w)) n++; }); return n / (Math.min(x.size, y.size) || 1); };
 // Pick another item's term to put in place of this one's, only when the swap cannot be true: the other term is not
 // mentioned in this sentence, is not a variant of this term, and its own source says something different.
-function verifiedSwap(it, list, srcOf, termOf, textOf) {
+function verifiedSwap(it, list, srcOf, termOf, textOf, fitsGrammar = () => true) {
   const ok = list.filter(o => o !== it && norm(termOf(o)) !== norm(termOf(it))
     && !norm(termOf(o)).includes(norm(termOf(it))) && !norm(termOf(it)).includes(norm(termOf(o)))
     && !norm(srcOf(it)).includes(norm(termOf(o))) && overlap(textOf(it), textOf(o)) < 0.4);
-  const pick = near(termOf(it), ok.map(termOf))[0];
-  return pick;
+  // A plural term dropped into a singular sentence reads as a typo ("Chloroplasts is the process...").
+  const same = ok.filter(o => fitsGrammar(o, it));
+  return near(termOf(it), (same.length ? same : ok).map(termOf))[0];
 }
 // Kind of term: acronym (EAX), has a digit (IA-32), several words, or a plain word. Distractors of the same kind look as plausible.
 const shape = t => /^[A-Z][A-Z0-9_.\-]+$/.test(t) ? 'acronym' : /\d/.test(t) ? 'number' : /\s/.test(t) ? 'phrase' : 'word';
@@ -79,6 +80,21 @@ function clean(s) {
     .replace(/\s{2,}/g, ' ').replace(/\s+([,.;])/g, '$1').trim();
 }
 const cap1 = s => s.charAt(0).toUpperCase() + s.slice(1);
+// True/false and fill-in-the-blank need a complete declarative sentence. A slide lead-in ("... is to:", a
+// heading, an option line) is not a claim, and swapping a word inside one produces nonsense.
+const LEAD_IN = /[:;,.]?\s*[-–—]\s*$|[:;,]\s*$/;                    // "... is to:", "as follows:"
+const DEAD_END = /\b(?:is|are|was|were|be|to|of|the|a|an|and|or|by|for|with|from|in|on|at|as|that|which|such as|includes?|consists? of|following)\s*[.:]?$/i;
+const VERB = /\b(?:is|are|was|were|has|have|had|can|cannot|will|would|does|do|means|refers|uses|runs|holds|stores|keeps|converts|allows|provides|contains|includes|carries|moves|executes|fetches|decodes|directs|controls|manages|takes|needs|sends|receives|connects|measures|calculates|reads|writes|gives|makes|performs|processes|represents|describes|combines|divides|splits|sorts|filters|forwards|translates|compiles|interprets|allocates|returns|accepts|requires|supports|enables|prevents|detects|reduces|increases|overlaps|schedules|loads|saves|links|joins|separates|counts|compares|matches|replaces|removes|adds|sets|acts|works|becomes|remains|appears|occurs)\b/i;
+function statementOk(text) {
+  const t = String(text || '').trim();
+  if (t.length < 25 || t.length > 240) return false;
+  if (/\?\s*$/.test(t)) return false;          // a question is not a proposition
+  if (LEAD_IN.test(t)) return false;            // cut-off lead-in
+  if (/^["“'(]/.test(t)) return false;          // a quoted fragment, not a claim
+  if (/\S:\s/.test(t)) return false;           // "Term: explanation" is not a sentence
+  if (DEAD_END.test(t.replace(/\.$/, ''))) return false;
+  return VERB.test(t);                          // must say something that can be true or false
+}
 // Outline material (agenda, "Module 2 — ...", "Topics covered") lists what a course covers; it is not a fact to quiz on.
 const OUTLINE = /^(topics?( covered)?|agenda|outline|contents?|overview|objectives?|learning outcomes?|course (outline|map)|schedule|syllabus)$/i;
 const LABEL = /^(module|unit|chapter|lesson|week|day|topic|part|section|session|lecture|step)\s*[\dIVX]+$/i;
@@ -106,12 +122,20 @@ function generate(rawLines, tags = [], o = {}) {
     if (BUL.test(l)) {
       flushPara();
       const it = l.replace(BUL, '');
-      if (hdr) items.push(it); else sents.push(note(it, g));
+      if (hdr) items.push(it);
+      else if (/[:;]\s*$/.test(it) && it.length < 120) { hdr = it.replace(/\s*[:;]\s*$/, ''); hdrTag = g; sect = hdr; } // "6. The CU is to:" is a lead-in
+      else sents.push(note(it, g));
     } else {
       flushList();
       if (l.endsWith(':') && l.length < 100) { flushPara(); hdr = l.slice(0, -1); hdrTag = g; sect = hdr; }
       else if (l.length < 50 && !/[.!?:,;]$/.test(l)) { flushPara(); sect = l; } // heading
-      else { if (!para) paraTag = g; para += (para ? ' ' : '') + l; }
+      else {
+        if (!para) paraTag = g;
+        // Slides and PDFs often drop the full stop at the end of a line. Joining "…to recognize first"
+        // with "The CPU is…" makes one long pseudo-sentence that then becomes a question.
+        else if (!/[.!?:;,]$/.test(para) && /^(?:The|A|An|This|These|It|They|Each|Every|All|Most|Some|Many|Another)\b/.test(l)) para += '.';
+        para += (para ? ' ' : '') + l;
+      }
     }
   }
   flushList(); flushPara();
@@ -142,6 +166,7 @@ function generate(rawLines, tags = [], o = {}) {
   const clozes = [], ctoks = new Set();
   for (const s of sents) {
     if (used.has(s) || s.length < 40 || s.length > 220 || OUTLINE.test((ctxOf.get(s) || '').trim())) continue;
+    if (!statementOk(s)) continue; // a blank needs a sentence too
     const mm = [...s.matchAll(/(?:^|[\s(])(\.?[A-Z][A-Z0-9_]{1,})\b/g)].map(x => x[1]).find(t => !STOP.has(t) && !ctoks.has(t));
     if (!mm) continue;
     ctoks.add(mm);
@@ -156,20 +181,44 @@ function generate(rawLines, tags = [], o = {}) {
   const prefer = it => x => (ctxByText.get(x) === it.ctx ? 30 : 0) + (shape(x) === shape(it.term) ? 10 : 0);
   // A multiple choice item is only kept when its key is unambiguous: distinct options and the answer among them.
   const keyOk = (opts, ans) => new Set(opts.map(norm)).size === opts.length && opts.every(o => norm(o)) && opts.includes(ans);
+  // A true/false item is the note's own sentence, with the term swapped only when it must be false.
+  // Both formats used to leak their builder into the question ("... matches this description"), which
+  // read as a matching puzzle instead of a claim; the sentence itself is the claim.
+  // Number of a term, from its last word: "enzyme" singular, "enzymes" plural, but "osmosis", "class"
+  // and "status" are singular however they end. A swap must agree with the verb already in the sentence.
+  const plural = x => {
+    const w = (String(x).trim().split(/\s+/).pop() || '').toLowerCase();
+    return /[^su]s$/.test(w) && !/(?:ss|is|us|osis)$/.test(w);
+  };
+  // "Mitochondria are ..." is plural however it is spelled, so the verb in the note wins over the
+  // spelling when the term is the subject of the sentence.
+  const subjectPlural = it => {
+    const esc = String(it.term).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const src = String(it.src).replace(/^(?:the|a|an)\s+/i, '');
+    if (new RegExp('^' + esc + '\\s+(?:are|were|have|do)\\b', 'i').test(src)) return true;
+    if (new RegExp('^' + esc + '\\s+(?:is|was|has|does)\\b', 'i').test(src)) return false;
+    return plural(it.term);
+  };
+  const tfText = (it, t) => {
+    const swap = it.kind === 'def'
+      ? verifiedSwap(it, defs, x => x.src, x => x.term, x => x.body, o => plural(o.term) === subjectPlural(it))
+      : verifiedSwap(it, clozes, x => x.src, x => x.term, x => x.src, o => plural(o.term) === subjectPlural(it));
+    // No candidate with the right number: skip this true/false rather than print "Chloroplasts is ...".
+    if (!t && (!swap || plural(swap) !== subjectPlural(it))) return '';
+    let st = clean(it.src).replace(it.term, t ? it.term : swap).replace(/\.$/, '');
+    // "A cache is ..." with the term swapped for an acronym reads "A RAM is ...": drop the article.
+    if (/^(?:A|An)\s+[A-Z0-9][A-Z0-9.\-]{1,}/.test(st)) st = st.replace(/^(?:A|An)\s+/, '');
+    return statementOk(st) ? 'True or false: ' + cap1(st) + '.' : '';
+  };
   const out = [];
   let nMC = 0, nID = 0, nTF = 0;
   for (const it of all) {
     const dist = near(it.term, pool[it.kind].filter(o => fits(it, o)).map(o => o.term), prefer(it));
     // True/false. A "false" statement is only made when it is certainly false (see verifiedSwap), never by luck.
     if (nTF < 8 && Math.random() < 0.2) {
-      const t = Math.random() < 0.5;
-      if (it.kind === 'def') {
-        const w = t ? it.term : verifiedSwap(it, defs, s => s.src, x => x.term, x => x.body);
-        if (w) { out.push({ type: 'mc', q: 'True or false: "' + w + '" matches this description: ' + it.body, options: ['True', 'False'], answer: t ? 0 : 1, exp: ex(it.src) }); nTF++; continue; }
-      } else {
-        const w = t ? it.term : verifiedSwap(it, clozes, s => s.src, x => x.term, x => x.src);
-        if (w) { out.push({ type: 'mc', q: 'True or false: ' + clean(it.src).replace(it.term, w), options: ['True', 'False'], answer: t ? 0 : 1, exp: ex(it.src) }); nTF++; continue; }
-      }
+      const t = Math.random() < 0.5, q = tfText(it, t);
+      // When this item cannot make an honest claim, fall through to a normal question instead.
+      if (q) { out.push({ type: 'mc', q, options: ['True', 'False'], answer: t ? 0 : 1, exp: ex(it.src) }); nTF++; continue; }
     }
     // Half the time ask a definition the other way round, so a rebuilt set is not the same questions.
     if (it.kind === 'def' && dist.length === 3 && nMC < 30 && Math.random() < 0.5) {
