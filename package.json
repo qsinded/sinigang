@@ -4,7 +4,8 @@
   "private": true,
   "description": "Offline reviewer, flashcard and exam-plan generator built from your own notes and diagrams.",
   "scripts": {
-    "test": "node tests/check.js && node tests/app-smoke.js"
+    "test": "node tests/check.js && node tests/app-smoke.js",
+    "quality": "node tests/quality.js"
   },
   "engines": {
     "node": ">=18"

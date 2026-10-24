@@ -41,6 +41,7 @@ no account and no build step.
 
 ```sh
 npm test                    # all suites (Node 18+)
+npm run quality            # question-quality report on tests/corpus/ (fails if a count gets worse)
 node tests/check.js
 node tests/app-smoke.js
 ```

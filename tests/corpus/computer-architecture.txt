@@ -1,0 +1,35 @@
+Course outline
+Topics covered
+• Module 1 — Computer organization, functional units, instruction cycle, number systems
+• Module 2 — IA-32 processor architecture, registers, memory management, protection and multitasking
+• Module 3 — Assembly language fundamentals, program structure, addressing modes and common instructions
+• Module 4 — Data definition, strings, arrays, constants and memory alignment
+
+Registers
+EAX, EBX, ECX, EDX are the four common general-purpose registers to recognize first
+The CPU is the part of a computer that runs instructions.
+A register is a very small storage location inside the CPU used to hold data.
+EAX is the accumulator register used for arithmetic operations.
+ESP is the stack pointer that holds the address of the top of the stack.
+The instruction pointer holds the address of the next instruction to run.
+
+Memory
+Paging splits memory into fixed-size pages; page tables translate virtual addresses to physical addresses.
+Segmentation divides memory into variable-size logical sections for each program.
+A cache is a small fast memory placed close to the CPU.
+The CPU uses a cache because main memory is much slower than the processor itself.
+The stack grows downward because new data is pushed at lower addresses than old data.
+RAM stands for random access memory used for short term storage.
+
+Addressing modes:
+• Immediate
+• Register
+• Direct
+• Indirect
+
+Instruction cycle
+The CPU repeats three steps: fetch, decode and execute.
+A pipeline works on several instructions at once so that the processor stays busy.
+Interrupts are signals that tell the CPU to pause its work and handle an urgent event.
+Page 12
+Page 13
