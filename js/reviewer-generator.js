@@ -71,6 +71,18 @@ const NOT_TERM = /^(this|that|these|those|it|they|there|here|which|what|when|whe
 const DEF = /^(?:(?:The|A|An)\s+)?([A-Za-z0-9.][\w .\/\-]{0,38}?)\s+(?:is defined as|is used to|refers to|stands for|means|is|are)\s+(.{15,})$/;
 const COLON = /^([A-Za-z.][\w .\/\-]{0,38}?)\s*(?::|\s[–—-]\s)\s*(.{20,})$/;
 const LOW = /^(note|notes|example|examples|figure|table|chapter|slide|page|summary|objectives?|introduction|references?|agenda)$/i; // headings, not terms
+// Exam-paper furniture: instructions, rubrics and answer keys describe the test, not the subject. A definition
+// split out of one of them ("Write TRUE if the statement" + "is") is nonsense, and so is a question built from it.
+// Also skipped: lines that already contain blanks, because the app cannot answer its own exam paper.
+const NUM_PREFIX = /^(?:\d+|[IVXLC]+|[A-Za-z])[.)]\s+/; // "6. ", "II. ", "A. "
+const IMPERATIVE = /^(?:instructions?|directions?|write|answer|choose|select|fill|complete|read|study|review|identify|enumerate|match|list|give|state|define|explain|describe|compute|solve|calculate|circle|encircle|underline|label|draw|name|provide|show|compare|discuss|mention|true or false|multiple choice|matching|essay|test|quiz|exam|score|points?)\b/i;
+const RUBRIC = /\bif the statement is\b|\bwrite (?:true|false|t|f)\b|\btrue or false\b|\btell whether\b|\bidentify whether\b|\bindicate whether\b|\bchoose the (?:best|correct|right)\b|\bfill in the blanks?\b|\banswer key\b|\bmatch(?:ing)? (?:type|the (?:items|column))\b/i;
+const PREBLANK = /_{3,}/;
+// The numbering is stripped first, so "6. Write TRUE if…" and "II. Write TRUE if…" are both recognised.
+const instruction = t => {
+  const x = String(t).trim().replace(NUM_PREFIX, '');
+  return IMPERATIVE.test(x) || RUBRIC.test(x) || PREBLANK.test(x);
+};
 // Filler that adds no meaning to a study question: hedges, "see Figure 2", citations, trailing "etc.".
 const FILL = /\b(?:basically|essentially|simply|actually|really|very|quite|just|in fact|please note that|note that|it is important to (?:note|remember) that)\b[,\s]*/gi;
 const LEAD = /^(?:also|however|therefore|thus|moreover|furthermore|in addition|additionally|hence|so|then)\b,?\s+/i;
@@ -84,7 +96,13 @@ const cap1 = s => s.charAt(0).toUpperCase() + s.slice(1);
 // heading, an option line) is not a claim, and swapping a word inside one produces nonsense.
 const LEAD_IN = /[:;,.]?\s*[-–—]\s*$|[:;,]\s*$/;                    // "... is to:", "as follows:"
 const DEAD_END = /\b(?:is|are|was|were|be|to|of|the|a|an|and|or|by|for|with|from|in|on|at|as|that|which|such as|includes?|consists? of|following)\s*[.:]?$/i;
-const VERB = /\b(?:is|are|was|were|has|have|had|can|cannot|will|would|does|do|means|refers|uses|runs|holds|stores|keeps|converts|allows|provides|contains|includes|carries|moves|executes|fetches|decodes|directs|controls|manages|takes|needs|sends|receives|connects|measures|calculates|reads|writes|gives|makes|performs|processes|represents|describes|combines|divides|splits|sorts|filters|forwards|translates|compiles|interprets|allocates|returns|accepts|requires|supports|enables|prevents|detects|reduces|increases|overlaps|schedules|loads|saves|links|joins|separates|counts|compares|matches|replaces|removes|adds|sets|acts|works|becomes|remains|appears|occurs)\b/i;
+// A claim needs a verb. Matching a fixed list missed the obvious forms ("move" but only "moves" was listed),
+// so words are reduced to a stem and checked against base forms; irregulars are listed separately.
+const VERB_IRREGULAR = new Set(('is are was were be been being has have had do does did can cannot could will would shall should may might must').split(' '));
+const VERB_BASE = new Set(('move store hold keep run convert allow provide contain include carry execute fetch decode direct control manage take need send receive connect measure calculate read write give make perform process represent describe combine divide split sort filter forward translate compile interpret allocate return accept require support enable prevent detect reduce increase overlap schedule load save link join separate count compare match replace remove add set act work become remain appear occur mean refer use call create produce generate store transfer change define convert consist depend belong follow precede happen exist live grow die feed protect regulate maintain balance break build destroy absorb release emit reflect transmit receive deliver route determine choose select apply assign attach bind connect update delete insert modify handle operate drive enable disable start stop begin end finish continue spread flow pass enter leave reach touch point refer apply test show tell say see look find get put bring hold cause affect allow permit require include involve relate correspond equate differ vary range total equal exceed reach strive').split(' '));
+const stem = w => w.replace(/(?:ing|ed|es|s)$/i, '');
+const verbIn = text => (String(text).match(/[A-Za-z]+/g) || []).some(w =>
+  VERB_IRREGULAR.has(w.toLowerCase()) || VERB_BASE.has(w.toLowerCase()) || VERB_BASE.has(stem(w).toLowerCase()));
 function statementOk(text) {
   const t = String(text || '').trim();
   if (t.length < 25 || t.length > 240) return false;
@@ -93,7 +111,7 @@ function statementOk(text) {
   if (/^["“'(]/.test(t)) return false;          // a quoted fragment, not a claim
   if (/\S:\s/.test(t)) return false;           // "Term: explanation" is not a sentence
   if (DEAD_END.test(t.replace(/\.$/, ''))) return false;
-  return VERB.test(t);                          // must say something that can be true or false
+  return verbIn(t);                             // must say something that can be true or false
 }
 // Outline material (agenda, "Module 2 — ...", "Topics covered") lists what a course covers; it is not a fact to quiz on.
 const OUTLINE = /^(topics?( covered)?|agenda|outline|contents?|overview|objectives?|learning outcomes?|course (outline|map)|schedule|syllabus)$/i;
@@ -143,6 +161,7 @@ function generate(rawLines, tags = [], o = {}) {
   const defs = [], seen = new Set(), seenBody = new Set(), used = new Set(), seenEnum = new Set();
   for (const s of sents) {
     if (used.has(s) || s.length < 25 || s.length > 260 || OUTLINE.test((ctxOf.get(s) || '').trim())) continue;
+    if (instruction(s)) continue; // "II. Write TRUE if the statement is correct…" is a rubric, not a fact
     // inline list: "Registers: AX, BX, CX and DX."
     const m = s.match(/^(.{6,80}?):\s*(.+)$/);
     if (m) {
@@ -154,7 +173,8 @@ function generate(rawLines, tags = [], o = {}) {
       const term = d[1].trim();
       const body = clean(d[2].replace(/[.;]$/, ''));
       // skip headings posing as terms and repeated definitions
-      if (body.length >= 15 && term.split(' ').length <= 5 && !NOT_TERM.test(term) && !LOW.test(term) && !LABEL.test(term) && !seen.has(term.toLowerCase()) && !seenBody.has(norm(body))) {
+      if (body.length >= 15 && term.split(' ').length <= 5 && !NOT_TERM.test(term) && !LOW.test(term) && !LABEL.test(term) && !seen.has(term.toLowerCase()) && !seenBody.has(norm(body))
+        && !instruction(term) && !/\b(?:is|are|was|were|be|do|does|did|will|can)\b/i.test(term)) { // "Write TRUE if the statement" is a clause, not a term
         seen.add(term.toLowerCase()); seenBody.add(norm(body));
         const mask = body.replace(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), '_____');
         defs.push({ kind: 'def', term, body: cap1(body), q: 'Which term is described? ' + cap1(mask), src: s, ctx: ctxOf.get(s) || '' });
@@ -167,6 +187,7 @@ function generate(rawLines, tags = [], o = {}) {
   for (const s of sents) {
     if (used.has(s) || s.length < 40 || s.length > 220 || OUTLINE.test((ctxOf.get(s) || '').trim())) continue;
     if (!statementOk(s)) continue; // a blank needs a sentence too
+    if (instruction(s)) continue;
     const mm = [...s.matchAll(/(?:^|[\s(])(\.?[A-Z][A-Z0-9_]{1,})\b/g)].map(x => x[1]).find(t => !STOP.has(t) && !ctoks.has(t));
     if (!mm) continue;
     ctoks.add(mm);
@@ -199,26 +220,53 @@ function generate(rawLines, tags = [], o = {}) {
     if (new RegExp('^' + esc + '\\s+(?:is|was|has|does)\\b', 'i').test(src)) return false;
     return plural(it.term);
   };
+  // Put the swapped term where the original stands, keeping the article right: "A cache is…" with an
+  // acronym becomes "RAM is…", while "ROM is…" with a common noun becomes "A register is…" (never
+  // "A RAM is…", "A operating system is…" or "Register is…").
+  const isAcrWord = x => /^[A-Z0-9][A-Z0-9.\-]{1,}$/.test(String(x).trim());
+  const replaceTerm = (src, oldT, newT) => {
+    const at = src.toLowerCase().indexOf(oldT.toLowerCase());
+    if (at < 0) return src;
+    let before = src.slice(0, at);
+    const after = src.slice(at + oldT.length);
+    const art = before.match(/^(.*?)(?:\b(An?)\s+)$/i), initial = before.replace(/\b(?:A|An)\s+$/i, '');
+    const atStart = initial.trim() === '' || /[.!?]\s*$/.test(initial);
+    const artFor = t => (/^[aeiou]/i.test(t) ? 'An ' : 'A ');
+    if (art && !atStart) return src; // the term is part of a longer phrase ("the cache memory"); leave it alone
+    if (art) {
+      // An article already sits before the term: keep the head, then give the new term the right one.
+      before = initial + (isAcrWord(newT) || plural(newT) ? '' : artFor(newT));
+    } else if (atStart && !isAcrWord(newT) && !plural(newT)) {
+      before = initial + artFor(newT); // "ROM is…" -> "A register is…"
+    }
+    return before + newT + after;
+  };
   const tfText = (it, t) => {
     const swap = it.kind === 'def'
       ? verifiedSwap(it, defs, x => x.src, x => x.term, x => x.body, o => plural(o.term) === subjectPlural(it))
       : verifiedSwap(it, clozes, x => x.src, x => x.term, x => x.src, o => plural(o.term) === subjectPlural(it));
     // No candidate with the right number: skip this true/false rather than print "Chloroplasts is ...".
     if (!t && (!swap || plural(swap) !== subjectPlural(it))) return '';
-    let st = clean(it.src).replace(it.term, t ? it.term : swap).replace(/\.$/, '');
-    // "A cache is ..." with the term swapped for an acronym reads "A RAM is ...": drop the article.
-    if (/^(?:A|An)\s+[A-Z0-9][A-Z0-9.\-]{1,}/.test(st)) st = st.replace(/^(?:A|An)\s+/, '');
+    const st = replaceTerm(clean(it.src), it.term, t ? it.term : swap).replace(/\.$/, '');
     return statementOk(st) ? 'True or false: ' + cap1(st) + '.' : '';
   };
   const out = [];
-  let nMC = 0, nID = 0, nTF = 0;
+  let nMC = 0, nID = 0, nTF = 0, nTTrue = 0, nTFalse = 0;
+  const falseSrc = new Set(); // one false version per sentence, or the same claim gets flipped four ways
   for (const it of all) {
     const dist = near(it.term, pool[it.kind].filter(o => fits(it, o)).map(o => o.term), prefer(it));
     // True/false. A "false" statement is only made when it is certainly false (see verifiedSwap), never by luck.
     if (nTF < 8 && Math.random() < 0.2) {
-      const t = Math.random() < 0.5, q = tfText(it, t);
+      // Flipping is only worth it while "False" does not outnumber "True", and only once per sentence.
+      let t = Math.random() < 0.5;
+      if (!t && (falseSrc.has(it.src) || nTFalse >= nTTrue)) t = true;
+      const q = tfText(it, t);
       // When this item cannot make an honest claim, fall through to a normal question instead.
-      if (q) { out.push({ type: 'mc', q, options: ['True', 'False'], answer: t ? 0 : 1, exp: ex(it.src) }); nTF++; continue; }
+      if (q) {
+        out.push({ type: 'mc', q, options: ['True', 'False'], answer: t ? 0 : 1, exp: ex(it.src) });
+        nTF++; if (t) nTTrue++; else { nTFalse++; falseSrc.add(it.src); }
+        continue;
+      }
     }
     // Half the time ask a definition the other way round, so a rebuilt set is not the same questions.
     if (it.kind === 'def' && dist.length === 3 && nMC < 30 && Math.random() < 0.5) {

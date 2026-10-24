@@ -5,7 +5,7 @@
 const fs = require('fs'), path = require('path');
 const { generate, norm } = require('../js/reviewer-generator.js');
 
-const BASELINE = { leak: 0, dupOptions: 0, badKey: 0, outlineOption: 0, tooShort: 0, ungrounded: 0, dupQuestion: 0, falseTrueMismatch: 0, filler: 0, ambiguous: 0, variant: 0, tfFragment: 0, tfMeta: 0 };
+const BASELINE = { leak: 0, dupOptions: 0, badKey: 0, outlineOption: 0, tooShort: 0, ungrounded: 0, dupQuestion: 0, falseTrueMismatch: 0, filler: 0, ambiguous: 0, variant: 0, tfFragment: 0, tfMeta: 0, instruction: 0 };
 const RUNS = 25;
 
 function seeded(seed) { // mulberry32
@@ -17,6 +17,9 @@ const wset = t => new Set((String(t).toLowerCase().match(/[a-z0-9]{4,}/g) || [])
 const overlap = (a, b) => { const x = wset(a), y = wset(b); let n = 0; x.forEach(w => { if (y.has(w)) n++; }); return n / (Math.min(x.size, y.size) || 1); };
 let sameSection = 0, termDistractors = 0;
 const OUTLINE_OPT = /^(module|unit|chapter|lesson|week|topic)\s*\d/i;
+// Exam-paper furniture: rubrics, instructions and pre-blanked lines are not study material.
+const RUBRIC_TEXT = /\bif the statement is\b|\bwrite (?:true|false)\b|\bchoose the (?:best|correct)\b|\bfill in the blanks?\b|_{3,}/i;
+const IMPERATIVE = /^(?:instructions?|directions?|write|answer|choose|select|fill|complete|identify|enumerate|match|true or false|multiple choice|matching|essay)\b/i;
 const answerText = q => q.type === 'mc' ? q.options[q.answer] : q.type === 'id' ? q.answer : (q.items || []).join(' ');
 // Share of the text's words that appear in the source sentence. Cleaning removes filler words, so exact matching would flag good questions.
 const covered = (text, src) => { const w = String(text).toLowerCase().match(/[a-z0-9]{3,}/g) || [], s = new Set(String(src).toLowerCase().match(/[a-z0-9]{3,}/g) || []); return w.length ? w.filter(x => s.has(x)).length / w.length : 1; };
@@ -41,6 +44,12 @@ function check(q, bad) {
     if (q.options.some(o => OUTLINE_OPT.test(o)) || OUTLINE_OPT.test(q.q.replace(/^.*?"/, ''))) bad.outlineOption++;
   }
   if (q.q.replace(/_+/g, '').trim().length < 20) bad.tooShort++;
+  // No question may be built out of an instruction, a rubric or a line that already has blanks in it.
+  // The question's own wording ("Fill in the blank: ", "True or false: ") is the app's, so the test looks
+  // at the note text the item cites, and at the options/items, which are copied from the notes.
+  const noteText = [rawSrc(q), ...(q.options || []), ...(q.items || []), q.type === 'id' ? q.answer : '']
+    .filter(v => v !== undefined && v !== null).map(String);
+  if (noteText.some(t => RUBRIC_TEXT.test(t) || IMPERATIVE.test(t.replace(/^[\dIVXLC]+[.)]\s+/, '')))) bad.instruction++;
   // True/false must state a claim: a full sentence, not a slide lead-in or a fragment.
   if (/^True or false: /.test(q.q)) {
     const st = q.q.slice('True or false: '.length);
@@ -69,7 +78,10 @@ function check(q, bad) {
   check({ type: 'mc', q: 'Which term holds the top address?', options: ['stack pointer', 'stack'], answer: 0, exp: '(page 1) The stack pointer holds the top address.' }, b);
   check({ type: 'mc', q: 'True or false: The primary function of the Control Unit (CU) is to:', options: ['True', 'False'], answer: 0, exp: '(page 1) x' }, b);
   check({ type: 'mc', q: 'True or false: "cache" matches this description: a small memory', options: ['True', 'False'], answer: 0, exp: '(page 1) x' }, b);
-  for (const k of ['ambiguous', 'variant', 'filler', 'leak', 'dupOptions', 'badKey', 'outlineOption', 'tooShort', 'ungrounded', 'falseTrueMismatch', 'tfFragment', 'tfMeta']) if (!b[k]) throw new Error('quality check "' + k + '" no longer catches a bad question');
+  check({ type: 'mc', q: 'True or false: Register is correct and FALSE if the statement is incorrect.', options: ['True', 'False'], answer: 1, exp: '(page 1) A register is a small storage location.' }, b);
+  check({ type: 'mc', q: 'Which term is described? A small storage location', options: ['register', 'Write TRUE if the statement'], answer: 0, exp: '(page 1) A register is a small storage location.' }, b);
+  check({ type: 'id', q: 'Which term is described? DB defines one byte', answer: '____', exp: '(page 1) ________ DB defines one byte.' }, b);
+  for (const k of ['ambiguous', 'variant', 'filler', 'leak', 'dupOptions', 'badKey', 'outlineOption', 'tooShort', 'ungrounded', 'falseTrueMismatch', 'tfFragment', 'tfMeta', 'instruction']) if (!b[k]) throw new Error('quality check "' + k + '" no longer catches a bad question');
 })();
 
 const dir = path.join(__dirname, 'corpus'), bad = Object.fromEntries(Object.keys(BASELINE).map(k => [k, 0]));

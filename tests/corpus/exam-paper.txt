@@ -1,0 +1,20 @@
+Computer Architecture Review
+II. Write TRUE if the statement is correct and FALSE if the statement is incorrect.
+1. ________ DB defines one byte.
+2. ________ Arrays store elements in consecutive memory locations.
+3. ________ A register holds data inside the processor.
+III. Choose the best answer.
+A. Screen resolution
+B. Keyboard input
+C. Control unit
+D. Arithmetic logic unit
+Shift and Rotate Instructions
+Shift and rotate instructions move the bits of an operand left or right.
+The control unit fetches and decodes instructions from memory.
+A register is a small storage location inside the processor.
+ROM is memory that keeps its contents after the power is off.
+A byte is a group of eight bits.
+A cache is a small fast memory placed close to the CPU.
+RAM is the main memory that holds programs while they run.
+An operating system is software that manages hardware and programs.
+Interrupts are signals that tell the processor to stop its current work.
