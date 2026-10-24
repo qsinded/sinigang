@@ -1,0 +1,15 @@
+{
+  "name": "Reviewer Generator",
+  "short_name": "Reviewer",
+  "description": "Build practice questions, flashcards and timed drills from your own notes. Works offline.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#eef0f4",
+  "theme_color": "#eef0f4",
+  "orientation": "any",
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

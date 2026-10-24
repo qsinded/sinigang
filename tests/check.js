@@ -1,6 +1,6 @@
 // Run: node tests/check.js   (Node 18+, no packages). Checks the generator and the .pptx/.docx readers.
 const assert = require('assert'), zlib = require('zlib');
-const { generate, enumCheck, norm } = require('../js/reviewer-generator.js');
+const { generate, enumCheck, idOk, norm } = require('../js/reviewer-generator.js');
 const { pptxLines, pptLines, docxLines } = require('../js/pptx-reader.js');
 
 // Minimal zip writer (deflate) so the readers are tested on real zip bytes.
@@ -84,6 +84,18 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
   }
   assert(sawTF, 'true/false items appear');
   assert.deepStrictEqual(enumCheck(['a', 'bb', 'ccc'], 'ccc, a').missing, ['bb']);
+  // Grading accepts the answer as a student types it: "and", numbering, articles, acronym expansions.
+  const three = ['CPU', 'RAM', 'Cache'];
+  for (const typed of ['CPU, RAM, Cache', 'CPU and RAM and Cache', 'CPU\nRAM\nCache', '1. CPU, 2. RAM, 3. Cache',
+    'cpu, ram & cache', 'CPU, RAM, and Cache', '- CPU\n- RAM\n- Cache', 'CPU; RAM; Cache', 'the CPU, the RAM, the Cache'])
+    assert.deepStrictEqual(enumCheck(three, typed).missing, [], 'all three accepted from: ' + JSON.stringify(typed));
+  assert.deepStrictEqual(enumCheck(three, 'CPU and RAM').missing, ['Cache'], 'a genuinely missing item still counts');
+  assert.deepStrictEqual(enumCheck(['Research and development', 'Marketing'], 'Research and development, Marketing').missing, [], 'an item containing "and" still matches');
+  assert.strictEqual(idOk('RAM', 'random access memory'), true, 'the spelled-out acronym is accepted');
+  assert.strictEqual(idOk('random access memory', 'RAM'), true, 'the acronym is accepted for a spelled-out answer');
+  assert.strictEqual(idOk('CPU', 'RAM'), false, 'two different acronyms never match');
+  assert.strictEqual(idOk('heap', 'stack'), false, 'different short words never match');
+  assert.strictEqual(idOk('cache', ''), false, 'an empty answer is wrong');
   // Phase 2: outline lines are skipped, filler is stripped, and a "false" statement is only made when it cannot be true
   const course = [
     'Topics covered', '• Module 1 — Computer organization, functional units, instruction cycle, number systems', '• Module 2 — IA-32 processor architecture, registers, memory management, protection and multitasking',
