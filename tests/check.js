@@ -106,13 +106,68 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
   const texts = new Set(); let sawFalse = false;
   for (let k = 0; k < 200; k++) generate(course, course.map(() => 'page 1')).forEach(x => {
     texts.add(x.q + ' ' + (x.options || []).join(' ') + ' ' + (x.items || []).join(' '));
-    const m = x.q.match(/^True or false: "(.+)" matches this description: (.+)$/);
-    if (m && x.answer === 1) { sawFalse = true; assert(!(/stack|heap/i.test(m[1]) && /stack|heap/i.test(m[2]) || /region of memory/.test(m[2]) && /^(stack|heap)$/i.test(m[1])), 'near-identical definitions are never swapped: ' + x.q); }
+    if (!/^True or false: /.test(x.q)) return;
+    const st = x.q.slice('True or false: '.length);
+    assert(/^[A-Z]/.test(st) && /\.$/.test(st), 'a true/false item is a full sentence: ' + x.q);
+    if (x.answer !== 1) return;
+    sawFalse = true;
+    // A "false" statement must not be a sentence the notes actually make, and two definitions that say
+    // the same thing must never be swapped for each other.
+    const said = course.map(l => l.replace(/\s+/g, ' ').trim());
+    assert(!said.includes(st), 'a false statement is not copied from the notes: ' + x.q);
+    const flip = st.replace(/\bstack\b/i, '\u0000').replace(/\bheap\b/i, 'stack').replace(/\u0000/, 'heap');
+    assert(!said.includes(flip), 'near-identical definitions are never swapped: ' + x.q);
   });
   const all = [...texts].join('\n');
   assert(!/Module \d/.test(all), 'outline lines are skipped');
   assert(!/basically|very small|see Figure|etc\./.test(all), 'filler is removed');
   assert(sawFalse, 'verified false statements are still made');
+  // A slide lead-in ("6. The primary function of the Control Unit (CU) is to:" + its options) is not a
+  // claim. It used to become "True or false: ... Control Unit (SI) is to:", which cannot be answered.
+  const slides = [
+    'Computer System Components',
+    '1. The primary function of the Control Unit (CU) is to:',
+    'A. Store files permanently', 'B. Execute arithmetic calculations only',
+    'C. Keyboard', 'D. Speaker',
+    '6. The primary function of the Control Unit (CU) is to:',
+    'A. Fetch, decode and execute instructions', 'B. Store files permanently',
+    'The CU also directs the flow of data between the CPU and other units.',
+    'Input devices:', 'C. Keyboard', 'D. Speaker',
+  ];
+  const slideTF = new Set();
+  for (let k = 0; k < 300; k++) generate(slides, slides.map(() => 'page 1')).forEach(x => { if (/^True or false: /.test(x.q)) slideTF.add(x.q); });
+  for (const q of slideTF) {
+    const st = q.slice('True or false: '.length);
+    assert(!/[:;,]\s*$/.test(st), 'no true/false item is cut off at a lead-in: ' + q);
+    assert(!/\b(?:is|are|to|of|the|and|such as)\s*\.?$/i.test(st.replace(/\.$/, '')), 'no true/false item ends on a dangling word: ' + q);
+    assert(!/matches this description/.test(q), 'true/false is a claim, not a matching puzzle: ' + q);
+    assert(!/\S:\s/.test(st), 'no true/false item is a "Term: explanation" line: ' + q);
+    assert(/\.$/.test(st), 'true/false items end as a sentence: ' + q);
+  }
+  assert(slideTF.size >= 1, 'the one complete sentence in those slides still becomes true/false');
+  assert([...slideTF].every(q => /directs the flow of data/.test(q)), 'only the real claim is used: ' + [...slideTF].join(' | '));
+  // Number agreement: a swapped term must fit the verb already in the notes' sentence.
+  const agree = [
+    'Enzymes are proteins that speed up chemical reactions.',
+    'Osmosis is the movement of water across a membrane.',
+    'Mitochondria are organelles that produce most of the cell ATP.',
+    'A ribosome is a structure that builds proteins.',
+    'Chloroplasts are organelles where photosynthesis takes place.',
+    'A nucleus is the part that holds the genetic material.',
+    'Vacuoles are sacs that store water and nutrients.',
+    'A membrane is a barrier that controls what enters a cell.',
+  ];
+  for (let k = 0; k < 200; k++) generate(agree, agree.map(() => 'page 1')).forEach(x => {
+    if (!/^True or false: /.test(x.q)) return;
+    const st = x.q.slice('True or false: '.length);
+    const m = st.match(/^([\w-]+(?: [\w-]+)?)\s+(is|are|was|were)\b/);
+    if (!m) return;
+    const word = m[1].trim().split(/\s+/).pop().toLowerCase();
+    // "mitochondria" and "osmosis" carry no plural -s; the verb in the note decides for them.
+    if (/^(mitochondria|bacteria|data|criteria|nuclei|fungi)$/.test(word)) return;
+    const pluralWord = /[^su]s$/.test(word) && !/(?:ss|is|us|osis)$/.test(word);
+    assert.strictEqual(pluralWord, /^(are|were)$/.test(m[2]), 'subject and verb agree: ' + x.q);
+  });
   // Phase 3: wrong options come from the same section, are never stated in the sentence, and never repeat the answer
   const mix = [
     'Registers', 'EAX is the accumulator register used for arithmetic operations.', 'EBX is the base register used to point at data in memory.', 'ECX is the counter register used for loops and shifts.', 'EDX is the data register used for input and output addresses.',
