@@ -2,16 +2,37 @@
 // ponytail: heuristics only (definitions, lists, caps-terms). Upgrade to a local LLM if quality is too low.
 function norm(s) { return String(s).toLowerCase().replace(/[^a-z0-9]/g, ''); }
 
+// Grading has to accept the answer the way a student actually types it, or a right answer reads as wrong.
+// Ignored: a leading article, punctuation, and the difference between "RAM" and "random access memory".
+const ART = /^\s*(?:the|a|an)\s+/i;
+const bare = s => norm(String(s).replace(ART, ''));
+const wordsOf = s => String(s).match(/[A-Za-z0-9]+/g) || [];
+const isAcr = s => /^[A-Z0-9][A-Z0-9.\-]{1,9}$/.test(String(s).trim()); // RAM, CPU, IA-32
+const FILLER_W = ['of', 'the', 'and', 'for', 'in', 'to', 'a', 'an'];
+// "RAM" abbreviates "random access memory": the initials of the spelled-out form spell the short one.
+// Only used when exactly one side is written as an acronym, so two different acronyms never match.
+function abbreviates(short, long) {
+  const w = wordsOf(long).map(x => x.toLowerCase()).filter(x => !FILLER_W.includes(x));
+  return norm(short).length >= 2 && w.length >= 2 && w.map(x => x[0]).join('') === norm(short);
+}
 function idOk(ans, val) {
-  const a = norm(ans), v = norm(val);
-  if (!v) return false;
+  const A = String(ans).trim(), V = String(val).trim();
+  const a = bare(A), v = bare(V);
+  if (!v || !a) return false;
   if (a === v) return true;
+  if (isAcr(A) !== isAcr(V) && abbreviates(isAcr(A) ? A : V, isAcr(A) ? V : A)) return true;
   return v.length >= 4 && a.length >= 4 && ((a.includes(v) && v.length >= a.length * 0.6) || v.includes(a));
 }
 
+// Answer separators for enumeration items: new lines, commas, semicolons, "and"/"&".
+const LIST_SPLIT = /[,\n;]+|\s+(?:and|&)\s+|&/i;
+const BULLET = /^\s*(?:[-•●▪◦*–—]|\d+[.)]|[a-z][.)])\s*/i;
 function enumCheck(items, val) {
-  const vals = String(val).split(/[\n,;]+/).map(s => s.trim()).filter(Boolean);
-  const got = items.filter(it => vals.some(v => idOk(it, v)));
+  const raw = String(val);
+  const vals = raw.split(LIST_SPLIT).map(s => s.replace(BULLET, '').trim()).filter(Boolean);
+  // The whole answer is tried as well, so an item whose own name contains "and" still matches.
+  const hit = it => idOk(it, raw) || vals.some(v => idOk(it, v));
+  const got = items.filter(hit);
   return { ok: got.length === items.length, got, missing: items.filter(i => !got.includes(i)) };
 }
 

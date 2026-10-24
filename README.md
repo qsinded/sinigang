@@ -30,12 +30,17 @@ no account and no build step.
 
 - `index.html` — website entry point
 - `css/styles.css` — styles
-- `js/reviewer-generator.js` — rule-based question generator (no network)
+- `js/reviewer-generator.js` — rule-based question generator and answer grading (no network)
 - `js/pptx-reader.js` — `.pptx`, `.docx` and old `.ppt` text extraction
 - `js/app.js` — interface, storage, study plan, diagrams, source panel, flashcards and recitation
 - `js/pdfjs-viewer-bundle.js`, `js/pdfjs-worker-bundle.js` — vendored PDF.js 3.11.174, loaded on demand
-- `tests/check.js` — generator and file-reader checks
+- `js/sw-register.js` — registers the offline cache (does nothing on `file://`)
+- `sw.js` — service worker: precaches the app shell so it opens with no connection
+- `manifest.webmanifest`, `icons/` — installable app name, colours and icons
+- `tools/make-icons.js` — redraws the icons (shapes only, no font needed)
+- `tests/check.js` — generator, grading and file-reader checks
 - `tests/app-smoke.js` — page boot, storage cap, study plan, diagrams, source lookup and PDF.js checks
+- `tests/offline.js` — service worker behaviour against fake cache/network objects
 
 ## Running the tests
 
@@ -44,6 +49,8 @@ npm test                    # all suites (Node 18+)
 npm run quality            # question-quality report on tests/corpus/ (fails if a count gets worse)
 node tests/check.js
 node tests/app-smoke.js
+node tests/offline.js
+npm run icons              # redraw icons/ (only after changing a colour in css/styles.css)
 ```
 
 No dependencies are installed; the tests only use Node built-ins and a small DOM stub.
@@ -51,7 +58,24 @@ No dependencies are installed; the tests only use Node built-ins and a small DOM
 ## Deployment
 
 The app is fully static. Deploy this folder to Vercel, Netlify, Cloudflare Pages, GitHub Pages or any
-file host — no build command, no environment variables, no serverless functions.
+file host — no build command, no environment variables, no serverless functions. It works from a
+sub-path (like `user.github.io/repo/`) because every path in the manifest and the service worker is
+relative.
+
+**After changing any shipped file, bump `VERSION` in `sw.js`** (`v1` → `v2`). The cache is
+cache-first, so phones keep the old copy until the name changes: the new worker then downloads the
+shell again and the page reloads itself once. Opening the page from `file://` skips all of this and
+works as before, with no offline support.
+
+## Offline support
+
+`sw.js` precaches the page, the styles, the app scripts and the icons on first visit, so the
+app opens with no connection and stays usable after the browser has cleared its HTTP cache. PDF.js
+(1.5 MB) is fetched in the background at install and cached the first time a PDF is opened if that
+fetch failed — a PDF still needs its library the first time, and an offline PNG/text review never
+does. A navigation to any path inside the app is answered with the cached page, so a bookmark to a
+deep link still opens. Reviewer data and images are untouched by the worker: they live in
+`localStorage` and IndexedDB as before.
 
 ## Diagram reviewers
 
@@ -75,6 +99,11 @@ image-only slides need OCR.
 
 ## Known limits
 
+- Offline support needs `http(s)`; a page opened from `file://` still works, just without the cache.
+  Since the service worker serves the shell cache-first, a deploy only reaches phones after the
+  `VERSION` bump described above.
+- The saved theme is applied before the first paint, but a reviewer's diagram images still appear a
+  moment after the question, because they are read from IndexedDB.
 - PDF.js is pinned to 3.11.174, which is affected by CVE-2024-4367; `js/app.js` passes
   `isEvalSupported: false` when opening a document, which is the documented mitigation. Upgrade to
   PDF.js 4.2.67+ (ESM build) to remove the issue and the main-thread parsing.

@@ -4,8 +4,21 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Build practice questions and flashcards from your PDF, PowerPoint, Word or text notes. Works offline.">
-  <title>SINEGENG</title>
+  <meta name="theme-color" content="#eef0f4" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#10141c" media="(prefers-color-scheme: dark)">
+  <title>Reviewer Generator</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
   <link rel="stylesheet" href="./css/styles.css">
+  <script>
+    // Apply a saved theme before the first paint, so a dark-mode user never sees a white flash.
+    // app.js owns the toggle; this only reads the same key.
+    try {
+      var t = localStorage.getItem('reviewer_theme');
+      if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
+    } catch (e) { /* no storage: follow the system */ }
+  </script>
 </head>
 <body>
   <main id="app"></main>
@@ -17,5 +30,8 @@
   <script src="./js/reviewer-generator.js"></script>
   <script src="./js/pptx-reader.js"></script>
   <script src="./js/app.js"></script>
+  <!-- Offline support. Has to be its own file: a service worker cannot be registered from an
+       inline script on some hosts, and this one must never block the app from booting. -->
+  <script src="./js/sw-register.js"></script>
 </body>
 </html>

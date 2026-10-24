@@ -274,5 +274,40 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   assert.strictEqual(ctx.pdfjsLib.GlobalWorkerOptions.workerSrc, './js/pdfjs-worker-bundle.js');
   assert.deepStrictEqual(scripts, ['./js/pdfjs-worker-bundle.js', './js/pdfjs-viewer-bundle.js'], 'loads both bundles in order, once');
 
+  // 10. A half-typed answer belongs to one reviewer: opening another must not show it.
+  // Item ids restart at id0 in every reviewer, so drafts keyed by id used to cross over.
+  const draftA = ctx.cleanReviewer({ ...base, title: 'Reviewer A' }), draftB = ctx.cleanReviewer({ ...base, title: 'Reviewer B' });
+  ctx.open(draftA);
+  vm.runInContext("draft['id0'] = 'half typed'", ctx);
+  ctx.open(draftB);
+  const blanks = find(appEl, e => e.tagName === 'INPUT' && e.attrs.type === 'text').map(e => e.value);
+  assert.deepStrictEqual(blanks, ['', '', ''], 'a draft from another reviewer is not shown');
+
+  // 11. Offline support: the service worker precaches files that exist, and the page registers it.
+  const files = (() => {
+    const src = fs.readFileSync('sw.js', 'utf8'), grab = name => {
+      const m = src.match(new RegExp('const ' + name + ' = (\\[[^\\]]*\\]);'));
+      assert.ok(m, name + ' list is present in sw.js');
+      return m[1].match(/'([^']+)'/g).map(s => s.slice(1, -1));
+    };
+    return { shell: grab('SHELL'), optional: grab('OPTIONAL') };
+  })();
+  const before = new Set(files.shell);
+  before.add('./index.html'); // './' is the same document
+  const missing = [...before, ...files.optional].filter(p => p !== './' && !fs.existsSync(p.replace(/^\.\//, '')));
+  assert.deepStrictEqual(missing, [], 'every precached file exists on disk');
+  assert.ok(before.has('./js/app.js') && before.has('./css/styles.css'), 'the shell covers the app scripts and styles');
+  const html = fs.readFileSync('index.html', 'utf8');
+  assert.match(html, /<script src="\.\/js\/sw-register\.js">/, 'the page registers the service worker');
+  assert.match(html, /rel="manifest"/, 'the page links the manifest');
+  assert.match(html, /localStorage\.getItem\('reviewer_theme'\)/, 'the saved theme is applied before first paint');
+  const manifest = JSON.parse(fs.readFileSync('manifest.webmanifest', 'utf8'));
+  assert.strictEqual(manifest.start_url, './', 'the manifest starts inside the app folder, so a sub-path deploy works');
+  manifest.icons.forEach(i => assert.ok(fs.existsSync(i.src.replace(/^\.\//, '')), 'icon exists: ' + i.src));
+  // The worker itself must not be cached by a worker, and the sheet and scripts it caches are real files.
+  const swSrc = fs.readFileSync('sw.js', 'utf8');
+  assert.match(swSrc, /caches\.delete/, 'old caches are dropped on activate');
+  assert.doesNotMatch(swSrc, /['"]\.\/sw\.js['"]/, 'sw.js does not cache itself');
+
   console.log('app smoke checks passed');
 })().catch(e => { console.error(e); process.exit(1); });

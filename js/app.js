@@ -626,6 +626,9 @@ function shuffleAll() {
   wipe(); save(); quiz(); scrollTo(0, 0);
 }
 function open(r) {
+  // Drafts are keyed by item id, and item ids restart at id0 in every reviewer, so a half-typed answer
+  // from another reviewer would appear here if they were kept.
+  wipe();
   cur = r; const ts = Object.keys(TABS).filter(k => r.items.some(i => i.type === k)); tab = ts[0];
   r.flashKnown ||= []; flashIndex = 0; flashRevealed = false; r.flashLearn ||= [];
   r.plan = planOf(r); r.plan.srs ||= {};
