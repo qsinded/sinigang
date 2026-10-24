@@ -99,7 +99,7 @@ assert.match(screenText(appEl), /Seeded notes/, 'saved reviewers are listed');
 
 // 1b. Today card: one button across reviewers, and a day streak
 assert.match(screenText(appEl), /Study today \(1 due\)/, 'home offers one study button with the due count');
-assert.match(screenText(appEl), /0-day streak/, 'no streak before any study');
+assert.match(screenText(appEl), /Start a streak today/, 'no streak before any study');
 assert.strictEqual(JSON.stringify(ctx.streakAfter(null, 100)), JSON.stringify({ last: 100, count: 1 }), 'first study day starts a streak');
 assert.strictEqual(JSON.stringify(ctx.streakAfter({ last: 100, count: 1 }, 100)), JSON.stringify({ last: 100, count: 1 }), 'same day does not double count');
 assert.strictEqual(JSON.stringify(ctx.streakAfter({ last: 100, count: 3 }, 101)), JSON.stringify({ last: 101, count: 4 }), 'next day extends the streak');

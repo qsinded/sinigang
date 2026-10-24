@@ -219,10 +219,10 @@ function planCard() {
   const next = R.filter(r => examDaysLeft(r.plan && r.plan.exam) !== null)
     .map(r => ({ r, n: examDaysLeft(r.plan.exam) }))
     .sort((a, b) => a.n - b.n)[0];
-  return h('div', { class: 'card' },
+  return h('div', { class: 'card today' },
     h('h2', { class: 'k' }, 'Today'),
     h('p', null, due ? due + ' item' + (due === 1 ? '' : 's') + ' due in ' + withDue + ' reviewer' + (withDue === 1 ? '' : 's') + '.' : 'Nothing is due today — study ahead if you like.'),
-    h('p', null, h('b', null, streakNow(readStreak(), todayNumber()) + '-day streak'), streakNow(readStreak(), todayNumber()) && readStreak().last !== todayNumber() ? ' · study today to keep it' : ''),
+    h('p', null, h('b', null, streakNow(readStreak(), todayNumber()) ? streakNow(readStreak(), todayNumber()) + '-day streak' : 'Start a streak today'), streakNow(readStreak(), todayNumber()) && readStreak().last !== todayNumber() ? ' · study today to keep it' : ''),
     due > 0 && h('p', null, h('button', { class: 'btn', onclick: () => studyToday(firstDue()) }, 'Study today (' + due + ' due)')),
     next && h('p', null, h('b', null, next.r.title), ' · ' + examText(next.r.plan.exam)),
     h('p', { class: 'k' }, 'Open a reviewer to set its exam date, or use Review to study what is due.'));
