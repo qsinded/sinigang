@@ -84,5 +84,22 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
   }
   assert(sawTF, 'true/false items appear');
   assert.deepStrictEqual(enumCheck(['a', 'bb', 'ccc'], 'ccc, a').missing, ['bb']);
+  // Phase 2: outline lines are skipped, filler is stripped, and a "false" statement is only made when it cannot be true
+  const course = [
+    'Topics covered', '• Module 1 — Computer organization, functional units, instruction cycle, number systems', '• Module 2 — IA-32 processor architecture, registers, memory management, protection and multitasking',
+    'Memory', 'A cache is basically a very small fast memory placed close to the CPU (see Figure 2).', 'RAM is the main working memory that holds running programs, etc.',
+    'A stack is a region of memory that stores return addresses and local data.', 'A heap is a region of memory that stores return addresses and local data too.',
+    'A pipeline is a technique that overlaps the steps of several instructions.',
+  ];
+  const texts = new Set(); let sawFalse = false;
+  for (let k = 0; k < 200; k++) generate(course, course.map(() => 'page 1')).forEach(x => {
+    texts.add(x.q + ' ' + (x.options || []).join(' ') + ' ' + (x.items || []).join(' '));
+    const m = x.q.match(/^True or false: "(.+)" matches this description: (.+)$/);
+    if (m && x.answer === 1) { sawFalse = true; assert(!(/stack|heap/i.test(m[1]) && /stack|heap/i.test(m[2]) || /region of memory/.test(m[2]) && /^(stack|heap)$/i.test(m[1])), 'near-identical definitions are never swapped: ' + x.q); }
+  });
+  const all = [...texts].join('\n');
+  assert(!/Module \d/.test(all), 'outline lines are skipped');
+  assert(!/basically|very small|see Figure|etc\./.test(all), 'filler is removed');
+  assert(sawFalse, 'verified false statements are still made');
   console.log('all checks passed');
 })().catch(e => { console.error(e); process.exit(1); });

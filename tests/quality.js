@@ -5,7 +5,7 @@
 const fs = require('fs'), path = require('path');
 const { generate, norm } = require('../js/reviewer-generator.js');
 
-const BASELINE = { leak: 0, dupOptions: 0, badKey: 0, outlineOption: 111, tooShort: 0, ungrounded: 0, dupQuestion: 0, falseTrueMismatch: 0, filler: 64 };
+const BASELINE = { leak: 0, dupOptions: 0, badKey: 0, outlineOption: 0, tooShort: 0, ungrounded: 0, dupQuestion: 0, falseTrueMismatch: 0, filler: 0 };
 const RUNS = 25;
 
 function seeded(seed) { // mulberry32
@@ -13,6 +13,9 @@ function seeded(seed) { // mulberry32
 }
 const OUTLINE_OPT = /^(module|unit|chapter|lesson|week|topic)\s*\d/i;
 const answerText = q => q.type === 'mc' ? q.options[q.answer] : q.type === 'id' ? q.answer : (q.items || []).join(' ');
+// Share of the text's words that appear in the source sentence. Cleaning removes filler words, so exact matching would flag good questions.
+const covered = (text, src) => { const w = String(text).toLowerCase().match(/[a-z0-9]{3,}/g) || [], s = new Set(String(src).toLowerCase().match(/[a-z0-9]{3,}/g) || []); return w.length ? w.filter(x => s.has(x)).length / w.length : 1; };
+const rawSrc = q => String(q.exp).replace(/^\([^)]*\)\s*/, '');
 const srcOf = q => norm(String(q.exp).replace(/^\([^)]*\)\s*/, ''));
 
 function check(q, bad) {
@@ -26,11 +29,12 @@ function check(q, bad) {
   }
   if (q.q.replace(/_+/g, '').trim().length < 20) bad.tooShort++;
   // the answer must come from the source sentence it cites
-  if (q.type === 'enum' ? !q.items.every(i => srcOf(q).includes(norm(i))) : !/^True$|^False$/.test(ans) && !srcOf(q).includes(norm(ans).slice(0, 30))) bad.ungrounded++;
-  // a "false" statement must not pair the described text with its own term
-  if (/^True or false: "(.+)" matches this description: (.+)$/.test(q.q)) {
-    const [, term, body] = q.q.match(/^True or false: "(.+)" matches this description: (.+)$/), isTrue = q.answer === 0, src = srcOf(q);
-    if (isTrue !== (src.includes(norm(term)) && src.includes(norm(body).slice(0, 30)))) bad.falseTrueMismatch++;
+  if (q.type === 'enum' ? !q.items.every(i => covered(i, rawSrc(q)) >= 0.8) : !/^True$|^False$/.test(ans) && covered(ans, rawSrc(q)) < 0.8) bad.ungrounded++;
+  // a "true" statement must come from the source; a "false" one must not be a statement the source makes
+  const tf = q.q.match(/^True or false: "(.+)" matches this description: (.+)$/) || q.q.match(/^True or false: (.+)$/);
+  if (tf) {
+    const isTrue = q.answer === 0, said = tf.length === 3 ? covered(tf[1], rawSrc(q)) >= 1 && covered(tf[2], rawSrc(q)) >= 0.8 : covered(tf[1], rawSrc(q)) >= 0.95;
+    if (isTrue !== said) bad.falseTrueMismatch++;
   }
 }
 
