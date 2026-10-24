@@ -19,3 +19,7 @@ Bandwidth is the maximum amount of data that can be sent in one second.
 Note: the next section covers wireless networks.
 Summary
 Switches work inside a network and routers connect networks.
+A packet is a small unit of data sent over a network.
+A packet header is the part of a packet that holds the sender and receiver addresses.
+A port is a number that tells the computer which program should receive the data.
+A port scanner is a tool that checks which ports on a computer are open.

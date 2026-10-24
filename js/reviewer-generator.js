@@ -22,12 +22,15 @@ function shuffle(a) {
 }
 
 // Distractors that look like the answer (similar length, same first word) so the right one is not obvious.
-function near(t, c) {
-  const w = t.split(' ')[0].toLowerCase(), cost = x => Math.abs(x.length - t.length) - (x.split(' ')[0].toLowerCase() === w ? 20 : 0);
-  return shuffle(shuffle(c).sort((a, b) => cost(a) - cost(b)).slice(0, 6)).slice(0, 3);
+// bonus(x) lets the caller prefer candidates from the same section or of the same shape.
+function near(t, c, bonus = () => 0) {
+  const w = t.split(' ')[0].toLowerCase(), cost = x => Math.abs(x.length - t.length) - (x.split(' ')[0].toLowerCase() === w ? 20 : 0) - bonus(x);
+  const ranked = shuffle(c).sort((a, b) => cost(a) - cost(b)), same = ranked.filter(x => bonus(x) > 0);
+  return shuffle((same.length >= 3 ? same : ranked).slice(0, 6)).slice(0, 3); // same section/shape first when there are enough
 }
 
-const words = s => new Set(String(s).toLowerCase().match(/[a-z0-9]{4,}/g) || []);
+const COMMON = new Set(['used', 'uses', 'that', 'this', 'with', 'from', 'into', 'which', 'what', 'when', 'where', 'each', 'than', 'then', 'their', 'there', 'holds', 'data']);
+const words = s => new Set((String(s).toLowerCase().match(/[a-z0-9]{4,}/g) || []).filter(w => !COMMON.has(w)));
 const overlap = (a, b) => { const x = words(a), y = words(b); let n = 0; x.forEach(w => { if (y.has(w)) n++; }); return n / (Math.min(x.size, y.size) || 1); };
 // Pick another item's term to put in place of this one's, only when the swap cannot be true: the other term is not
 // mentioned in this sentence, is not a variant of this term, and its own source says something different.
@@ -38,6 +41,9 @@ function verifiedSwap(it, list, srcOf, termOf, textOf) {
   const pick = near(termOf(it), ok.map(termOf))[0];
   return pick;
 }
+// Kind of term: acronym (EAX), has a digit (IA-32), several words, or a plain word. Distractors of the same kind look as plausible.
+const shape = t => /^[A-Z][A-Z0-9_.\-]+$/.test(t) ? 'acronym' : /\d/.test(t) ? 'number' : /\s/.test(t) ? 'phrase' : 'word';
+const variant = (a, b) => { const x = norm(a), y = norm(b); return x === y || (x.length >= 3 && y.length >= 3 && (x.includes(y) || y.includes(x))); };
 const BUL = /^(?:[•●▪◦\-*–]|\d+[.)]|[a-z][.)])\s+/;
 const NOT_TERM = /^(this|that|these|those|it|they|there|here|which|what|when|where|if|in|on|for|each|some|all|one|we|you)\b/i;
 const DEF = /^(?:(?:The|A|An)\s+)?([A-Za-z0-9.][\w .\/\-]{0,38}?)\s+(?:is defined as|is used to|refers to|stands for|means|is|are)\s+(.{15,})$/;
@@ -106,7 +112,7 @@ function generate(rawLines, tags = [], o = {}) {
       if (body.length >= 15 && term.split(' ').length <= 5 && !NOT_TERM.test(term) && !LOW.test(term) && !LABEL.test(term) && !seen.has(term.toLowerCase()) && !seenBody.has(norm(body))) {
         seen.add(term.toLowerCase()); seenBody.add(norm(body));
         const mask = body.replace(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), '_____');
-        defs.push({ kind: 'def', term, body: cap1(body), q: 'Which term is described? ' + cap1(mask), src: s });
+        defs.push({ kind: 'def', term, body: cap1(body), q: 'Which term is described? ' + cap1(mask), src: s, ctx: ctxOf.get(s) || '' });
         used.add(s);
       }
     }
@@ -118,15 +124,21 @@ function generate(rawLines, tags = [], o = {}) {
     const mm = [...s.matchAll(/(?:^|[\s(])(\.?[A-Z][A-Z0-9_]{1,})\b/g)].map(x => x[1]).find(t => !STOP.has(t) && !ctoks.has(t));
     if (!mm) continue;
     ctoks.add(mm);
-    clozes.push({ kind: 'cloze', term: mm, q: 'Fill in the blank: ' + clean(s).replace(mm, '_____'), src: s });
+    clozes.push({ kind: 'cloze', term: mm, q: 'Fill in the blank: ' + clean(s).replace(mm, '_____'), src: s, ctx: ctxOf.get(s) || '' });
   }
 
-  const pool = { def: defs.map(x => x.term), cloze: clozes.map(x => x.term) };
+  const pool = { def: defs, cloze: clozes };
   const all = shuffle([...defs, ...clozes]);
+  const ctxByText = new Map([...defs.map(d => [d.term, d.ctx]), ...defs.map(d => [d.body, d.ctx]), ...clozes.map(c => [c.term, c.ctx])]);
+  // Wrong options must not be arguable: not stated in the same sentence, not a variant of the answer, not saying the same thing.
+  const fits = (it, o) => o !== it && !variant(o.term, it.term) && !norm(it.src).includes(norm(o.term)) && !(it.kind === 'def' && overlap(it.body, o.body) >= 0.4);
+  const prefer = it => x => (ctxByText.get(x) === it.ctx ? 30 : 0) + (shape(x) === shape(it.term) ? 10 : 0);
+  // A multiple choice item is only kept when its key is unambiguous: distinct options and the answer among them.
+  const keyOk = (opts, ans) => new Set(opts.map(norm)).size === opts.length && opts.every(o => norm(o)) && opts.includes(ans);
   const out = [];
   let nMC = 0, nID = 0, nTF = 0;
   for (const it of all) {
-    const dist = near(it.term, pool[it.kind].filter(t => norm(t) !== norm(it.term)));
+    const dist = near(it.term, pool[it.kind].filter(o => fits(it, o)).map(o => o.term), prefer(it));
     // True/false. A "false" statement is only made when it is certainly false (see verifiedSwap), never by luck.
     if (nTF < 8 && Math.random() < 0.2) {
       const t = Math.random() < 0.5;
@@ -140,12 +152,15 @@ function generate(rawLines, tags = [], o = {}) {
     }
     // Half the time ask a definition the other way round, so a rebuilt set is not the same questions.
     if (it.kind === 'def' && dist.length === 3 && nMC < 30 && Math.random() < 0.5) {
-      const opts = shuffle([it.body, ...near(it.body, defs.filter(d => d !== it).map(d => d.body))]);
-      out.push({ type: 'mc', q: 'Which statement describes "' + it.term + '"?', options: opts, answer: opts.indexOf(it.body), exp: ex(it.src) });
-      nMC++; continue;
+      const bodies = defs.filter(d => fits(it, { ...d, term: d.body }) && !norm(d.body).includes(norm(it.term))).map(d => d.body);
+      const opts = shuffle([it.body, ...near(it.body, bodies, x => (ctxByText.get(x) === it.ctx ? 30 : 0))]);
+      if (opts.length === 4 && keyOk(opts, it.body)) {
+        out.push({ type: 'mc', q: 'Which statement describes "' + it.term + '"?', options: opts, answer: opts.indexOf(it.body), exp: ex(it.src) });
+        nMC++; continue;
+      }
     }
-    if (dist.length === 3 && nMC < 30 && (nMC <= nID * 1.5 || nID >= 20)) {
-      const opts = shuffle([it.term, ...dist]);
+    const opts = shuffle([it.term, ...dist]);
+    if (dist.length === 3 && nMC < 30 && (nMC <= nID * 1.5 || nID >= 20) && keyOk(opts, it.term)) {
       out.push({ type: 'mc', q: it.q, options: opts, answer: opts.indexOf(it.term), exp: ex(it.src) });
       nMC++;
     } else if (nID < 20) {

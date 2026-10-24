@@ -5,12 +5,17 @@
 const fs = require('fs'), path = require('path');
 const { generate, norm } = require('../js/reviewer-generator.js');
 
-const BASELINE = { leak: 0, dupOptions: 0, badKey: 0, outlineOption: 0, tooShort: 0, ungrounded: 0, dupQuestion: 0, falseTrueMismatch: 0, filler: 0 };
+const BASELINE = { leak: 0, dupOptions: 0, badKey: 0, outlineOption: 0, tooShort: 0, ungrounded: 0, dupQuestion: 0, falseTrueMismatch: 0, filler: 0, ambiguous: 0, variant: 0 };
 const RUNS = 25;
 
 function seeded(seed) { // mulberry32
   return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
 }
+// Same ignored words as the generator: "used", "that", "data" appear in most definitions and prove nothing.
+const COMMON = new Set(['used', 'uses', 'that', 'this', 'with', 'from', 'into', 'which', 'what', 'when', 'where', 'each', 'than', 'then', 'their', 'there', 'holds', 'data']);
+const wset = t => new Set((String(t).toLowerCase().match(/[a-z0-9]{4,}/g) || []).filter(w => !COMMON.has(w)));
+const overlap = (a, b) => { const x = wset(a), y = wset(b); let n = 0; x.forEach(w => { if (y.has(w)) n++; }); return n / (Math.min(x.size, y.size) || 1); };
+let sameSection = 0, termDistractors = 0;
 const OUTLINE_OPT = /^(module|unit|chapter|lesson|week|topic)\s*\d/i;
 const answerText = q => q.type === 'mc' ? q.options[q.answer] : q.type === 'id' ? q.answer : (q.items || []).join(' ');
 // Share of the text's words that appear in the source sentence. Cleaning removes filler words, so exact matching would flag good questions.
@@ -22,6 +27,14 @@ function check(q, bad) {
   const ans = answerText(q), qn = norm(q.q);
   if (q.type !== 'enum' && !/^True or false/.test(q.q) && norm(ans).length >= 4 && qn.includes(norm(ans))) bad.leak++;
   if (/\b(basically|essentially|simply|actually|really|very|quite)\b|\((see|fig)/i.test(q.q + ' ' + (q.options || []).join(' '))) bad.filler++;
+  if (q.type === 'mc' && !/^True or false/.test(q.q)) {
+    q.options.forEach((o, i) => {
+      if (i === q.answer) return;
+      // a wrong option that is also stated in the source, or says nearly the same thing, could be argued correct
+      if ((norm(o).length >= 3 && srcOf(q).includes(norm(o))) || (wset(o).size >= 4 && overlap(o, ans) >= 0.4)) bad.ambiguous++;
+      if (norm(o).length >= 3 && (norm(ans).includes(norm(o)) || norm(o).includes(norm(ans)))) bad.variant++;
+    });
+  }
   if (q.type === 'mc') {
     if (new Set(q.options.map(norm)).size !== q.options.length) bad.dupOptions++;
     if (!Number.isInteger(q.answer) || q.answer < 0 || q.answer >= q.options.length) bad.badKey++;
@@ -46,7 +59,9 @@ function check(q, bad) {
   check({ type: 'mc', q: 'True or false: "RAM" matches this description: runs code', options: ['True', 'False'], answer: 0, exp: '(page 1) The CPU runs code.' }, b);
   check({ type: 'id', q: '____', answer: 'zzzz', exp: '(page 1) other' }, b);
   check({ type: 'id', q: 'Which term is a very small storage place?', answer: 'register', exp: '(page 1) register' }, b);
-  for (const k of ['filler', 'leak', 'dupOptions', 'badKey', 'outlineOption', 'tooShort', 'ungrounded', 'falseTrueMismatch']) if (!b[k]) throw new Error('quality check "' + k + '" no longer catches a bad question');
+  check({ type: 'mc', q: 'Which term runs code? CPU', options: ['CPU', 'RAM'], answer: 0, exp: '(page 1) The CPU and RAM hold code.' }, b);
+  check({ type: 'mc', q: 'Which term holds the top address?', options: ['stack pointer', 'stack'], answer: 0, exp: '(page 1) The stack pointer holds the top address.' }, b);
+  for (const k of ['ambiguous', 'variant', 'filler', 'leak', 'dupOptions', 'badKey', 'outlineOption', 'tooShort', 'ungrounded', 'falseTrueMismatch']) if (!b[k]) throw new Error('quality check "' + k + '" no longer catches a bad question');
 })();
 
 const dir = path.join(__dirname, 'corpus'), bad = Object.fromEntries(Object.keys(BASELINE).map(k => [k, 0]));

@@ -1,6 +1,6 @@
 // Run: node tests/check.js   (Node 18+, no packages). Checks the generator and the .pptx/.docx readers.
 const assert = require('assert'), zlib = require('zlib');
-const { generate, enumCheck } = require('../js/reviewer-generator.js');
+const { generate, enumCheck, norm } = require('../js/reviewer-generator.js');
 const { pptxLines, pptLines, docxLines } = require('../js/pptx-reader.js');
 
 // Minimal zip writer (deflate) so the readers are tested on real zip bytes.
@@ -101,5 +101,23 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
   assert(!/Module \d/.test(all), 'outline lines are skipped');
   assert(!/basically|very small|see Figure|etc\./.test(all), 'filler is removed');
   assert(sawFalse, 'verified false statements are still made');
+  // Phase 3: wrong options come from the same section, are never stated in the sentence, and never repeat the answer
+  const mix = [
+    'Registers', 'EAX is the accumulator register used for arithmetic operations.', 'EBX is the base register used to point at data in memory.', 'ECX is the counter register used for loops and shifts.', 'EDX is the data register used for input and output addresses.',
+    'Networking', 'A router is a device that forwards data between networks.', 'A switch is a device that connects devices inside one network.', 'A firewall is a security system that filters traffic using rules.', 'A modem is a device that converts signals for the telephone line.',
+    'A stack is a region of memory that stores return addresses.', 'A stack pointer is a register that holds the address of the top of the stack.',
+  ];
+  let regQs = 0;
+  for (let k = 0; k < 150; k++) generate(mix, mix.map(() => 'page 1')).forEach(x => {
+    if (x.type !== 'mc' || x.options.length !== 4) return;
+    assert.strictEqual(new Set(x.options.map(norm)).size, 4, 'options are distinct');
+    assert.strictEqual(x.options[x.answer] === undefined, false, 'key points at an option');
+    const ans = x.options[x.answer];
+    if (/^Which term/.test(x.q)) {
+      x.options.forEach((o, i) => { if (i !== x.answer) assert(!(/stack/i.test(o) && /stack/i.test(ans)), 'no variant of the answer as a wrong option: ' + x.options); });
+      if (/^E[A-D]X$/.test(ans)) { regQs++; assert(x.options.every(o => /^E[A-D]X$/.test(o)), 'acronym answers get acronym distractors: ' + x.options); }
+    }
+  });
+  assert(regQs > 0, 'register questions were generated');
   console.log('all checks passed');
 })().catch(e => { console.error(e); process.exit(1); });
