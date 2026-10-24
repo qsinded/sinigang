@@ -34,6 +34,8 @@ function cfb(stream) {
   const miniFat = u32(chain(0, nUnits)), b = Buffer.concat([head, u32(fat), dir, ...(mini ? [miniFat] : []), dataSectors]);
   return b.buffer.slice(b.byteOffset, b.byteOffset + b.length);
 }
+// Every human-readable string in a generated item.
+const each = (x, fn) => [x.q, ...(x.options || []), ...(x.items || []), x.answer].filter(v => v !== undefined && v !== null).map(String).forEach(fn);
 const rec = (ver, type, body) => { const h = Buffer.alloc(8); h.writeUInt16LE(ver, 0); h.writeUInt16LE(type, 2); h.writeUInt32LE(body.length, 4); return Buffer.concat([h, body]); };
 const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
   rec(15, 0x03F8, rec(0, 0x0FA8, Buffer.from('Click to edit Master title style'))), // master text must be skipped
@@ -146,6 +148,46 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
   }
   assert(slideTF.size >= 1, 'the one complete sentence in those slides still becomes true/false');
   assert([...slideTF].every(q => /directs the flow of data/.test(q)), 'only the real claim is used: ' + [...slideTF].join(' | '));
+  // Exam-paper furniture is not content. A module of instructions, rubrics and pre-blanked items used to
+  // produce "True or false: Register is correct and FALSE if the statement is incorrect."
+  const paper = [
+    'Computer Architecture Review',
+    'II. Write TRUE if the statement is correct and FALSE if the statement is incorrect.',
+    '1. ________ DB defines one byte.',
+    '2. ________ Arrays store elements in consecutive memory locations.',
+    'III. Choose the best answer.',
+    'Shift and Rotate Instructions',
+    'Shift and rotate instructions move the bits of an operand left or right.',
+    'A. Screen resolution', 'B. Keyboard input', 'C. Control unit', 'D. Arithmetic logic unit',
+    'The control unit fetches and decodes instructions from memory.',
+    'A register is a small storage location inside the processor.',
+    'ROM is memory that keeps its contents after the power is off.',
+    'A byte is a group of eight bits.',
+  ];
+  const RUBRIC_TEXT = /\bif the statement is\b|\bwrite (?:true|false)\b|\btrue or false\b|\bchoose the (?:best|correct)\b|\bfill in the blanks?\b|_{3,}/i;
+  let paperTF = 0, paperItems = 0;
+  for (let k = 0; k < 200; k++) generate(paper, paper.map(() => 'page 18')).forEach(x => {
+    paperItems++;
+    // The "True or false: " prefix is the app's own wording, not note text.
+    each(x, s => assert(!RUBRIC_TEXT.test(String(s).replace(/^True or false: /, '')), 'no question is built from a rubric, an instruction or a blank line: ' + s));
+    if (!/^True or false: /.test(x.q)) return;
+    paperTF++;
+    const st = x.q.slice('True or false: '.length);
+    // "A RAM is…" and "Register is…" both read as errors; the article must fit the term that is there.
+    const m = st.match(/^(A|An)\s+([A-Za-z0-9-]+)/);
+    if (m) {
+      assert(!/^[A-Z0-9][A-Z0-9.-]+$/.test(m[2]), 'an article is not left in front of an acronym: ' + x.q);
+      assert.strictEqual(/^[aeiou]/i.test(m[2]), m[1] === 'An', 'a/an agrees with the next word: ' + x.q);
+    }
+  });
+  assert(paperItems >= 3, 'the real sentences in an exam paper still become questions');
+  assert(paperTF >= 1, 'a genuine claim in the same paper still becomes true/false');
+  // True/false is never lopsided: a set cannot be mostly one answer.
+  for (let k = 0; k < 100; k++) {
+    const tf = generate(paper, paper.map(() => 'page 18')).filter(x => /^True or false: /.test(x.q));
+    const nTrue = tf.filter(x => x.answer === 0).length;
+    assert(nTrue * 2 >= tf.length, 'true and false are balanced: ' + tf.length + ' items, ' + nTrue + ' true');
+  }
   // Number agreement: a swapped term must fit the verb already in the notes' sentence.
   const agree = [
     'Enzymes are proteins that speed up chemical reactions.',
