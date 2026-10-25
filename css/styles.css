@@ -98,6 +98,22 @@ a.l{color:var(--acc);cursor:pointer;text-decoration:underline;background:none;bo
 .part:first-child{border-top:0;padding-top:0}
 @media print{.diagram{break-inside:avoid}}
 
+/* Focus timer: fixed so the block keeps running while moving between screens. The page keeps a
+   little space at the bottom so the bar never covers the end of the content. */
+body{padding-bottom:70px}
+.focusbar{position:fixed;left:0;right:0;bottom:0;z-index:40;display:flex;align-items:center;gap:8px;padding:8px 16px;padding-bottom:calc(8px + env(safe-area-inset-bottom));background:var(--card);border-top:1px solid var(--line);box-shadow:0 -2px 12px var(--shadow);font-size:.95rem;line-height:1.2}
+.focus-phase{font-weight:700;white-space:nowrap}
+.focus-time{font:700 1.05rem/1 ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;min-width:4.3em}
+.focus-count{color:var(--mut);font-size:.85rem;white-space:nowrap}
+.focus-actions{margin-left:auto;display:flex;gap:8px}
+.focusbar .btn{min-height:44px;padding:8px 12px}
+.focus-progress{position:absolute;left:0;right:0;top:0;height:3px;background:var(--line)}
+.focus-progress>i{display:block;height:100%;width:0;background:var(--acc);transition:width .3s linear}
+.focusbar[data-paused="1"] .focus-time{color:var(--mut)}
+@media(max-width:360px){.focus-count{display:none}}
+@media print{.focusbar{display:none}body{padding-bottom:0}}
+@media(prefers-reduced-motion:reduce){.focus-progress>i{transition:none}}
+
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}.flip-card:hover{transform:none}}
 @media(forced-colors:active){.bar>i{background:Highlight}.opt.ok,.opt.bad,.fb{border:2px solid CanvasText}}
 

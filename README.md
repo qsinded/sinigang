@@ -25,6 +25,10 @@ no account and no build step.
   name; every hotspot becomes an identification question, and the same image shows up in
   flashcards and recitation. Labels already printed on the image can be boxed out with covers, so
   practice does not give the answer away. Images stay on the device.
+- **Pomodoro-style focus timer**: a 25-minute focus block with a 5-minute break that starts on its
+  own, a compact bar that stays visible on every screen, a soft chime, and a count of completed
+  blocks for today. It runs on the device clock, so changing screens or reopening the app does not
+  lose the block.
 - **Practice modes**: flashcards with known/learning tracking, shuffle into a fresh question set
   from the saved source, timed practice, retry-missed, print, and export/import of backups.
 - **Hands-free oral recitation**: the device's own speech voice reads each question, pauses while
@@ -103,6 +107,14 @@ Labeling is manual by design: on a textbook diagram the printed label sits next 
 a person can say which part that arrow points to. Nothing is scanned or uploaded, and the app never
 needs a server to practice the result.
 
+## Focus timer
+
+Start a 25-minute block from the bar at the bottom of any screen. When it ends, a chime and an
+announcement start a 5-minute break; when the break ends, start the next block when you are ready.
+Pause, resume and stop or skip are on the same bar, and completed focus blocks are counted for the
+day. The running block and the count live in this device's `localStorage`, apart from the reviewers
+and their export.
+
 ## Supported input
 
 PDF, PowerPoint (`.pptx` and old `.ppt`), Word (`.docx`) and text (`.txt`, `.md`, `.csv`); PNG, JPEG
@@ -128,4 +140,8 @@ image-only slides need OCR.
 - A cover is a box you place by hand: it hides printed text, not the arrows or leader lines next to
   it, and a label that sits inside the drawing needs its own small box. Covers are stored with the
   reviewer, so they apply to every question and every mode, and they are printed as solid blocks.
+- The focus timer is device-local and is not part of Export/Import. It follows the device clock: a
+  block that ends while the tab is closed completes the next time the app opens, and nothing
+  notifies you while it is closed. The chime needs one tap on the timer so the browser allows
+  audio; the spoken announcement works either way.
 - PDF text is grouped into lines by vertical position, so multi-column layouts may interleave lines.

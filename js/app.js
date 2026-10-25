@@ -716,6 +716,154 @@ function coversScreen() {
     h('p', { class: 'k' }, 'Covers are saved with this reviewer on this device. Pins stay visible here so you can see what is being tested; in practice the printed labels are hidden and the pins remain.')), 'covers');
 }
 
+// Pomodoro-style focus timer: 25 minutes of study, then a 5 minute break that starts on its own.
+// The bar lives outside #app so screen redraws never remove it, and the deadline is an absolute
+// timestamp so a throttled tab (or a reload) still finishes the block on time.
+const FOCUS_KEY = 'reviewer_focus_v1', FOCUS_MS = 25 * 60000, BREAK_MS = 5 * 60000;
+let focus = loadFocus(), focusClockTimer = null, focusAudio = null;
+const focusClock = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+function cleanFocus(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const phase = ['idle', 'focus', 'break'].includes(v.phase) ? v.phase : 'idle';
+  const cap = Date.now() + 864e5; // a saved deadline further out than a day is corrupt, not a block
+  const end = Number.isFinite(v.end) && v.end > 0 && v.end <= cap ? v.end : 0;
+  const running = v.running === true && phase !== 'idle' && end > 0;
+  const max = Math.max(FOCUS_MS, BREAK_MS);
+  const left = Number.isFinite(v.left) ? Math.min(max, Math.max(0, v.left)) : FOCUS_MS;
+  return {
+    phase, running, end: running ? end : 0,
+    left: phase === 'idle' ? FOCUS_MS : left,
+    done: Number.isInteger(v.done) && v.done >= 0 && v.done <= 500 ? v.done : 0,
+    day: Number.isInteger(v.day) ? v.day : todayNumber()
+  };
+}
+function loadFocus() {
+  try {
+    const f = cleanFocus(JSON.parse(localStorage.getItem(FOCUS_KEY)));
+    if (f && f.day === todayNumber()) return f;
+    if (f) return { ...f, done: 0, day: todayNumber() }; // a new day starts the count again
+  } catch (_) { /* no saved timer */ }
+  return { phase: 'idle', running: false, end: 0, left: FOCUS_MS, done: 0, day: todayNumber() };
+}
+function focusSave() { try { localStorage.setItem(FOCUS_KEY, JSON.stringify(focus)); } catch (_) { /* timer still runs, just is not remembered */ } }
+// One transition step, pure so the clock can be tested without waiting 25 minutes. A block that
+// ended long ago finishes its break against the original deadline instead of starting a fresh one.
+function focusNext(f, now) {
+  const events = [];
+  let next = { ...f };
+  if (!next.running || next.phase === 'idle' || !next.end || next.end > now) return { f: next, events };
+  if (next.phase === 'focus') {
+    events.push('focus-done');
+    next = { ...next, phase: 'break', end: next.end + BREAK_MS, left: BREAK_MS, done: next.done + 1 };
+    if (next.end > now) return { f: next, events };
+    events.push('break-done');
+  } else {
+    events.push('break-done');
+  }
+  return { f: { ...next, phase: 'idle', running: false, end: 0, left: FOCUS_MS }, events };
+}
+function focusSoundReady() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    focusAudio ||= new Ctx();
+    if (focusAudio.state === 'suspended') focusAudio.resume();
+  } catch (_) { focusAudio = null; }
+}
+// A short two-note chime made with WebAudio: no audio file, nothing uploaded. If the browser
+// blocked audio before any tap, the live announcement still fires.
+function focusChime() {
+  try {
+    if (!focusAudio || focusAudio.state !== 'running') return;
+    const start = focusAudio.currentTime;
+    [880, 1174.7].forEach((hz, i) => {
+      const osc = focusAudio.createOscillator(), gain = focusAudio.createGain(), at = start + i * 0.18;
+      osc.frequency.value = hz;
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.12, at + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.16);
+      osc.connect(gain).connect(focusAudio.destination);
+      osc.start(at); osc.stop(at + 0.18);
+    });
+  } catch (_) { /* silent */ }
+}
+const focusLabelEl = h('b', { class: 'focus-phase' }, 'Focus');
+const focusTimeEl = h('span', { class: 'focus-time', role: 'timer', 'aria-live': 'off' }, focusClock(FOCUS_MS));
+const focusCountEl = h('span', { class: 'focus-count' });
+const focusFill = h('i');
+const focusMainBtn = h('button', { class: 'btn', onclick: focusToggle }, 'Start');
+const focusStopBtn = h('button', { class: 'btn alt', onclick: focusStop }, 'Stop');
+const focusBar = h('div', { class: 'focusbar', role: 'group', 'aria-label': 'Focus timer' },
+  h('span', { class: 'focus-progress', 'aria-hidden': 'true' }, focusFill),
+  focusLabelEl, focusTimeEl, focusCountEl,
+  h('span', { class: 'focus-actions' }, focusMainBtn, focusStopBtn));
+app.after(focusBar);
+function focusRenderTick(now = Date.now()) {
+  const running = focus.running && focus.phase !== 'idle';
+  const left = running ? Math.max(0, focus.end - now) : focus.left;
+  const total = focus.phase === 'break' ? BREAK_MS : FOCUS_MS;
+  focusTimeEl.textContent = focusClock(left);
+  focusFill.style.width = Math.min(100, Math.max(0, (1 - left / total) * 100)) + '%';
+}
+function focusRender() {
+  if (focus.day !== todayNumber()) focus = { ...focus, done: 0, day: todayNumber() };
+  const phase = focus.phase;
+  focusLabelEl.textContent = phase === 'break' ? 'Break' : 'Focus';
+  focusCountEl.textContent = focus.done + ' today';
+  focusCountEl.setAttribute('aria-label', focus.done + ' focus block' + (focus.done === 1 ? '' : 's') + ' completed today');
+  focusMainBtn.textContent = phase === 'idle' ? 'Start' : focus.running ? 'Pause' : 'Resume';
+  focusMainBtn.setAttribute('aria-label', phase === 'idle' ? 'Start a 25 minute focus block'
+    : focus.running ? 'Pause the ' + (phase === 'break' ? 'break' : 'focus timer')
+    : 'Resume the ' + (phase === 'break' ? 'break' : 'focus timer'));
+  focusStopBtn.textContent = phase === 'break' ? 'Skip' : 'Stop';
+  focusStopBtn.setAttribute('aria-label', phase === 'break' ? 'Skip the break' : 'Stop the focus block');
+  focusStopBtn.hidden = phase === 'idle';
+  focusBar.dataset.paused = focus.running ? '0' : '1';
+  focusBar.setAttribute('aria-label', 'Focus timer, ' + (phase === 'idle' ? 'ready' : phase === 'break' ? 'break' : 'focus') + (phase !== 'idle' && !focus.running ? ', paused' : ''));
+  focusRenderTick();
+}
+function focusTickStop() { if (focusClockTimer) { clearInterval(focusClockTimer); focusClockTimer = null; } }
+function focusTickStart() {
+  if (focusClockTimer || focus.phase === 'idle' || !focus.running) return;
+  focusClockTimer = setInterval(focusTick, 1000);
+}
+function focusTick() {
+  const now = Date.now(), today = todayNumber();
+  const base = focus.day === today ? focus : { ...focus, done: 0, day: today };
+  const { f, events } = focusNext(base, now);
+  if (!events.length) { focusRenderTick(now); return; }
+  focus = f; focusSave(); focusRender(); focusChime();
+  const done = events.includes('break-done');
+  say(done ? 'Break over. Start the next focus block when ready.' : 'Focus block done. Take a 5 minute break.');
+  if (focus.phase === 'idle') focusTickStop();
+}
+function focusToggle() {
+  focusSoundReady();
+  const today = todayNumber();
+  if (focus.day !== today) focus = { ...focus, done: 0, day: today };
+  if (focus.phase === 'idle') {
+    focus = { ...focus, phase: 'focus', running: true, end: Date.now() + FOCUS_MS, left: FOCUS_MS };
+    say('Focus block started. 25 minutes.');
+  } else if (focus.running) {
+    focus = { ...focus, running: false, left: Math.max(0, focus.end - Date.now()), end: 0 };
+    say(focus.phase === 'break' ? 'Break paused.' : 'Focus paused.');
+  } else {
+    focus = { ...focus, running: true, end: Date.now() + Math.max(1000, focus.left) };
+    say(focus.phase === 'break' ? 'Break resumed.' : 'Focus resumed.');
+  }
+  focusSave(); focusRender();
+  if (focus.running) focusTickStart(); else focusTickStop();
+}
+function focusStop() {
+  const was = focus.phase;
+  focus = { ...focus, phase: 'idle', running: false, end: 0, left: FOCUS_MS };
+  focusTickStop(); focusSave(); focusRender();
+  say(was === 'break' ? 'Break skipped.' : 'Focus block stopped.');
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden && focus.running) focusTick(); });
+focusRender();
+if (focus.running) { focusTick(); focusTickStart(); }
+
 function home() {
   pending = null;
   if (reciteActive) stopVoice();

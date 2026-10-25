@@ -311,6 +311,44 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   const afterSave = find(appEl, e => String(e.className).split(' ')[0] === 'cover');
   assert.strictEqual(afterSave.length, imgReviewer.items.length * 3, 'practice draws the covers after saving');
 
+  // 8b. Focus timer: pure transitions, then the bar's real start/pause/stop path.
+  assert.strictEqual(vm.runInContext('focusClock(1500000)', ctx), '25:00', 'the clock shows 25 minutes');
+  assert.strictEqual(vm.runInContext('focusClock(61000)', ctx), '1:01', 'the clock pads seconds');
+  assert.strictEqual(vm.runInContext('focusClock(0)', ctx), '0:00', 'the clock never goes negative');
+  const focusAt = over => ({ phase: 'focus', running: true, end: 1000, left: 1500000, done: 2, day: 1, ...over });
+  const finished = ctx.focusNext(focusAt(), 2000);
+  assert.strictEqual(finished.f.phase, 'break', 'a finished focus block starts the break');
+  assert.strictEqual(finished.f.done, 3, 'a finished focus block is counted');
+  assert.strictEqual(finished.f.end, 1000 + 300000, 'the break runs from the original deadline');
+  assert.deepStrictEqual(plain(finished.events), ['focus-done']);
+  assert.strictEqual(ctx.focusNext(focusAt(), 500).f.phase, 'focus', 'a running block is left alone');
+  const breakOver = ctx.focusNext({ phase: 'break', running: true, end: 1000, left: 300000, done: 1, day: 1 }, 2000);
+  assert.strictEqual(breakOver.f.phase, 'idle', 'a finished break returns to ready');
+  assert.deepStrictEqual(plain(breakOver.events), ['break-done']);
+  const longGone = ctx.focusNext(focusAt(), 1000 + 300000 + 1);
+  assert.strictEqual(longGone.f.phase, 'idle', 'a break that also passed does not restart');
+  assert.deepStrictEqual(plain(longGone.events), ['focus-done', 'break-done']);
+  assert.strictEqual(plain(ctx.cleanFocus({ phase: 'break', running: true, end: 1, left: -5, done: 9000, day: 1 })).done, 0, 'an impossible saved count is dropped');
+  localStorage.setItem('reviewer_focus_v1', JSON.stringify({ phase: 'idle', running: false, end: 0, left: 1500000, done: 4, day: 0 }));
+  assert.strictEqual(ctx.loadFocus().done, 0, 'yesterday’s count does not carry into today');
+  localStorage.removeItem('reviewer_focus_v1');
+  assert.strictEqual(vm.runInContext('focusBar.className', ctx), 'focusbar', 'the focus bar is always present');
+  assert.strictEqual(vm.runInContext('focusStopBtn.hidden', ctx), true, 'the stop button is hidden while ready');
+  assert.match(vm.runInContext('focusMainBtn.textContent', ctx), /Start/, 'the bar starts ready');
+  ctx.focusToggle();
+  assert.strictEqual(vm.runInContext('focus.phase', ctx), 'focus', 'the start button begins a focus block');
+  assert.strictEqual(vm.runInContext('focus.running', ctx), true);
+  assert.match(vm.runInContext('focusMainBtn.textContent', ctx), /Pause/);
+  assert.strictEqual(vm.runInContext('focusStopBtn.hidden', ctx), false, 'the stop button appears while running');
+  assert.ok(localStorage.getItem('reviewer_focus_v1'), 'a started block is saved');
+  ctx.focusToggle();
+  assert.strictEqual(vm.runInContext('focus.running', ctx), false, 'the same button pauses');
+  assert.match(vm.runInContext('focusMainBtn.textContent', ctx), /Resume/);
+  ctx.focusStop();
+  assert.strictEqual(vm.runInContext('focus.phase', ctx), 'idle', 'stop returns the timer to ready');
+  assert.match(vm.runInContext('focusMainBtn.textContent', ctx), /Start/);
+  localStorage.removeItem('reviewer_focus_v1');
+
   // 9. PDF.js is fetched on demand, in worker-before-viewer order, and only once
   assert.deepStrictEqual(scripts, [], 'nothing loaded at boot');
   const p1 = ctx.loadPdfjs();
