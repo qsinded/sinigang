@@ -1,6 +1,6 @@
-:root{--bg:#eef0f4;--ink:#14213d;--mut:#566070;--acc:#c28f00;--ok:#166b3a;--okbg:#e3f2e8;--bad:#c0392b;--badbg:#fbe9e7;--card:#fff;--line:#d5d9e0;--edge:#6f7a8c;--shadow:#00000012}
-@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#10141c;--ink:#e8ebf2;--mut:#98a1b3;--acc:#e0aa1a;--ok:#4cc17f;--okbg:#14301f;--bad:#ff7b6b;--badbg:#3a1a17;--card:#1a2030;--line:#2c3446;--edge:#7c869b;--shadow:#00000040}}
-:root[data-theme=dark]{--bg:#10141c;--ink:#e8ebf2;--mut:#98a1b3;--acc:#e0aa1a;--ok:#4cc17f;--okbg:#14301f;--bad:#ff7b6b;--badbg:#3a1a17;--card:#1a2030;--line:#2c3446;--edge:#7c869b;--shadow:#00000040}
+:root{--bg:#eef0f4;--ink:#14213d;--mut:#566070;--acc:#c28f00;--ok:#166b3a;--okbg:#e3f2e8;--bad:#c0392b;--badbg:#fbe9e7;--card:#fff;--line:#d5d9e0;--edge:#6f7a8c;--shadow:#00000012;--cover:#fff}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#10141c;--ink:#e8ebf2;--mut:#98a1b3;--acc:#e0aa1a;--ok:#4cc17f;--okbg:#14301f;--bad:#ff7b6b;--badbg:#3a1a17;--card:#1a2030;--line:#2c3446;--edge:#7c869b;--shadow:#00000040;--cover:#eef1f7}}
+:root[data-theme=dark]{--bg:#10141c;--ink:#e8ebf2;--mut:#98a1b3;--acc:#e0aa1a;--ok:#4cc17f;--okbg:#14301f;--bad:#ff7b6b;--badbg:#3a1a17;--card:#1a2030;--line:#2c3446;--edge:#7c869b;--shadow:#00000040;--cover:#eef1f7}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:1rem/1.5 system-ui,sans-serif}
 main,.site{max-width:1100px;margin:0 auto;padding:20px 16px 60px}
@@ -83,10 +83,17 @@ a.l{color:var(--acc);cursor:pointer;text-decoration:underline;background:none;bo
 /* Diagrams */
 .diagram{position:relative;display:inline-block;width:fit-content;max-width:100%;margin:10px 0;line-height:0;vertical-align:top}
 .diagram img{display:block;max-width:100%;height:auto;border:1px solid var(--line);border-radius:8px;background:var(--card)}
-.pin{position:absolute;left:50%;top:50%;width:26px;height:26px;transform:translate(-50%,-50%);border-radius:50%;background:var(--acc);border:3px solid var(--card);box-shadow:0 0 0 1px var(--acc)}
+.pin{position:absolute;left:50%;top:50%;z-index:2;width:26px;height:26px;transform:translate(-50%,-50%);border-radius:50%;background:var(--acc);border:3px solid var(--card);box-shadow:0 0 0 1px var(--acc)}
 .pin b{position:absolute;inset:0;display:grid;place-items:center;font:700 12px ui-monospace,Menlo,monospace;color:#14213d}
 .pin.pending{background:var(--bad);box-shadow:0 0 0 1px var(--bad)}
 .pin.pending b{color:#fff}
+/* Covers hide labels printed into the image. Opaque in practice and on paper; an outline while
+   the author is placing them, so the text underneath can still be read and adjusted. */
+.cover{position:absolute;z-index:1;background:var(--cover);border-radius:2px;pointer-events:none;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.cover.editing{z-index:1;background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--acc) 18%,transparent) 0 5px,transparent 5px 11px);border:1.5px dashed var(--acc);pointer-events:auto;cursor:grab}
+.cover.editing.on,.cover.editing:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.cover.draft{z-index:3;display:none;background:color-mix(in srgb,var(--acc) 22%,transparent);border:1.5px dashed var(--acc)}
+.diagram.covering img{cursor:crosshair;touch-action:none;-webkit-user-select:none;user-select:none}
 .part{padding:8px 0;border-top:1px solid var(--line)}
 .part:first-child{border-top:0;padding-top:0}
 @media print{.diagram{break-inside:avoid}}

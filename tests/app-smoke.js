@@ -240,8 +240,19 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   await ctx.dropImage('img_demo');
   assert.strictEqual(await ctx.idbGet('img_demo'), undefined, 'deleting a reviewer removes its image');
   const imgItem = (i, name) => ({ id: 'img' + i, type: 'img', q: 'Identify the part marked on the diagram.', answer: name, imageId: 'img_demo', hotspot: { x: 0.3, y: 0.4 }, exp: '' });
-  const imgReviewer = ctx.cleanReviewer({ title: 'Heart', opts: {}, items: [imgItem(0, 'Right atrium'), imgItem(1, 'Left ventricle'), imgItem(2, 'Aorta')] });
+  const masks = [{ x: 0.01, y: 0.1, w: 0.2, h: 0.08 }, { x: 2, y: 0, w: 0.1, h: 0.1 }, { x: 0.1, y: 0.1, w: 0, h: 0.1 }];
+  const imgReviewer = ctx.cleanReviewer({ title: 'Heart', masks, opts: {}, items: [imgItem(0, 'Right atrium'), imgItem(1, 'Left ventricle'), imgItem(2, 'Aorta')] });
   assert.ok(imgReviewer && imgReviewer.items.every(i => i.type === 'img'), 'diagram items survive validation');
+  // Objects built inside the VM have a different prototype, so compare their JSON form.
+  const plain = v => JSON.parse(JSON.stringify(v));
+  assert.deepStrictEqual(plain(imgReviewer.masks), [{ x: 0.01, y: 0.1, w: 0.2, h: 0.08 }], 'valid label covers survive validation and broken ones are dropped');
+  // Covers are normalized boxes: a pointer and a drag must mean the same thing at any display size.
+  assert.deepStrictEqual(plain(ctx.pointInRect(50, 25, { left: 0, top: 0, width: 100, height: 100 })), { x: 0.5, y: 0.25 }, 'a pointer becomes a fraction of the image');
+  assert.strictEqual(ctx.pointInRect(0, 0, { left: 0, top: 0, width: 0, height: 10 }), null, 'no point without a rendered image');
+  assert.deepStrictEqual(plain(ctx.boxFromPoints({ x: 0.75, y: 0.75 }, { x: 0.25, y: 0.25 })), { x: 0.25, y: 0.25, w: 0.5, h: 0.5 }, 'a drag becomes a box in any direction');
+  assert.strictEqual(ctx.boxFromPoints({ x: 0.5, y: 0.5 }, { x: 0.505, y: 0.5 }), null, 'a stray tap does not leave a sliver');
+  assert.deepStrictEqual(plain(ctx.moveBox({ x: 0.7, y: 0.7, w: 0.2, h: 0.2 }, 0.5, 0)), { x: 0.8, y: 0.7, w: 0.2, h: 0.2 }, 'moving a cover keeps it inside the image');
+  assert.deepStrictEqual(plain(ctx.resizeBox({ x: 0.5, y: 0.5, w: 0.2, h: 0.2 }, 0.5, 0.5)), { x: 0.5, y: 0.5, w: 0.5, h: 0.5 }, 'resizing a cover stops at the edge');
   assert.strictEqual(ctx.cleanItem({ ...imgItem(0, 'X'), hotspot: { x: 2, y: 0 } }), null, 'a hotspot outside the image is rejected');
   assert.strictEqual(ctx.cleanItem({ ...imgItem(0, 'X'), imageId: '' }), null, 'an image id is required');
   assert.strictEqual(ctx.flashAnswer(imgReviewer.items[0]), 'Right atrium');
@@ -253,6 +264,8 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   const oldBackup = ctx.cleanBackup([imgReviewer]);
   assert.strictEqual(oldBackup.reviewers.length, 1, 'old array backups still import');
   assert.strictEqual(Object.keys(oldBackup.images).length, 0, 'no images in an old backup');
+  assert.deepStrictEqual(plain(oldBackup.reviewers[0].masks), plain(imgReviewer.masks), 'label covers survive export and import');
+  assert.deepStrictEqual(plain(ctx.applyCovers(imgReviewer, [{ x: 0.7, y: 0.2, w: 0.2, h: 0.1 }, { x: 0, y: 0, w: 1, h: 1 }])), [{ x: 0.7, y: 0.2, w: 0.2, h: 0.1 }, { x: 0, y: 0, w: 1, h: 1 }], 'saving covers updates the reviewer in place');
   ctx.clearDiagram();
   ctx.diagramSetup();
   assert.match(screenText(appEl), /Diagram reviewer/, 'the diagram setup screen renders');
@@ -264,6 +277,28 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   const diagramImgs = find(appEl, e => e.tagName === 'IMG');
   assert.ok(diagramImgs.length > 0, 'the image element is present');
   assert.strictEqual(diagramImgs[0].src, 'blob:x', 'the stored diagram is shown on the question');
+  const coverEls = find(appEl, e => String(e.className).split(' ')[0] === 'cover');
+  assert.strictEqual(coverEls.length, imgReviewer.items.length * imgReviewer.masks.length, 'every saved cover is drawn over every diagram question');
+  assert.strictEqual(coverEls[0].textContent, '', 'a cover hides text without adding any');
+  ctx.openCovers(imgReviewer);
+  assert.match(screenText(appEl), /Hide printed labels/, 'the label-cover editor renders');
+  const editing = find(appEl, e => String(e.className).includes('cover editing'));
+  assert.strictEqual(editing.length, imgReviewer.masks.length, 'every saved cover is editable');
+  assert.match(editing[0].attrs['aria-label'], /Arrow keys move it/, 'a cover says how to move it without a pointer');
+  // Draw a cover the way a pointer does: press, drag, release on the image.
+  const coverImg = find(appEl, e => e.tagName === 'IMG')[0];
+  coverImg.getBoundingClientRect = () => ({ left: 0, top: 0, width: 100, height: 100 });
+  const pointer = (x, y) => ({ button: 0, pointerId: 1, clientX: x, clientY: y, currentTarget: coverImg, preventDefault() {} });
+  coverImg.onpointerdown(pointer(10, 10));
+  coverImg.onpointermove(pointer(40, 30));
+  coverImg.onpointerup(pointer(60, 60));
+  assert.match(screenText(appEl), /3 cover\(s\)/, 'dragging on the image adds a cover');
+  // Arrow keys move the selected cover, so a keyboard user can place one too.
+  const leftOf = () => Number(/left:([\d.]+)%/.exec(find(appEl, e => String(e.className).includes('cover editing'))[0].attrs.style)[1]);
+  const beforeLeft = leftOf();
+  ctx.moveCoverKey({ key: 'ArrowRight', shiftKey: false, preventDefault() {} }, 0);
+  assert.ok(leftOf() > beforeLeft, 'arrow keys nudge a cover');
+  ctx.openCovers(imgReviewer);
 
   // 9. PDF.js is fetched on demand, in worker-before-viewer order, and only once
   assert.deepStrictEqual(scripts, [], 'nothing loaded at boot');

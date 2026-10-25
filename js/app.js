@@ -164,7 +164,9 @@ function imageBlock(it, big) {
   const img = h('img', { alt: 'Diagram with the part to identify marked', decoding: 'async' });
   const pin = h('span', { class: 'pin' + (big ? ' big' : ''), 'aria-hidden': 'true' });
   if (it.hotspot) { pin.style.left = (it.hotspot.x * 100) + '%'; pin.style.top = (it.hotspot.y * 100) + '%'; }
-  wrap.append(img, pin);
+  // Printed labels give the answer away, so the reviewer's covers sit between the image and the pin.
+  const masks = cur && Array.isArray(cur.masks) ? cur.masks : [];
+  wrap.append(img, ...coverSpans(masks, true), pin);
   imageURL(it.imageId).then(url => {
     if (url) { img.src = url; return; }
     pin.remove();
@@ -273,6 +275,48 @@ function sourcePanel(r, it) {
     h('button', { class: 'btn alt', 'aria-expanded': 'false', 'aria-controls': 'src-' + it.id, onclick: e => toggle(e.currentTarget) }, 'Show in my notes'),
     wrap);
 }
+// Labels printed on a diagram image cannot be erased, so the author boxes them out instead. A cover
+// is a normalized rectangle on the reviewer, drawn over the image in practice, flashcards,
+// recitation and printouts, but only faintly outlined while it is being placed or removed.
+const COVER_MAX = 24, COVER_MIN = 0.01;
+const unit = n => Math.min(1, Math.max(0, n));
+function cleanMasks(v) {
+  if (!Array.isArray(v)) return [];
+  return v.slice(0, COVER_MAX).map(m => {
+    if (!m || typeof m !== 'object') return null;
+    const n = ['x', 'y', 'w', 'h'].map(k => (typeof m[k] === 'number' && Number.isFinite(m[k]) ? m[k] : NaN));
+    if (n.some(Number.isNaN)) return null;
+    const x = unit(n[0]), y = unit(n[1]);
+    const w = Math.min(unit(n[2]), 1 - x), h = Math.min(unit(n[3]), 1 - y);
+    return w >= COVER_MIN && h >= COVER_MIN ? { x, y, w, h } : null;
+  }).filter(Boolean);
+}
+const coverStyle = m => 'left:' + (m.x * 100) + '%;top:' + (m.y * 100) + '%;width:' + (m.w * 100) + '%;height:' + (m.h * 100) + '%';
+// A pointer position as a fraction of the image, so a cover or pin survives any display size.
+function pointInRect(clientX, clientY, r) {
+  if (!r || !r.width || !r.height) return null;
+  return { x: unit((clientX - r.left) / r.width), y: unit((clientY - r.top) / r.height) };
+}
+function boxFromPoints(a, b) {
+  if (!a || !b) return null;
+  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y), w = Math.abs(a.x - b.x), h = Math.abs(a.y - b.y);
+  return w >= COVER_MIN && h >= COVER_MIN ? { x, y, w, h } : null;
+}
+function moveBox(m, dx, dy) {
+  return { x: Math.min(1 - m.w, Math.max(0, m.x + dx)), y: Math.min(1 - m.h, Math.max(0, m.y + dy)), w: m.w, h: m.h };
+}
+function resizeBox(m, dw, dh) {
+  return { x: m.x, y: m.y, w: Math.min(1 - m.x, Math.max(COVER_MIN, m.w + dw)), h: Math.min(1 - m.y, Math.max(COVER_MIN, m.h + dh)) };
+}
+function coverSpans(masks, quiet) {
+  return (masks || []).map(m => h('span', { class: 'cover', 'aria-hidden': quiet ? 'true' : null, style: coverStyle(m) }));
+}
+function applyCovers(r, list) {
+  if (!r) return [];
+  r.masks = cleanMasks(list);
+  save();
+  return r.masks;
+}
 function cleanItem(x) {
   if (!x || !['mc', 'id', 'enum', 'img'].includes(x.type)) return null;
   const id = str(x.id, 40), q = str(x.q), exp = str(x.exp) ?? '';
@@ -314,7 +358,7 @@ function cleanReviewer(x) {
     if (ids.has(k) && s && Number.isInteger(s.box) && s.box >= 0 && s.box < BOX_DAYS.length && Number.isInteger(s.due)) srs[k] = { box: s.box, due: s.due };
   }
   const plan = { exam: validExamDate(raw.exam) ? raw.exam : '', srs };
-  return { id: newRid(), title, items, ans, flashKnown: idList(x.flashKnown), flashLearn: idList(x.flashLearn), src, tags, opts, plan };
+  return { id: newRid(), title, items, ans, flashKnown: idList(x.flashKnown), flashLearn: idList(x.flashLearn), src, tags, opts, plan, masks: cleanMasks(x.masks) };
 }
 let note = ''; // one-time message shown on the home screen after export or import
 // Backups carry reviewer data plus any diagram images as data URLs, so a file still works on
@@ -495,7 +539,7 @@ async function createDiagram() {
     if (token !== diagToken) { dropImage(imageId); return; }
     const title = (diagTitleText.trim() || 'Diagram').slice(0, 120);
     const items = diagParts.map((p, i) => ({ id: 'img' + i, type: 'img', q: 'Identify the part marked on the diagram.', answer: p.name, imageId, hotspot: { x: p.x, y: p.y }, exp: '' }));
-    const r = { id: newRid(), title, items, ans: {}, src: undefined, tags: undefined, opts: { max: 0, mcOnly: false }, plan: { exam: '', srs: {} } };
+    const r = { id: newRid(), title, items, ans: {}, src: undefined, tags: undefined, opts: { max: 0, mcOnly: false }, plan: { exam: '', srs: {} }, masks: [] };
     R.unshift(r); save(); clearDiagram(); open(r);
   } catch (e) {
     if (token !== diagToken) return;
@@ -557,6 +601,119 @@ function diagramSetup() {
       h('p', null, h('button', { class: 'btn', disabled: canCreate ? null : '', onclick: createDiagram }, diagBusy ? 'Saving…' : 'Create diagram reviewer')),
       diagParts.length < 3 && h('p', { class: 'k' }, 'Add at least 3 parts first.')),
     diagErr && h('p', { class: 'err', role: 'alert' }, diagErr)), 'diagram');
+}
+
+// Printed labels on a textbook diagram name the answer next to every pin. The pixels cannot be
+// changed, so covers are drawn over the text and saved with the reviewer. Practice renders them
+// opaque; this screen shows them as outlines so they can still be adjusted.
+let coverFor = null, coverList = [], coverStart = null, coverIndex = -1;
+function openCovers(r) {
+  if (!r || !r.items.some(i => i.type === 'img')) return;
+  coverFor = r; coverList = cleanMasks(r.masks); coverStart = null;
+  coverIndex = coverList.length ? 0 : -1;
+  coversScreen();
+}
+function focusCover() {
+  const el = app.querySelectorAll('.cover.on');
+  if (el && el[0] && el[0].focus) el[0].focus();
+}
+function hideDraft() {
+  const el = document.getElementById('cover-draft');
+  if (el && el.style) el.style.display = 'none';
+}
+function updateDraft(a, b) {
+  const el = document.getElementById('cover-draft');
+  const box = boxFromPoints(a, b);
+  if (!el || !el.style) return;
+  if (!box) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.style.left = (box.x * 100) + '%'; el.style.top = (box.y * 100) + '%';
+  el.style.width = (box.w * 100) + '%'; el.style.height = (box.h * 100) + '%';
+}
+function moveCoverKey(e, i) {
+  const d = e.shiftKey ? 0.02 : 0.01;
+  const dx = e.key === 'ArrowLeft' ? -d : e.key === 'ArrowRight' ? d : 0;
+  const dy = e.key === 'ArrowUp' ? -d : e.key === 'ArrowDown' ? d : 0;
+  if (dx || dy) {
+    e.preventDefault();
+    coverList[i] = e.shiftKey ? resizeBox(coverList[i], dx, dy) : moveBox(coverList[i], dx, dy);
+  } else if (e.key === 'Delete' || e.key === 'Backspace') {
+    e.preventDefault(); coverList.splice(i, 1); coverIndex = Math.min(i, coverList.length - 1);
+    coversScreen(); focusCover(); say('Cover removed.'); return;
+  } else if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault(); coverIndex = i; coversScreen(); focusCover(); return;
+  } else return;
+  coverIndex = i; coversScreen(); focusCover();
+}
+function coversScreen() {
+  const r = coverFor; if (!r) return quiz();
+  const it = r.items.find(i => i.type === 'img');
+  const img = h('img', { alt: 'Diagram with printed labels to cover', decoding: 'async', draggable: 'false' });
+  const draft = h('span', { class: 'cover draft', id: 'cover-draft', 'aria-hidden': 'true' });
+  const covers = coverList.map((m, i) => {
+    const el = h('span', { class: 'cover editing' + (i === coverIndex ? ' on' : ''), tabindex: '0', role: 'button',
+      'aria-label': 'Cover ' + (i + 1) + '. Arrow keys move it, Shift with arrows resizes it, Delete removes it.', style: coverStyle(m) });
+    el.onclick = () => { coverIndex = i; coversScreen(); focusCover(); };
+    el.onkeydown = e => moveCoverKey(e, i);
+    return el;
+  });
+  // Pins stay visible so a cover is never placed over the part being tested without noticing.
+  const pins = r.items.filter(i => i.type === 'img').map(i => {
+    const p = h('span', { class: 'pin', 'aria-hidden': 'true' });
+    if (i.hotspot) { p.style.left = (i.hotspot.x * 100) + '%'; p.style.top = (i.hotspot.y * 100) + '%'; }
+    return p;
+  });
+  const where = e => pointInRect(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect());
+  img.onpointerdown = e => {
+    if (e.button != null && e.button !== 0) return;
+    const p = where(e); if (!p) return;
+    coverStart = p;
+    if (e.currentTarget.setPointerCapture) { try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { /* older browser */ } }
+    e.preventDefault();
+  };
+  img.onpointermove = e => { if (!coverStart) return; updateDraft(coverStart, where(e)); e.preventDefault(); };
+  img.onpointerup = e => {
+    if (!coverStart) return;
+    const box = boxFromPoints(coverStart, where(e));
+    coverStart = null; hideDraft();
+    if (box) { coverList.push(box); coverIndex = coverList.length - 1; coversScreen(); focusCover(); say('Cover added. ' + coverList.length + ' cover(s).'); }
+    e.preventDefault();
+  };
+  img.onpointercancel = () => { coverStart = null; hideDraft(); };
+  const wrap = h('span', { class: 'diagram covering' }, img, ...covers, ...pins, draft);
+  imageURL(it && it.imageId).then(url => { if (url) img.src = url; else wrap.append(h('span', { class: 'err' }, 'Diagram image is not on this device.')); });
+  const add = () => {
+    coverList.push({ x: 0.4, y: 0.4, w: 0.2, h: 0.2 }); coverIndex = coverList.length - 1;
+    coversScreen(); focusCover(); say('Cover added. Drag it or use the arrow keys.');
+  };
+  const remove = i => {
+    coverList.splice(i, 1); coverIndex = Math.min(i, coverList.length - 1);
+    coversScreen(); focusCover();
+  };
+  const saveCovers = () => {
+    const n = applyCovers(r, coverList).length;
+    coverFor = null; coverList = []; coverIndex = -1; coverStart = null;
+    quiz(); say(n ? n + ' cover(s) saved.' : 'Covers removed.');
+  };
+  const leave = () => { coverFor = null; coverList = []; coverIndex = -1; coverStart = null; quiz(); };
+  draw(h('div', null,
+    h('div', { class: 'row' }, h('button', { class: 'btn alt', onclick: leave }, '← Back'), h('span', { class: 'k' }, 'PRINTED LABELS')),
+    h('h1', null, 'Hide printed labels'),
+    h('p', { class: 'sub' }, 'Text printed on the diagram gives the answer away. Drag over that text to cover it: covers show while you practise, in flashcards and on printouts, but they are only outlines here so you can still adjust them.'),
+    warn(),
+    h('div', { class: 'card' }, wrap,
+      h('p', { class: 'k' }, coverList.length ? coverList.length + ' cover(s). Drag on the image to add another.' : 'Drag a box over any printed label. One box per block of text is usually enough.'),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn alt', onclick: add }, 'Add cover'),
+        coverList.length > 0 && h('button', { class: 'btn alt', onclick: () => { coverList = []; coverIndex = -1; coversScreen(); say('All covers cleared.'); } }, 'Clear all'))),
+    coverList.length > 0 && h('div', { class: 'card' },
+      h('h2', { class: 'k' }, 'Covers'),
+      coverList.map((m, i) => h('div', { class: 'part row' },
+        h('span', { class: 'mono' }, String(i + 1)),
+        h('span', { style: 'flex:1' }, 'Cover ' + (i + 1)),
+        h('button', { class: 'btn alt', 'aria-label': 'Remove cover ' + (i + 1), onclick: () => remove(i) }, 'Remove')))),
+    h('p', null, h('button', { class: 'btn', onclick: saveCovers }, 'Save covers')),
+    h('p', { class: 'k' }, 'Covers are saved with this reviewer on this device. Pins stay visible here so you can see what is being tested; in practice the printed labels are hidden and the pins remain.')), 'covers');
 }
 
 function home() {
@@ -876,6 +1033,10 @@ function quiz() {
     h('div', { class: 'tabs' }, ts.map(k => h('button', { class: 'tab' + (k === tab ? ' on' : ''), 'aria-current': k === tab ? 'true' : null, onclick: () => { if (timed && timed.tab !== k) stopTimer(); tab = k; quiz(); scrollTo(0, 0); } },
       TABS[k] + ' ', h('span', { class: 'k' }, good(r.items.filter(i => i.type === k)) + '/' + r.items.filter(i => i.type === k).length))),
       h('button', { class: 'tab', onclick: () => startFlash('all') }, '✦ Flipcards')),
+    ts.includes('img') && h('p', { class: 'k' }, r.masks && r.masks.length
+      ? 'Printed labels are covered. '
+      : 'Labels printed on the diagram give the answers away. ',
+      h('button', { class: 'btn alt', onclick: () => openCovers(r) }, r.masks && r.masks.length ? 'Edit label covers' : 'Hide printed labels')),
     h('div', { class: 'row' },
       h('button', { class: 'btn', disabled: missed.length ? null : '', onclick: () => clear(missed) }, 'Retry missed (' + missed.length + ')'),
       h('button', { class: 'btn alt', onclick: () => clear(mine) }, 'Reset this part')),

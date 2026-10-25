@@ -23,7 +23,8 @@ no account and no build step.
   exam; reviewers get a one-tap **Review** button for due items.
 - **Diagram reviewers**: upload a heart, cell, map or any diagram image, tap each part and type its
   name; every hotspot becomes an identification question, and the same image shows up in
-  flashcards and recitation. Images stay on the device.
+  flashcards and recitation. Labels already printed on the image can be boxed out with covers, so
+  practice does not give the answer away. Images stay on the device.
 - **Practice modes**: flashcards with known/learning tracking, shuffle into a fresh question set
   from the saved source, timed practice, retry-missed, print, and export/import of backups.
 - **Hands-free oral recitation**: the device's own speech voice reads each question, pauses while
@@ -45,7 +46,7 @@ no account and no build step.
 - `manifest.webmanifest`, `icons/` — installable app name, colours and icons
 - `tools/make-icons.js` — redraws the icons (shapes only, no font needed)
 - `tests/check.js` — generator, grading and file-reader checks
-- `tests/app-smoke.js` — page boot, storage cap, study plan, diagrams, source lookup and PDF.js checks
+- `tests/app-smoke.js` — page boot, storage cap, study plan, diagrams, label covers, source lookup and PDF.js checks
 - `tests/offline.js` — service worker behaviour against fake cache/network objects
 
 ## Running the tests
@@ -88,10 +89,15 @@ deep link still opens. Reviewer data and images are untouched by the worker: the
 1. On the home screen choose **Make a diagram reviewer** and pick a PNG, JPEG or WebP image.
 2. Tap a part on the image, type its name and choose **Add part**. Repeat for at least 3 parts.
 3. Name the reviewer and choose **Create diagram reviewer**, then practice naming the marked part.
+4. If the image already has its labels printed on it, choose **Hide printed labels** on the practice
+   screen and drag a box over each block of text. Covers show while you practise, in flashcards and
+   on printouts, but not while you label parts. Drag on the image to add one, or choose **Add cover**
+   and use the arrow keys (Shift with arrows resizes, Delete removes).
 
 Images are resized to 1600 px and stored in IndexedDB on this device. The reviewer itself only keeps
-an image id, a normalized hotspot and the label, so `localStorage` stays small. Export embeds the
-images in `reviewers.json`, which makes backups portable but noticeably larger.
+an image id, a normalized hotspot, the label and any covers, so `localStorage` stays small. Export
+embeds the images in `reviewers.json`, which makes backups portable but noticeably larger; covers
+are small enough to travel in the reviewer itself.
 
 Labeling is manual by design: on a textbook diagram the printed label sits next to an arrow, and only
 a person can say which part that arrow points to. Nothing is scanned or uploaded, and the app never
@@ -119,4 +125,7 @@ image-only slides need OCR.
 - Diagram reviewers need IndexedDB; private windows and some locked-down browsers block it, in which
   case the setup screen explains that images cannot be stored. Labeling is manual — the app does not
   detect labels or arrows in an uploaded image.
+- A cover is a box you place by hand: it hides printed text, not the arrows or leader lines next to
+  it, and a label that sits inside the drawing needs its own small box. Covers are stored with the
+  reviewer, so they apply to every question and every mode, and they are printed as solid blocks.
 - PDF text is grouped into lines by vertical position, so multi-column layouts may interleave lines.
