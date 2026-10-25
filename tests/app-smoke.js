@@ -271,6 +271,10 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   assert.match(screenText(appEl), /Diagram reviewer/, 'the diagram setup screen renders');
   assert.match(screenText(appEl), /No image chosen/, 'it asks for an image first');
   await ctx.idbPut('img_demo', new sandbox.Blob(['pixels'], { type: 'image/png' }));
+  const bare = ctx.cleanReviewer({ title: 'Bare heart', items: [imgItem(0, 'A'), imgItem(1, 'B'), imgItem(2, 'C')] });
+  ctx.open(bare);
+  assert.match(screenText(appEl), /give the answer away/, 'practice points out printed labels when none are covered');
+  assert.match(screenText(appEl), /Hide printed labels/, 'the cover editor is offered right where the labels are seen');
   ctx.open(imgReviewer);
   assert.match(screenText(appEl), /Identify the part marked/, 'a diagram question renders');
   await new Promise(resolve => setTimeout(resolve, 15));
@@ -298,7 +302,14 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   const beforeLeft = leftOf();
   ctx.moveCoverKey({ key: 'ArrowRight', shiftKey: false, preventDefault() {} }, 0);
   assert.ok(leftOf() > beforeLeft, 'arrow keys nudge a cover');
-  ctx.openCovers(imgReviewer);
+  // Save from the editor and re-render practice: this is the path the reader takes.
+  const labelOf = e => e.children.map(c => c.textContent || '').join(' ');
+  const saveBtn = find(appEl, e => e.tagName === 'BUTTON' && /Save covers/.test(labelOf(e)))[0];
+  assert.ok(saveBtn, 'the editor offers Save covers');
+  saveBtn.onclick();
+  assert.strictEqual(imgReviewer.masks.length, 3, 'saving stores every drawn cover on the reviewer');
+  const afterSave = find(appEl, e => String(e.className).split(' ')[0] === 'cover');
+  assert.strictEqual(afterSave.length, imgReviewer.items.length * 3, 'practice draws the covers after saving');
 
   // 9. PDF.js is fetched on demand, in worker-before-viewer order, and only once
   assert.deepStrictEqual(scripts, [], 'nothing loaded at boot');

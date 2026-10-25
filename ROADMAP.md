@@ -79,7 +79,7 @@ Three findings that change the shape of the work:
 - `.pin.big` is applied by `imageBlock(it, big)` on the flashcard answer side but has no CSS
   rule, so the answer pin is not actually bigger. Fold the fix into R1.3.
 
-## Release 1 — correctness and the marker (`sw.js` v4; v3 shipped label covers)
+## Release 1 — correctness and the marker
 
 ### R1.1 Shuffle diagram question order
 
@@ -207,7 +207,7 @@ reviewer, and a keyboard-only user can author one.
 
 Effort: M (1.5–2 days, including the pure helpers and tests).
 
-## Release 2 — editing a saved reviewer (`sw.js` v5)
+## Release 2 — editing a saved reviewer
 
 ### R2.1 Edit labels, pins and title after saving
 
@@ -266,7 +266,7 @@ accidental navigation. That is a separate draft-persistence feature (a temporary
 IndexedDB plus a draft record) and is not what the report asks for. If it is wanted, it should
 be its own item after R2.1.
 
-## Release 3 — practice options (`sw.js` v6)
+## Release 3 — practice options
 
 ### R3.1 Optional multiple choice from the diagram's own labels
 
@@ -365,19 +365,20 @@ Effort: L (2–3 days).
   choose answer mode, zoom) and the "Known limits" list (choice-mode elimination, gesture
   conflicts, pin size on large diagrams). Add the new test file to the test list if one is
   added.
-- **Release mechanics:** one `VERSION` bump per release (`v3` → `v4`, `v5`, `v6`) after the last
-  commit in that release, then verify the app reloads once and the offline copy updates.
+- **Release mechanics:** one `VERSION` bump per release, from whatever value `sw.js` has at the
+  time, after the last commit in that release, then verify the app reloads once and the offline
+  copy updates.
 
 ## Schedule
 
 | Work item | Effort | Depends on | Ships in |
 |---|---|---|---|
-| R1.1 Shuffle diagram order | S (0.5–1 d) | — | v4 |
-| R1.2 Contrast tokens + CSS check | S (0.5 d) | — | v4 |
-| R1.3 Marker: 44 px, drag, keyboard, nudge | M (1.5–2 d) | — | v4 |
-| R2.1 Edit a saved reviewer | L (3–4 d) | R1.3 (marker control), stable ids | v5 |
-| R3.1 Multiple choice from sibling labels | M (2 d) | R2.1 (stable ids, opts whitelist) | v6 |
-| R3.2 Zoom and pan | L (2–3 d) | — (can be promoted) | v6 |
+| R1.1 Shuffle diagram order | S (0.5–1 d) | — | Release 1 |
+| R1.2 Contrast tokens + CSS check | S (0.5 d) | — | Release 1 |
+| R1.3 Marker: 44 px, drag, keyboard, nudge | M (1.5–2 d) | — | Release 1 |
+| R2.1 Edit a saved reviewer | L (3–4 d) | R1.3 (marker control), stable ids | Release 2 |
+| R3.1 Multiple choice from sibling labels | M (2 d) | R2.1 (stable ids, opts whitelist) | Release 3 |
+| R3.2 Zoom and pan | L (2–3 d) | — (can be promoted) | Release 3 |
 
 Start here: R1.2 first (half a day, and it fixes a real dark-mode failure), then R1.1, then the
 marker rework in R1.3. Release 1 is about three days and removes the two defects that make the

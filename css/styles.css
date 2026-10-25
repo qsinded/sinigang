@@ -89,7 +89,7 @@ a.l{color:var(--acc);cursor:pointer;text-decoration:underline;background:none;bo
 .pin.pending b{color:#fff}
 /* Covers hide labels printed into the image. Opaque in practice and on paper; an outline while
    the author is placing them, so the text underneath can still be read and adjusted. */
-.cover{position:absolute;z-index:1;background:var(--cover);border-radius:2px;pointer-events:none;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.cover{position:absolute;z-index:1;background:var(--cover,#fff);border-radius:2px;pointer-events:none;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .cover.editing{z-index:1;background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--acc) 18%,transparent) 0 5px,transparent 5px 11px);border:1.5px dashed var(--acc);pointer-events:auto;cursor:grab}
 .cover.editing.on,.cover.editing:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 .cover.draft{z-index:3;display:none;background:color-mix(in srgb,var(--acc) 22%,transparent);border:1.5px dashed var(--acc)}

@@ -1033,10 +1033,6 @@ function quiz() {
     h('div', { class: 'tabs' }, ts.map(k => h('button', { class: 'tab' + (k === tab ? ' on' : ''), 'aria-current': k === tab ? 'true' : null, onclick: () => { if (timed && timed.tab !== k) stopTimer(); tab = k; quiz(); scrollTo(0, 0); } },
       TABS[k] + ' ', h('span', { class: 'k' }, good(r.items.filter(i => i.type === k)) + '/' + r.items.filter(i => i.type === k).length))),
       h('button', { class: 'tab', onclick: () => startFlash('all') }, '✦ Flipcards')),
-    ts.includes('img') && h('p', { class: 'k' }, r.masks && r.masks.length
-      ? 'Printed labels are covered. '
-      : 'Labels printed on the diagram give the answers away. ',
-      h('button', { class: 'btn alt', onclick: () => openCovers(r) }, r.masks && r.masks.length ? 'Edit label covers' : 'Hide printed labels')),
     h('div', { class: 'row' },
       h('button', { class: 'btn', disabled: missed.length ? null : '', onclick: () => clear(missed) }, 'Retry missed (' + missed.length + ')'),
       h('button', { class: 'btn alt', onclick: () => clear(mine) }, 'Reset this part')),
@@ -1047,6 +1043,7 @@ function quiz() {
       h('div', { class: 'row' },
         h('button', { class: 'btn alt', onclick: shuffleAll }, r.src ? 'Shuffle · new questions' : 'Shuffle'),
         h('button', { class: 'btn alt', onclick: rename }, 'Rename'),
+        ts.includes('img') && h('button', { class: 'btn alt', onclick: () => openCovers(r) }, r.masks && r.masks.length ? 'Edit label covers' : 'Hide printed labels'),
         h('button', { class: 'btn alt', onclick: () => window.print() }, 'Print this part'))),
     tab === 'mc' && h('p', { class: 'k keys' }, 'Keys: 1–4 answer the next question.'),
     running && h('p', { class: 'k' }, 'Time left: ', h('b', { id: 'clock', class: 'mono' }, fmt(timed.end - Date.now()))),
@@ -1059,6 +1056,10 @@ function quiz() {
           ? h('div', { role: 'group', 'aria-labelledby': 'q-' + it.id }, it.options.map((o, oi) => h('button', { class: 'opt' + (a ? (oi === it.answer ? ' ok' : oi === a.val ? ' bad' : '') : ''), disabled: a || over ? '' : null, onclick: () => answer(it, oi) }, h('b', null, 'ABCD'[oi]), o, a && oi === it.answer && h('span', { class: 'mark' }, '✓ Correct answer'), a && oi === a.val && oi !== it.answer && h('span', { class: 'mark' }, '✗ Your answer'))))
           : h('div', null,
             it.type === 'img' && imageBlock(it),
+            // The labels are right there in front of the reader, so the way to hide them belongs here
+            // too, not only in a menu above the first question.
+            it.type === 'img' && !(r.masks && r.masks.length) && h('p', { class: 'k' }, 'The printed labels give the answer away. ',
+              h('button', { class: 'btn alt', onclick: () => openCovers(r) }, 'Hide printed labels')),
             it.type === 'enum'
               ? h('textarea', { rows: 4, 'aria-labelledby': 'q-' + it.id, placeholder: 'One per line or separated by commas', disabled: a || over ? '' : null, oninput: e => { draft[it.id] = e.target.value; }, onkeydown: e => { if (e.key === 'Enter' && e.ctrlKey) answer(it, draft[it.id] || ''); } }, a ? a.val : draft[it.id] || '')
               : h('input', { type: 'text', 'aria-labelledby': 'q-' + it.id, placeholder: 'Your answer', value: a ? a.val : draft[it.id] || '', disabled: a || over ? '' : null, oninput: e => { draft[it.id] = e.target.value; }, onkeydown: e => { if (e.key === 'Enter') answer(it, draft[it.id] || ''); } }),
