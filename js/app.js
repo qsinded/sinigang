@@ -1148,25 +1148,16 @@ function home() {
     list);
   const match = r => (R.length <= 2 || r.title.toLowerCase().includes(q.trim().toLowerCase())) && (!qDue || dueCount(r) > 0);
   const fill = () => { const m = sortReviewers(R.filter(match)); list.replaceChildren(...(m.length || !R.length ? m.map(card) : [h('p', { class: 'k' }, 'No saved reviewer matches "' + q + '".')])); };
-  const card = r => {
-    const st = reviewerStats(r).all;
-    const sections = reviewerSections(r).filter(x => x.key !== 'none' && x.answered > 0);
-    const weak = sections.sort((a, b) => a.accuracy - b.accuracy)[0];
-    return h('div', { class: 'card saved' },
+  const card = r => h('div', { class: 'card saved' },
       h('div', null, h('b', null, r.title),
-        h('div', { class: 'k saved-meta' },
-          h('span', null, r.items.length === 1 ? '1 item' : r.items.length + ' items'),
-          st.answered ? h('span', null, st.answered + ' answered · ' + st.accuracy + '% accuracy') : h('span', null, 'No answers yet'),
-          st.due > 0 && h('span', { class: 'due' }, st.due + ' due'),
-          st.flagged > 0 && h('span', { class: 'flag' }, st.flagged + ' flagged'),
-          weak && weak.accuracy < 100 && h('span', { class: 'weak' }, 'Weakest ' + (weak.label.length > 26 ? weak.label.slice(0, 25) + '…' : weak.label) + ' · ' + weak.accuracy + '%'),
-          examDaysLeft(r.plan && r.plan.exam) !== null && h('span', null, examText(r.plan.exam)))),
+        h('div', { class: 'k' }, r.items.length + ' items · ' + Object.values(r.ans).filter(a => a.ok).length + ' correct'
+          + (dueCount(r) ? ' · ' + dueCount(r) + ' due' : '')
+          + (examDaysLeft(r.plan && r.plan.exam) !== null ? ' · ' + examText(r.plan.exam) : ''))),
       h('div', { class: 'row actions' },
         dueCount(r) > 0 && h('button', { class: 'btn', onclick: () => { open(r); startFlash('due', optCap); } }, 'Review ' + dueCount(r)),
         h('button', { class: 'btn alt', onclick: () => open(r) }, 'Open'),
         h('button', { class: 'btn alt', onclick: () => exportAll(r) }, 'Save file'),
         h('button', { class: 'btn alt', onclick: () => { if (confirm('Delete "' + r.title + '"?')) deleteReviewer(r); } }, 'Delete')));
-  };
   fill(); cur = null; draw(node, 'home'); if (n) say(n);
   const nt = document.getElementById('title'); if (nt) nt.value = tv;
 }
@@ -1178,10 +1169,10 @@ const scoreText = n => String(Math.round(n * 10) / 10);
 // Per-type progress for the quiz's Stats panel. Accuracy uses the same partial-credit score as the
 // quiz; due follows the same plan as Review due; flags only count items still in the reviewer.
 function reviewerStats(r) {
-  const due = new Set(dueIds(r)), flags = new Set(r.flags || []), ans = r.ans || {};
+  const due = new Set(dueIds(r)), flags = new Set(r.flags || []);
   const row = (key, label, items) => {
-    const answered = items.filter(it => ans[it.id]);
-    const creditSum = answered.reduce((n, it) => n + credit(ans[it.id]), 0);
+    const answered = items.filter(it => r.ans[it.id]);
+    const creditSum = answered.reduce((n, it) => n + credit(r.ans[it.id]), 0);
     return {
       key, label, total: items.length, answered: answered.length,
       accuracy: answered.length ? Math.round(creditSum / answered.length * 100) : null,
@@ -1194,45 +1185,6 @@ function reviewerStats(r) {
     return items.length ? row(k, TABS[k], items) : null;
   }).filter(Boolean);
   return { types, all: row('all', 'All questions', r.items) };
-}
-// Page/slide tags are kept beside every source line, and generated explanations carry the tag in
-// their leading parentheses. Added or edited items may have neither, so they fall back to the
-// source line and finally to "No section" instead of being guessed into a page.
-function sectionOf(r, it) {
-  const m = String(it.exp || '').match(/^\(([^)]{1,120})\)\s*/);
-  if (m && m[1].trim()) return m[1].trim();
-  const found = sourceLine(r, it);
-  return found && found.tag ? String(found.tag).trim() : '';
-}
-function reviewerSections(r) {
-  const due = new Set(dueIds(r)), flags = new Set(r.flags || []), ans = r.ans || {}, order = new Map();
-  (Array.isArray(r.tags) ? r.tags : []).forEach(t => {
-    const s = String(t || '').trim();
-    if (s && !order.has(s)) order.set(s, order.size);
-  });
-  const buckets = new Map();
-  r.items.forEach(it => {
-    const key = sectionOf(r, it);
-    if (!buckets.has(key)) buckets.set(key, []);
-    buckets.get(key).push(it);
-  });
-  const sections = [...buckets.entries()].map(([key, items]) => {
-    const answered = items.filter(it => ans[it.id]);
-    const creditSum = answered.reduce((n, it) => n + credit(ans[it.id]), 0);
-    return {
-      key: key || 'none', label: key || 'No section', total: items.length, answered: answered.length,
-      accuracy: answered.length ? Math.round(creditSum / answered.length * 100) : null,
-      due: items.filter(it => due.has(it.id)).length,
-      flagged: items.filter(it => flags.has(it.id)).length
-    };
-  });
-  sections.sort((a, b) => {
-    if (a.key === 'none') return 1;
-    if (b.key === 'none') return -1;
-    const ai = order.has(a.key) ? order.get(a.key) : Infinity, bi = order.has(b.key) ? order.get(b.key) : Infinity;
-    return ai - bi || a.label.localeCompare(b.label, undefined, { numeric: true });
-  });
-  return sections;
 }
 let lastUndo = null;
 // One-question mode: chosen explicitly (and remembered) or defaulted by width. A stored choice wins,
@@ -1567,31 +1519,26 @@ function answer(it, val) {
 }
 
 function statsPanel(r) {
-  const s = reviewerStats(r), sections = reviewerSections(r);
+  const s = reviewerStats(r);
   const cell = (value, cls) => h('td', { class: 'num' + (cls ? ' ' + cls : '') }, value);
-  const row = (label, t) => h('tr', { class: t.key === 'all' ? 'all' : null },
-    h('th', { scope: 'row' }, label, h('span', { class: 'stats-sub' }, t.answered + ' of ' + t.total + ' answered')),
+  const row = t => h('tr', { class: t.key === 'all' ? 'all' : null },
+    h('th', { scope: 'row' }, t.label, h('span', { class: 'stats-sub' }, t.answered + ' of ' + t.total + ' answered')),
     cell(t.accuracy == null ? '—' : t.accuracy + '%'),
     cell(t.due, t.due ? 'due' : null),
     cell(t.flagged, t.flagged ? 'flag' : null));
-  const table = (first, rows, caption) => h('div', { class: 'stats-wrap' },
-    h('table', { class: 'stats-table' },
-      h('caption', { class: 'sr' }, caption),
-      h('thead', null, h('tr', null,
-        h('th', { scope: 'col' }, first),
-        h('th', { scope: 'col', class: 'num' }, 'Accuracy'),
-        h('th', { scope: 'col', class: 'num' }, 'Due'),
-        h('th', { scope: 'col', class: 'num' }, 'Flagged'))),
-      h('tbody', null, rows)));
-  const named = sections.some(x => x.key !== 'none');
   return h('section', { class: 'card stats', id: 'stats', 'aria-labelledby': 'stats-title' },
     h('h2', { class: 'k', id: 'stats-title' }, 'Stats'),
     h('p', { class: 'k stats-lede' }, 'By question type'),
-    table('Type', [...s.types.map(t => row(t.label, t)), s.types.length > 1 && row(s.all.label, s.all)], 'Accuracy, due and flagged counts by question type'),
-    named && h('div', null,
-      h('h3', { class: 'k stats-subhead' }, 'By page or slide'),
-      table('Section', sections.map(t => row(t.label, t)), 'Accuracy, due and flagged counts by page or slide')),
-    h('p', { class: 'stats-note' }, 'Accuracy uses partial enumeration credit. Due includes items scheduled for today or earlier; an item with no schedule is due now. Section rows use the page or slide tag stored with the question; items without one appear as No section.'));
+    h('div', { class: 'stats-wrap' },
+      h('table', { class: 'stats-table' },
+        h('caption', { class: 'sr' }, 'Accuracy, due and flagged counts by question type'),
+        h('thead', null, h('tr', null,
+          h('th', { scope: 'col' }, 'Type'),
+          h('th', { scope: 'col', class: 'num' }, 'Accuracy'),
+          h('th', { scope: 'col', class: 'num' }, 'Due'),
+          h('th', { scope: 'col', class: 'num' }, 'Flagged'))),
+        h('tbody', null, s.types.map(row), s.types.length > 1 && row(s.all)))),
+    h('p', { class: 'stats-note' }, 'Accuracy uses partial enumeration credit. Due includes items scheduled for today or earlier; an item with no schedule is due now.'));
 }
 function quizItem(r, it, idx, one) {
   const a = r.ans[it.id], over = !!(timed && timed.over && timed.tab === tab), flagged = (r.flags || []).includes(it.id);
