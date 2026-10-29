@@ -393,5 +393,48 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   assert.match(swSrc, /caches\.delete/, 'old caches are dropped on activate');
   assert.doesNotMatch(swSrc, /['"]\.\/sw\.js['"]/, 'sw.js does not cache itself');
 
+  // 12. Shuffle keeps what the student earned, and a removed question stays removed.
+  const prog = ctx.cleanReviewer({ title: 'Progress', items: [
+    { id: 'id0', type: 'id', q: 'Which term runs instructions?', answer: 'CPU', exp: '' },
+    { id: 'id1', type: 'id', q: 'Which term holds running programs?', answer: 'RAM', exp: '' },
+    { id: 'id2', type: 'id', q: 'Which term forwards data between networks?', answer: 'router', exp: '' },
+    { id: 'id3', type: 'id', q: 'Which term connects devices inside one network?', answer: 'switch', exp: '' }
+  ] });
+  ctx.open(prog);
+  prog.ans.id0 = { val: 'CPU', ok: true, exp: '' };
+  prog.plan.srs.id0 = { box: 2, due: ctx.todayNumber() + 7 };
+  prog.flashKnown = ['id1'];
+  prog.flashLearn = ['id2'];
+  const gone = ctx.itemKey(prog.items[3]);
+  prog.hidden = [gone];
+  ctx.shuffleAll();
+  const byAnswer = name => prog.items.find(it => it.answer === name);
+  assert.strictEqual(prog.items.length, 3, 'the removed question does not come back');
+  assert.ok(!prog.items.some(it => ctx.itemKey(it) === gone), 'the removed question is not in the rebuilt set');
+  assert.deepStrictEqual(plain(prog.ans[byAnswer('CPU').id]), { val: 'CPU', ok: true, exp: '' }, 'an answer follows its question, not its old position');
+  assert.deepStrictEqual(plain(prog.plan.srs[byAnswer('CPU').id]), { box: 2, due: ctx.todayNumber() + 7 }, 'the Leitner box follows its question');
+  assert.ok(prog.flashKnown.includes(byAnswer('RAM').id), 'a known card stays known');
+  assert.ok(prog.flashLearn.includes(byAnswer('router').id), 'a learning card stays learning');
+  assert.strictEqual(Object.keys(prog.ans).length, 1, 'no stale answer survives under a reused id');
+  assert.strictEqual(prog.plan.srs[byAnswer('RAM').id], undefined, 'an untouched question does not inherit a schedule');
+
+  const hiddenOk = ctx.cleanReviewer({ ...base, hidden: ['q9|z', 'x'.repeat(700), 42] });
+  assert.deepStrictEqual(plain(hiddenOk.hidden), ['q9|z'], 'hidden keys are validated on import');
+  const hiddenAll = ctx.cleanReviewer({ ...base, hidden: base.items.map(it => ctx.itemKey(it)) });
+  assert.deepStrictEqual(plain(hiddenAll.hidden), [], 'a backup cannot hide every question');
+
+  // Removing a question in the check screen is remembered on the saved reviewer.
+  const pendingItems = [0, 1, 2, 3].map(i => ({ id: 'id' + i, type: 'id', q: 'Pending question ' + i, answer: 'a' + i, exp: '' }));
+  vm.runInContext('pending = ' + JSON.stringify({ title: 'Pending', items: pendingItems, src: [], tags: [], opts: { max: 0, mcOnly: false }, hidden: [] }), ctx);
+  ctx.preview();
+  const removeButtons = find(appEl, e => String(e.className).split(' ').includes('rm'));
+  assert.strictEqual(removeButtons.length, 4, 'every checked question can be removed');
+  removeButtons[2].onclick();
+  assert.strictEqual(vm.runInContext('pending.items.length', ctx), 3, 'the question leaves the pending set');
+  assert.deepStrictEqual(plain(vm.runInContext('pending.hidden', ctx)), [ctx.itemKey(pendingItems[2])], 'the removal is remembered by key');
+  ctx.savePending();
+  const savedPending = vm.runInContext('R[0]', ctx);
+  assert.ok(savedPending.hidden.includes(ctx.itemKey(pendingItems[2])), 'the saved reviewer remembers what was removed');
+
   console.log('app smoke checks passed');
 })().catch(e => { console.error(e); process.exit(1); });

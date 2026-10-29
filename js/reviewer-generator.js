@@ -294,4 +294,55 @@ function generate(rawLines, tags = [], o = {}) {
   return res;
 }
 
-if (typeof module !== 'undefined') module.exports = { generate, idOk, enumCheck, norm };
+// Stable identity for a question across a rebuild. Shuffle renumbers ids (mc0, id1, …), so progress
+// has to be matched by what the item asks and what it answers, not by position. The type is left out
+// on purpose: the same fact can come back as multiple choice or identification, and mastery of the
+// fact should survive that. Two items with the same key are the same question.
+function answerText(it) {
+  if (!it) return '';
+  if (it.type === 'mc') return Array.isArray(it.options) && it.options[it.answer] != null ? it.options[it.answer] : '';
+  if (it.type === 'id' || it.type === 'img') return it.answer || '';
+  return (it.items || []).join(' | ');
+}
+function itemKey(it) { return norm(it && it.q) + '|' + norm(answerText(it)); }
+
+// Move what the student earned onto a rebuilt set. Answers only follow a question that kept its
+// display type: a typed answer has no index in a new multiple-choice item. Mastery (known/learning
+// and the Leitner box) follows the fact itself, so changing the question format does not undo it.
+// When the new set has two items with the same key there is no honest way to choose, so that item
+// is left alone. Returns fresh maps keyed by the new ids, plus how many items kept something.
+function carryProgress(oldItems, newItems, progress = {}) {
+  const ans = {}, known = new Set(), learn = new Set(), srs = {};
+  const oldAns = progress.ans || {}, oldKnown = new Set(progress.known || []), oldLearn = new Set(progress.learn || []), oldSrs = progress.srs || {};
+  const matches = new Map();
+  newItems.forEach((it, i) => { const k = itemKey(it); if (!matches.has(k)) matches.set(k, []); matches.get(k).push(i); });
+  const used = new Set();
+  let kept = 0;
+  oldItems.forEach(old => {
+    const list = matches.get(itemKey(old)) || [];
+    const at = list.length === 1 && !used.has(list[0]) ? list[0] : -1;
+    if (at < 0) return;
+    const it = newItems[at];
+    if (!(oldAns[old.id] || oldKnown.has(old.id) || oldLearn.has(old.id) || oldSrs[old.id])) return;
+    used.add(at); kept++;
+    if (oldKnown.has(old.id)) known.add(it.id);
+    if (oldLearn.has(old.id)) learn.add(it.id);
+    const s = oldSrs[old.id];
+    if (s) srs[it.id] = { box: s.box, due: s.due };
+    const a = oldAns[old.id];
+    if (!a) return;
+    let val = a.val;
+    if (it.type === 'mc') {
+      if (old.type !== 'mc' || !Number.isInteger(a.val)) return;
+      const chosen = old.options && old.options[a.val];
+      if (chosen == null) return;
+      const slot = it.options.indexOf(chosen);
+      if (slot < 0) return; // the option the student picked is not on the new card
+      val = slot;
+    } else if (it.type !== old.type) return;
+    ans[it.id] = { val, ok: a.ok === true, exp: a.exp };
+  });
+  return { ans, known, learn, srs, kept };
+}
+
+if (typeof module !== 'undefined') module.exports = { generate, idOk, enumCheck, norm, itemKey, carryProgress };

@@ -335,6 +335,19 @@ function cleanItem(x) {
   const items = Array.isArray(x.items) ? x.items.map(o => str(o)) : [];
   return items.length && !items.includes(null) ? { id, type: 'enum', q, items, exp } : null;
 }
+// A question the student removed is remembered by its itemKey(), so a rebuilt set cannot bring it
+// back. The cap keeps a hand-edited backup from turning the field into a second source of text.
+const HIDDEN_MAX = 400, HIDDEN_LEN = 600;
+function cleanHidden(v) {
+  if (!Array.isArray(v)) return [];
+  const out = [];
+  for (const k of v) {
+    if (typeof k !== 'string' || !k || k.length > HIDDEN_LEN || out.includes(k)) continue;
+    out.push(k);
+    if (out.length >= HIDDEN_MAX) break;
+  }
+  return out;
+}
 function cleanReviewer(x) {
   const title = str(x && x.title, 120), items = Array.isArray(x && x.items) ? x.items.map(cleanItem).filter(Boolean) : [];
   if (!title || items.length < 3) return null;
@@ -358,7 +371,11 @@ function cleanReviewer(x) {
     if (ids.has(k) && s && Number.isInteger(s.box) && s.box >= 0 && s.box < BOX_DAYS.length && Number.isInteger(s.due)) srs[k] = { box: s.box, due: s.due };
   }
   const plan = { exam: validExamDate(raw.exam) ? raw.exam : '', srs };
-  return { id: newRid(), title, items, ans, flashKnown: idList(x.flashKnown), flashLearn: idList(x.flashLearn), src, tags, opts, plan, masks: cleanMasks(x.masks) };
+  // A hand-edited backup must not hide so many questions that the reviewer drops below the
+  // three-item minimum every other path enforces.
+  let hidden = cleanHidden(x.hidden);
+  if (items.filter(it => !hidden.includes(itemKey(it))).length < 3) hidden = [];
+  return { id: newRid(), title, items, ans, flashKnown: idList(x.flashKnown), flashLearn: idList(x.flashLearn), src, tags, opts, plan, masks: cleanMasks(x.masks), hidden };
 }
 let note = ''; // one-time message shown on the home screen after export or import
 // Backups carry reviewer data plus any diagram images as data URLs, so a file still works on
@@ -434,7 +451,7 @@ async function run() {
     const opts = { max: optMax, mcOnly: optMc }, items = generate(lines, tags, opts);
     if (items.length < 3) throw new Error('Could not find enough definitions or lists in this file. Notes written as full sentences ("X is …") work best.');
     const title = document.getElementById('title').value.trim() || files[0].name.replace(/\.[^.]+$/, '');
-    pending = { title, items, src: lines, tags, opts }; files = []; preview(); // saved only after the student checks the questions
+    pending = { title, items, src: lines, tags, opts, hidden: [] }; files = []; preview(); // saved only after the student checks the questions
   } catch (e) { err = String(e.message || e); }
   busy = false; status = ''; if (!cur && !pending) home();
 }
@@ -443,7 +460,7 @@ function savePending() {
   const p = pending, src = capSrc(p.src);
   // Tags are one string per source line, so they are trimmed with the source they describe.
   const tags = Array.isArray(p.tags) ? p.tags.slice(0, src.length) : [];
-  const r = { id: newRid(), title: p.title, items: p.items, ans: {}, src, tags, opts: p.opts, plan: { exam: '', srs: {} } };
+  const r = { id: newRid(), title: p.title, items: p.items, ans: {}, src, tags, opts: p.opts, plan: { exam: '', srs: {} }, hidden: cleanHidden(p.hidden) };
   pending = null; R.unshift(r); save(); open(r);
 }
 let removedAt = null;
@@ -452,12 +469,12 @@ function preview() {
   draw(h('div', null,
     h('button', { class: 'btn alt', onclick: () => home() }, '← Cancel'),
     h('h1', null, 'Check your questions'),
-    h('p', { class: 'sub' }, 'Remove any question that looks wrong or confusing, then save. Shuffle later builds a fresh set from your file, so removed questions can come back.'),
+    h('p', { class: 'sub' }, 'Remove any question that looks wrong or confusing, then save. A removed question stays out of later shuffles.'),
     h('div', { class: 'row' }, h('button', { class: 'btn', disabled: few ? '' : null, onclick: savePending }, 'Save reviewer (' + p.items.length + ' questions)'),
       few && h('span', { class: 'err' }, 'Keep at least 3 questions.')),
     h('div', { class: 'items' }, p.items.map((it, i) => h('div', { class: 'card' },
       h('div', { class: 'k' }, TABS[it.type]), h('div', { class: 'q' }, it.q), h('p', null, 'Answer: ' + flashAnswer(it)),
-      h('button', { class: 'btn alt rm', 'aria-label': 'Remove question ' + (i + 1), onclick: () => { p.items.splice(i, 1); removedAt = i; preview(); say('Removed. ' + p.items.length + ' questions left.'); } }, 'Remove'))))), 'preview');
+      h('button', { class: 'btn alt rm', 'aria-label': 'Remove question ' + (i + 1), onclick: () => { p.hidden = cleanHidden([...(p.hidden || []), itemKey(it)]); p.items.splice(i, 1); removedAt = i; preview(); say('Removed. ' + p.items.length + ' questions left.'); } }, 'Remove'))))), 'preview');
   // The removed card is gone; put focus on the Remove button that took its place.
   const rm = app.querySelectorAll('.rm'); if (rm.length && removedAt !== null) rm[Math.min(removedAt, rm.length - 1)].focus();
   removedAt = null;
@@ -917,18 +934,28 @@ function home() {
 const TABS = { mc: 'Multiple choice', id: 'Identification', enum: 'Enumeration', img: 'Diagram' };
 function wipe() { for (const k in draft) delete draft[k]; }
 // Shuffle = rebuild a new question set from the saved file text (random pick, new wrong options, new order).
-// Reviewers saved before source text was kept can only reorder what they have.
+// Reviewers saved before source text was kept can only reorder what they have. Ids are rebuilt, so
+// answers and mastery are moved by itemKey() instead of by id; removed questions are filtered out.
 function shuffleAll() {
-  if (Object.keys(cur.ans).length && !confirm('Make a new shuffled set and reset your progress?')) return;
-  const fresh = cur.src ? generate(cur.src, cur.tags, cur.opts) : [];
+  const old = cur.items, hidden = new Set(cur.hidden || []);
+  const visible = old.filter(it => !hidden.has(itemKey(it)));
+  const fresh = (cur.src ? generate(cur.src, cur.tags, cur.opts) : []).filter(it => !hidden.has(itemKey(it)));
   if (fresh.length >= 3) cur.items = fresh;
   else {
-    cur.items = shuffle(cur.items);
-    cur.items.forEach(it => { if (it.type === 'mc') { const t = it.options[it.answer]; it.options = shuffle(it.options); it.answer = it.options.indexOf(t); } });
+    // Copies, not the saved objects: carryProgress() needs the old option order to move a chosen
+    // option to its new index. "visible" already excludes removed questions.
+    cur.items = shuffle(visible).map(it => {
+      const copy = { ...it };
+      if (it.type === 'mc') { const correct = it.options[it.answer]; copy.options = shuffle(it.options); copy.answer = copy.options.indexOf(correct); }
+      return copy;
+    });
   }
-  // Item ids are rebuilt (type + index), so old "mastered" flashcards would point at different questions.
-  cur.ans = {}; cur.flashKnown = []; cur.flashLearn = []; cur.plan = planOf(cur); cur.plan.srs = {}; flashIndex = 0; flashRevealed = false;
+  const kept = carryProgress(old, cur.items, { ans: cur.ans, known: cur.flashKnown || [], learn: cur.flashLearn || [], srs: planOf(cur).srs || {} });
+  cur.ans = kept.ans; cur.flashKnown = [...kept.known]; cur.flashLearn = [...kept.learn];
+  cur.plan = planOf(cur); cur.plan.srs = kept.srs;
+  flashIndex = 0; flashRevealed = false;
   wipe(); save(); quiz(); scrollTo(0, 0);
+  say('New question set. Kept progress for ' + kept.kept + ' of ' + visible.length + ' items' + (hidden.size ? '; removed questions stay out.' : '.'));
 }
 function open(r) {
   // Drafts are keyed by item id, and item ids restart at id0 in every reviewer, so a half-typed answer

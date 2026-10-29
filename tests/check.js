@@ -1,6 +1,6 @@
 // Run: node tests/check.js   (Node 18+, no packages). Checks the generator and the .pptx/.docx readers.
 const assert = require('assert'), zlib = require('zlib');
-const { generate, enumCheck, idOk, norm } = require('../js/reviewer-generator.js');
+const { generate, enumCheck, idOk, norm, itemKey, carryProgress } = require('../js/reviewer-generator.js');
 const { pptxLines, pptLines, docxLines } = require('../js/pptx-reader.js');
 
 // Minimal zip writer (deflate) so the readers are tested on real zip bytes.
@@ -228,5 +228,34 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
     }
   });
   assert(regQs > 0, 'register questions were generated');
+
+  // Phase 0: progress is matched by the question, not by an id that Shuffle renumbers.
+  const fact = { id: 'id0', type: 'id', q: 'Which term is described? A fast memory close to the CPU.', answer: 'cache', exp: '' };
+  assert.strictEqual(itemKey(fact), itemKey({ ...fact, id: 'id9', q: '  which term is described?  a fast MEMORY close to the CPU. ' }), 'the key ignores case, punctuation, spacing and id');
+  assert.notStrictEqual(itemKey(fact), itemKey({ ...fact, answer: 'RAM' }), 'a different answer is a different fact');
+  const oldSet = [
+    fact,
+    { id: 'mc1', type: 'mc', q: 'Which term stores the return address?', options: ['stack', 'heap'], answer: 0, exp: '' },
+    { id: 'mc2', type: 'mc', q: 'Which term connects networks?', options: ['router', 'switch'], answer: 0, exp: '' }
+  ];
+  const newSet = [
+    { ...fact, id: 'id4' },
+    { id: 'mc5', type: 'mc', q: 'Which term stores the return address?', options: ['heap', 'stack'], answer: 1, exp: '' },
+    { id: 'id6', type: 'id', q: 'Which term connects networks?', answer: 'router', exp: '' }
+  ];
+  const carried = carryProgress(oldSet, newSet, {
+    ans: { id0: { val: 'cache', ok: true, exp: '' }, mc1: { val: 1, ok: false, exp: 'stack' }, mc2: { val: 'router', ok: true, exp: '' } },
+    known: ['id0', 'mc1', 'mc2'], learn: [], srs: { id0: { box: 2, due: 9 }, mc1: { box: 0, due: 9 }, mc2: { box: 1, due: 9 } }
+  });
+  assert.deepStrictEqual(carried.ans.id4, { val: 'cache', ok: true, exp: '' }, 'a typed answer follows its question');
+  assert.deepStrictEqual(carried.ans.mc5, { val: 0, ok: false, exp: 'stack' }, 'a chosen option follows the option text when the options move');
+  assert.strictEqual(carried.ans.id6, undefined, 'an answer does not change format with the card');
+  assert.deepStrictEqual(carried.srs.id6, { box: 1, due: 9 }, 'mastery follows the fact across formats');
+  assert.ok(carried.known.has('id6') && carried.known.has('mc5'), 'known cards follow the fact');
+  assert.strictEqual(carried.kept, 3, 'every matched item is reported');
+  assert.strictEqual(carried.ans.id0, undefined, 'the old id is not reused');
+  const ambiguous = carryProgress([fact], [{ ...fact, id: 'a' }, { ...fact, id: 'b' }], { ans: { id0: { val: 'cache', ok: true, exp: '' } } });
+  assert.deepStrictEqual(ambiguous.ans, {}, 'a duplicated question cannot steal progress');
+  assert.deepStrictEqual(carryProgress([fact], [{ ...fact, id: 'z', answer: 'other' }], { ans: { id0: { val: 'cache', ok: true, exp: '' } } }).ans, {}, 'a changed answer does not inherit the old result');
   console.log('all checks passed');
 })().catch(e => { console.error(e); process.exit(1); });

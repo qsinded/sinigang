@@ -30,7 +30,9 @@ no account and no build step.
   blocks for today. It runs on the device clock, so changing screens or reopening the app does not
   lose the block.
 - **Practice modes**: flashcards with known/learning tracking, shuffle into a fresh question set
-  from the saved source, timed practice, retry-missed, print, and export/import of backups.
+  from the saved source (answers and card mastery follow a question that comes back, and questions
+  removed at the check step are not resurrected), timed practice, retry-missed, print, and
+  export/import of backups.
 - **Hands-free oral recitation**: the device's own speech voice reads each question, pauses while
   you think, then reads the answer and moves on. Speed, think time, read-answers and auto-advance
   are adjustable; Space pauses, arrows skip and Esc stops. No audio is uploaded.
@@ -134,6 +136,8 @@ image-only slides need OCR.
 - Saved reviewers keep at most 40,000 characters of source text each, so a very large file can only
   rebuild a subset of questions when you shuffle. Reviewers and progress live in this device's
   `localStorage`; diagram images live in IndexedDB. Use Export/Import to move them.
+- A removed question is remembered by its question and answer text, so a rebuilt set will not bring
+  it back. There is no restore screen yet; a backup taken before the removal still contains it.
 - Diagram reviewers need IndexedDB; private windows and some locked-down browsers block it, in which
   case the setup screen explains that images cannot be stored. Labeling is manual — the app does not
   detect labels or arrows in an uploaded image.
