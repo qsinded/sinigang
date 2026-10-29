@@ -117,6 +117,8 @@ function statementOk(text) {
 const OUTLINE = /^(topics?( covered)?|agenda|outline|contents?|overview|objectives?|learning outcomes?|course (outline|map)|schedule|syllabus)$/i;
 const LABEL = /^(module|unit|chapter|lesson|week|day|topic|part|section|session|lecture|step)\s*[\dIVX]+$/i;
 const STOP = new Set(['AND', 'OR', 'THE', 'IF', 'IN', 'IS', 'IT', 'TO', 'OF', 'NOT', 'FOR', 'ON', 'AS', 'AT', 'BY']);
+// Visible caps, so the interface can say what "All" means instead of silently truncating.
+const ITEM_CAP = { mc: 30, id: 20, tf: 8, enum: 10 };
 
 // tags[i] (optional) names where rawLines[i] came from, e.g. "page 3"; it is shown with the source sentence.
 // o = { max: keep at most this many items (0 = all), mcOnly: multiple choice only }.
@@ -256,7 +258,7 @@ function generate(rawLines, tags = [], o = {}) {
   for (const it of all) {
     const dist = near(it.term, pool[it.kind].filter(o => fits(it, o)).map(o => o.term), prefer(it));
     // True/false. A "false" statement is only made when it is certainly false (see verifiedSwap), never by luck.
-    if (nTF < 8 && Math.random() < 0.2) {
+    if (nTF < ITEM_CAP.tf && Math.random() < 0.2) {
       // Flipping is only worth it while "False" does not outnumber "True", and only once per sentence.
       let t = Math.random() < 0.5;
       if (!t && (falseSrc.has(it.src) || nTFalse >= nTTrue)) t = true;
@@ -269,7 +271,7 @@ function generate(rawLines, tags = [], o = {}) {
       }
     }
     // Half the time ask a definition the other way round, so a rebuilt set is not the same questions.
-    if (it.kind === 'def' && dist.length === 3 && nMC < 30 && Math.random() < 0.5) {
+    if (it.kind === 'def' && dist.length === 3 && nMC < ITEM_CAP.mc && Math.random() < 0.5) {
       const bodies = defs.filter(d => fits(it, { ...d, term: d.body }) && !norm(d.body).includes(norm(it.term))).map(d => d.body);
       const opts = shuffle([it.body, ...near(it.body, bodies, x => (ctxByText.get(x) === it.ctx ? 30 : 0))]);
       if (opts.length === 4 && keyOk(opts, it.body)) {
@@ -278,17 +280,19 @@ function generate(rawLines, tags = [], o = {}) {
       }
     }
     const opts = shuffle([it.term, ...dist]);
-    if (dist.length === 3 && nMC < 30 && (nMC <= nID * 1.5 || nID >= 20) && keyOk(opts, it.term)) {
+    if (dist.length === 3 && nMC < ITEM_CAP.mc && (nMC <= nID * 1.5 || nID >= ITEM_CAP.id) && keyOk(opts, it.term)) {
       out.push({ type: 'mc', q: it.q, options: opts, answer: opts.indexOf(it.term), exp: ex(it.src) });
       nMC++;
-    } else if (nID < 20) {
+    } else if (nID < ITEM_CAP.id) {
       out.push({ type: 'id', q: it.q, answer: it.term, exp: ex(it.src) });
       nID++;
     }
   }
-  shuffle(enums).filter(e => !seenEnum.has(norm(e.hdr)) && seenEnum.add(norm(e.hdr))).slice(0, 10).forEach(e =>
+  shuffle(enums).filter(e => !seenEnum.has(norm(e.hdr)) && seenEnum.add(norm(e.hdr))).slice(0, ITEM_CAP.enum).forEach(e =>
     out.push({ type: 'enum', q: 'Enumerate: ' + e.hdr, items: e.items, exp: ex(e.src) }));
   let res = o.mcOnly ? out.filter(x => x.type === 'mc') : out;
+  if (o.noTF) res = res.filter(x => !/^True or false: /.test(x.q));
+  if (o.noEnum) res = res.filter(x => x.type !== 'enum');
   if (o.max > 0) res = shuffle(res).slice(0, o.max);
   res.forEach((x, i) => { x.id = x.type + i; });
   return res;
@@ -345,4 +349,4 @@ function carryProgress(oldItems, newItems, progress = {}) {
   return { ans, known, learn, srs, kept };
 }
 
-if (typeof module !== 'undefined') module.exports = { generate, idOk, enumCheck, norm, itemKey, carryProgress };
+if (typeof module !== 'undefined') module.exports = { generate, idOk, enumCheck, norm, itemKey, carryProgress, ITEM_CAP };

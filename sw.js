@@ -1,7 +1,7 @@
 // Offline cache. The app is static, so the whole shell is precached on install and served from the
 // cache first; the network is only used for files this list does not name.
 // Bump VERSION when a shipped file changes, or phones keep running the old copy.
-const VERSION = 'v6';
+const VERSION = 'v7';
 const CACHE = 'reviewer-' + VERSION;
 const SHELL = [
   './',

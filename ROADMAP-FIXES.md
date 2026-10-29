@@ -7,8 +7,9 @@ diagram practice that is still a demo.
 `ROADMAP.md` already covers diagram reviewers in detail (R1.1–R3.2). This document covers
 everything else and adopts those items by reference instead of designing them twice.
 
-Status: **Phase 0 implemented, uncommitted.** Phases 1–6 planned. Nothing in this repository
-is committed without the owner's approval.
+Status: **Phase 0 committed as `ec568f4`.** Phase 1 core, Phase 2 core, the Phase 3 input slice
+and the Phase 4 sharing slice are implemented in the working tree, uncommitted. Phase 5 and the
+rest of Phase 6 remain planned. Nothing else is committed without the owner's approval.
 
 ## What a user complained about, and where it is fixed
 
@@ -24,6 +25,27 @@ is committed without the owner's approval.
 | 8 | One reviewer cannot be shared; importing a backup duplicates it | 4 |
 | 9 | Diagram pins are tiny, cannot be moved or zoomed, and cannot be edited later | 5 |
 | 10 | No per-section stats, one-question-at-a-time mode, or consistent app name | 6 |
+
+## Delivered since this plan was written
+
+- **Phase 1 core:** edit a question, answer, options or explanation in place; add an identification
+  question by hand; remove and restore items; edits and additions are pinned so Shuffle keeps them;
+  removing an item prunes only its progress; the check screen and quiz screen both open the editor.
+  New items get random ids; existing ids are never rewritten. The 40k source move to IndexedDB and
+  duplicate-question merging are **not** done.
+- **Phase 2 core:** a due date is clamped to the exam day; a passed exam stops clamping; seven-day
+  forecast on the home card; a persisted daily limit caps a due flashcard session; enumeration earns
+  a stored fraction; the score uses that fraction; one-level undo after grading or "Count it
+  correct". Due-only quiz, cram mode and delayed feedback are **not** done.
+- **Phase 3 slice:** paste-text generation, per-type checkboxes (true/false, enumeration), and the
+  real "All (max 68)" cap shown in the interface. The skipped-line report, per-type counts, OCR and
+  multi-file diagnostics are **not** done.
+- **Phase 4 slice:** export one reviewer as its own backup; importing the same backup again offers
+  Replace (carrying the old progress) or Keep both instead of silently duplicating; search, sort
+  (recent/due/exam/title) and a due-only filter on saved reviewers. CSV import, backup of the timer
+  and streak, and sync are **not** done.
+- **Not started:** Phase 5 (diagram practice) and the rest of Phase 6 (stats, one-question-at-a-time,
+  custom timer, one app name, recitation controls, trash for deleted reviewers).
 
 ## Baseline (before Phase 0)
 

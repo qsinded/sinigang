@@ -1,6 +1,6 @@
 // Run: node tests/check.js   (Node 18+, no packages). Checks the generator and the .pptx/.docx readers.
 const assert = require('assert'), zlib = require('zlib');
-const { generate, enumCheck, idOk, norm, itemKey, carryProgress } = require('../js/reviewer-generator.js');
+const { generate, enumCheck, idOk, norm, itemKey, carryProgress, ITEM_CAP } = require('../js/reviewer-generator.js');
 const { pptxLines, pptLines, docxLines } = require('../js/pptx-reader.js');
 
 // Minimal zip writer (deflate) so the readers are tested on real zip bytes.
@@ -228,6 +228,10 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
     }
   });
   assert(regQs > 0, 'register questions were generated');
+  const quiet = generate(notes, t, { noTF: true, noEnum: true });
+  assert(quiet.length >= 3, 'notes still produce questions without true/false or enumeration');
+  assert(!quiet.some(x => x.type === 'enum' || /^True or false: /.test(x.q)), 'the type toggles are honoured');
+  assert.strictEqual(ITEM_CAP.mc, 30, 'the advertised cap is the generator cap');
 
   // Phase 0: progress is matched by the question, not by an id that Shuffle renumbers.
   const fact = { id: 'id0', type: 'id', q: 'Which term is described? A fast memory close to the CPU.', answer: 'cache', exp: '' };

@@ -13,7 +13,11 @@ const BACKUP_KEY = 'reviewer_gen_backup';
 const backupOld = () => { try { const t = Number(localStorage.getItem(BACKUP_KEY)); return !t || Date.now() - t > 14 * 864e5; } catch (e) { return false; } };
 const warn = () => saveWarn && h('p', { class: 'err', role: 'alert' }, saveWarn);
 let R = load();
-let q = '', optMax = 0, optMc = false, pending = null, cur = null, tab = null, files = [], status = '', err = '', busy = false;
+let q = '', qSort = 'recent', qDue = false, optMax = 0, optMc = false, optNoTF = false, optNoEnum = false, pasteText = '', pending = null, cur = null, tab = null, files = [], status = '', err = '', busy = false;
+// How many items a day's due session serves. 0 = all. The cap is a study plan, not a hard limit on
+// the reviewer; the home card still shows the full backlog.
+let optCap = 20;
+try { const c = Number(localStorage.getItem('reviewer_cap_v1')); if ([10, 20, 40, 0].includes(c)) optCap = c; } catch (e) { /* session default */ }
 const draft = {};
 
 function h(tag, p, ...kids) {
@@ -90,6 +94,7 @@ const str = (v, max = 5000) => typeof v === 'string' ? v.slice(0, max) : null;
 // A saved reviewer keeps a capped copy of its source text: enough for Shuffle, small enough that a
 // handful of reviewers do not fill the ~5 MB localStorage quota (one full PDF was ~250 KB).
 const MAX_SRC_CHARS = 40000;
+const pasteLines = t => String(t || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
 function capSrc(lines) {
   const out = []; let used = 0;
   for (const line of Array.isArray(lines) ? lines : []) {
@@ -102,6 +107,10 @@ function capSrc(lines) {
 // Reviewer ids used to come from Date.now(); a counter keeps two quick imports from colliding.
 let ridSeq = 0;
 const newRid = () => Date.now() * 1000 + (ridSeq = (ridSeq + 1) % 1000);
+// Added and edited questions need an id that cannot collide with a generated positional one
+// (id0, mc1) or with another edit made in the same millisecond.
+let itemSeq = 0;
+const newItemId = () => 'it_' + Date.now().toString(36) + (itemSeq = (itemSeq + 1) % 1296).toString(36) + Math.random().toString(36).slice(2, 5);
 
 // Diagram images live in IndexedDB: one photo is megabytes, and localStorage is shared with every
 // reviewer. Items keep only an image id and a normalized hotspot, so the JSON stays small.
@@ -195,6 +204,18 @@ function isDue(r, it) {
 }
 function dueIds(r) { return r.items.filter(it => isDue(r, it)).map(it => it.id); }
 function dueCount(r) { return dueIds(r).length; }
+// What the plan will ask for on each of the next `days` days. Anything overdue is counted on day
+// zero, so a backlog is never hidden behind a past date.
+function forecast(r, days = 7) {
+  const out = new Array(days).fill(0), today = todayNumber(), srs = planOf(r).srs || {};
+  r.items.forEach(it => {
+    const s = srs[it.id];
+    const due = s && Number.isInteger(s.due) ? s.due : today;
+    const at = Math.max(0, due - today);
+    if (at < days) out[at]++;
+  });
+  return out;
+}
 // Streak: consecutive days with at least one graded answer or card. Kept per device, apart from the reviewers.
 const STREAK_KEY = 'reviewer_gen_streak';
 function streakAfter(s, today) { // s = { last, count } or null
@@ -206,13 +227,20 @@ function streakNow(s, today) { return s && Number.isInteger(s.count) && (s.last 
 function readStreak() { try { const s = JSON.parse(localStorage.getItem(STREAK_KEY)); return s && Number.isInteger(s.last) && Number.isInteger(s.count) ? s : null; } catch (e) { return null; } }
 function bumpStreak() { try { localStorage.setItem(STREAK_KEY, JSON.stringify(streakAfter(readStreak(), todayNumber()))); } catch (e) { /* streak just will not show */ } }
 const firstDue = () => R.find(r => dueCount(r) > 0);
-function studyToday(r) { open(r); startFlash('due'); }
+function studyToday(r) { open(r); startFlash('due', optCap); }
+// A card is never scheduled later than the exam, or the plan keeps teaching material after the
+// test. A passed exam date stops clamping: revising a past paper should not make everything due.
+function dueDay(r, box) {
+  const wait = BOX_DAYS[box];
+  const left = examDaysLeft(planOf(r).exam);
+  return todayNumber() + (left !== null && left >= 0 ? Math.min(wait, left) : wait);
+}
 function reviewItem(r, id, ok) {
   bumpStreak();
   r.plan = planOf(r); r.plan.srs ||= {};
   const s = r.plan.srs[id] || { box: 0 };
   s.box = ok ? Math.min(s.box + 1, BOX_DAYS.length - 1) : 0;
-  s.due = todayNumber() + BOX_DAYS[s.box];
+  s.due = dueDay(r, s.box);
   r.plan.srs[id] = s;
 }
 function planCard() {
@@ -225,6 +253,8 @@ function planCard() {
     h('h2', { class: 'k' }, 'Today'),
     h('p', null, due ? due + ' item' + (due === 1 ? '' : 's') + ' due in ' + withDue + ' reviewer' + (withDue === 1 ? '' : 's') + '.' : 'Nothing is due today — study ahead if you like.'),
     h('p', null, h('b', null, streakNow(readStreak(), todayNumber()) ? streakNow(readStreak(), todayNumber()) + '-day streak' : 'Start a streak today'), streakNow(readStreak(), todayNumber()) && readStreak().last !== todayNumber() ? ' · study today to keep it' : ''),
+    h('p', { class: 'k' }, 'Next 7 days (today first): ' + R.reduce((acc, r) => forecast(r).map((n, i) => acc[i] + n), new Array(7).fill(0)).join(' · ')),
+    h('label', null, 'Daily limit ', h('select', { 'aria-label': 'Items to study each day', onchange: e => { optCap = Number(e.target.value); try { localStorage.setItem('reviewer_cap_v1', String(optCap)); } catch (_) { /* this visit only */ } home(); } }, [[10, '10'], [20, '20'], [40, '40'], [0, 'All']].map(([v, t]) => h('option', { value: v, selected: v === optCap ? '' : null }, t)))),
     due > 0 && h('p', null, h('button', { class: 'btn', onclick: () => studyToday(firstDue()) }, 'Study today (' + due + ' due)')),
     next && h('p', null, h('b', null, next.r.title), ' · ' + examText(next.r.plan.exam)),
     h('p', { class: 'k' }, 'Open a reviewer to set its exam date, or use Review to study what is due.'));
@@ -321,19 +351,25 @@ function cleanItem(x) {
   if (!x || !['mc', 'id', 'enum', 'img'].includes(x.type)) return null;
   const id = str(x.id, 40), q = str(x.q), exp = str(x.exp) ?? '';
   if (!id || !q) return null;
+  let it = null;
   if (x.type === 'img') {
     const answer = str(x.answer), imageId = str(x.imageId, 80), p = x.hotspot;
     const hotspot = p && typeof p === 'object' && Number.isFinite(p.x) && Number.isFinite(p.y) && p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1 ? { x: p.x, y: p.y } : null;
-    return answer && imageId && hotspot ? { id, type: 'img', q, answer, imageId, hotspot, exp } : null;
-  }
-  if (x.type === 'mc') {
+    if (answer && imageId && hotspot) it = { id, type: 'img', q, answer, imageId, hotspot, exp };
+  } else if (x.type === 'mc') {
     const options = Array.isArray(x.options) ? x.options.map(o => str(o)) : [];
-    if (options.length < 2 || options.length > 4 || options.includes(null) || !Number.isInteger(x.answer) || x.answer < 0 || x.answer >= options.length) return null;
-    return { id, type: 'mc', q, options, answer: x.answer, exp };
+    if (options.length >= 2 && options.length <= 4 && !options.includes(null) && Number.isInteger(x.answer) && x.answer >= 0 && x.answer < options.length) it = { id, type: 'mc', q, options, answer: x.answer, exp };
+  } else if (x.type === 'id') {
+    const answer = str(x.answer);
+    if (answer) it = { id, type: 'id', q, answer, exp };
+  } else {
+    const items = Array.isArray(x.items) ? x.items.map(o => str(o)) : [];
+    if (items.length && !items.includes(null)) it = { id, type: 'enum', q, items, exp };
   }
-  if (x.type === 'id') { const answer = str(x.answer); return answer ? { id, type: 'id', q, answer, exp } : null; }
-  const items = Array.isArray(x.items) ? x.items.map(o => str(o)) : [];
-  return items.length && !items.includes(null) ? { id, type: 'enum', q, items, exp } : null;
+  // A pinned question was added or edited by hand. It has no source line of its own, so Shuffle
+  // has to carry it forward instead of regenerating the old wording.
+  if (it && x.pinned === true) it.pinned = true;
+  return it;
 }
 // A question the student removed is remembered by its itemKey(), so a rebuilt set cannot bring it
 // back. The cap keeps a hand-edited backup from turning the field into a second source of text.
@@ -354,14 +390,18 @@ function cleanReviewer(x) {
   const ids = new Set(items.map(it => it.id)), ans = {};
   for (const k in (x.ans || {})) {
     const a = x.ans[k];
-    if (ids.has(k) && a && typeof a.ok === 'boolean' && str(a.exp) !== null && (typeof a.val === 'string' || Number.isInteger(a.val))) ans[k] = { val: a.val, ok: a.ok, exp: a.exp };
+    if (ids.has(k) && a && typeof a.ok === 'boolean' && str(a.exp) !== null && (typeof a.val === 'string' || Number.isInteger(a.val))) {
+      const out = { val: a.val, ok: a.ok, exp: a.exp };
+      if (typeof a.part === 'number' && a.part >= 0 && a.part <= 1) out.part = a.part; // enumeration fraction
+      ans[k] = out;
+    }
   }
   const idList = v => Array.isArray(v) ? v.filter(k => ids.has(k)) : [];
   // A hand-edited backup can carry an unbounded source array; keep only what Shuffle needs.
   let src = Array.isArray(x.src) && x.src.length <= 20000 && x.src.every(l => typeof l === 'string') ? x.src : undefined;
   let tags = src && Array.isArray(x.tags) && x.tags.length === src.length && x.tags.every(g => typeof g === 'string') ? x.tags : undefined;
   if (src) { src = capSrc(src); tags = tags && tags.slice(0, src.length); }
-  const o = x.opts || {}, opts = { max: Number.isInteger(o.max) && o.max > 0 ? o.max : 0, mcOnly: o.mcOnly === true };
+  const o = x.opts || {}, opts = { max: Number.isInteger(o.max) && o.max > 0 ? o.max : 0, mcOnly: o.mcOnly === true, noTF: o.noTF === true, noEnum: o.noEnum === true };
   // A backup may carry a study plan; keep only a valid date and entries for items that exist.
   const raw = x.plan && typeof x.plan === 'object' && !Array.isArray(x.plan) ? x.plan : {};
   const savedSrs = raw.srs && typeof raw.srs === 'object' && !Array.isArray(raw.srs) ? raw.srs : {};
@@ -375,7 +415,15 @@ function cleanReviewer(x) {
   // three-item minimum every other path enforces.
   let hidden = cleanHidden(x.hidden);
   if (items.filter(it => !hidden.includes(itemKey(it))).length < 3) hidden = [];
-  return { id: newRid(), title, items, ans, flashKnown: idList(x.flashKnown), flashLearn: idList(x.flashLearn), src, tags, opts, plan, masks: cleanMasks(x.masks), hidden };
+  // Removed questions are kept whole so they can be restored. Give one a fresh id rather than let
+  // a hand-edited backup point two entries at the same id.
+  const seen = new Set(items.map(it => it.id));
+  const removed = (Array.isArray(x.removed) ? x.removed : []).slice(0, 200).map(cleanItem).filter(Boolean).map(it => {
+    const out = seen.has(it.id) ? { ...it, id: newItemId() } : it;
+    seen.add(out.id);
+    return out;
+  });
+  return { id: newRid(), title, items, ans, flashKnown: idList(x.flashKnown), flashLearn: idList(x.flashLearn), src, tags, opts, plan, masks: cleanMasks(x.masks), hidden, removed };
 }
 let note = ''; // one-time message shown on the home screen after export or import
 // Backups carry reviewer data plus any diagram images as data URLs, so a file still works on
@@ -386,7 +434,7 @@ function cleanBackup(data) {
   const images = {};
   const raw = data && !Array.isArray(data) && data.images && typeof data.images === 'object' ? data.images : {};
   const referenced = new Set();
-  reviewers.forEach(r => r.items.forEach(it => { if (it.type === 'img' && it.imageId) referenced.add(it.imageId); }));
+  reviewers.forEach(r => [...r.items, ...(r.removed || [])].forEach(it => { if (it.type === 'img' && it.imageId) referenced.add(it.imageId); }));
   for (const id in raw) {
     const entry = raw[id];
     const value = entry && typeof entry.data === 'string' ? entry.data : '';
@@ -396,18 +444,19 @@ function cleanBackup(data) {
   }
   return { reviewers, images };
 }
-async function exportAll() {
+async function exportAll(only) {
+  const list = only ? [only] : R;
   const ids = new Set(), images = {};
-  R.forEach(r => r.items.forEach(it => { if (it.type === 'img' && it.imageId) ids.add(it.imageId); }));
+  list.forEach(r => [...r.items, ...(r.removed || [])].forEach(it => { if (it.type === 'img' && it.imageId) ids.add(it.imageId); }));
   for (const id of ids) {
     try { const blob = await idbGet(id); if (blob) images[id] = await blobToDataURL(blob); } catch (_) { /* keep the reviewer without this image */ }
   }
   try { localStorage.setItem(BACKUP_KEY, String(Date.now())); } catch (_) { /* nudge just repeats */ }
-  const payload = { version: 2, reviewers: R, images };
+  const payload = { version: 2, reviewers: list, images };
   const a = h('a', { href: URL.createObjectURL(new Blob([JSON.stringify(payload)], { type: 'application/json' })), download: 'reviewers.json' });
   document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   const nImg = Object.keys(images).length;
-  note = 'Saved ' + R.length + ' reviewer(s)' + (nImg ? ' with ' + nImg + ' diagram image(s)' : '') + ' to reviewers.json. Check your Downloads.';
+  note = 'Saved ' + list.length + ' reviewer(s)' + (nImg ? ' with ' + nImg + ' diagram image(s)' : '') + ' to reviewers.json. Check your Downloads.';
   home();
 }
 async function importFile(f) {
@@ -418,16 +467,35 @@ async function importFile(f) {
     for (const id of ids) {
       try { await idbPut(id, dataURLToBlob(images[id])); imgMissing.delete(id); } catch (_) { /* reviewer still imports; the item shows a missing image */ }
     }
-    R.unshift(...reviewers); save();
-    note = 'Imported ' + reviewers.length + ' reviewer(s)' + (ids.length ? ' with ' + ids.length + ' image(s)' : '') + '.';
+    let replaced = 0;
+    for (const nr of reviewers) {
+      const dup = R.find(r => sameReviewer(r, nr));
+      // A duplicate is never created silently: replacing carries the old progress onto the new copy.
+      if (dup && confirm('A reviewer with the same title and questions already exists ("' + dup.title + '"). Replace it and keep its progress? Choose Cancel to keep both.')) {
+        const kept = carryProgress(dup.items, nr.items, { ans: dup.ans, known: dup.flashKnown || [], learn: dup.flashLearn || [], srs: planOf(dup).srs || {} });
+        nr.ans = kept.ans; nr.flashKnown = [...kept.known]; nr.flashLearn = [...kept.learn];
+        nr.plan = planOf(nr); nr.plan.srs = kept.srs;
+        nr.hidden = cleanHidden([...(nr.hidden || []), ...(dup.hidden || [])]);
+        R = R.filter(r => r !== dup);
+        replaced++;
+      }
+      R.unshift(nr);
+    }
+    save();
+    note = 'Imported ' + reviewers.length + ' reviewer(s)' + (replaced ? ', replaced ' + replaced + ' with progress kept' : '') + (ids.length ? ' with ' + ids.length + ' image(s)' : '') + '.';
   } catch (e) { note = 'Could not import: this is not a reviewer backup file.'; }
   home();
+}
+// The same backup imported twice is the same reviewer, even though every import gets a new id.
+function sameReviewer(a, b) {
+  if (!a || !b || a.title.trim().toLowerCase() !== b.title.trim().toLowerCase()) return false;
+  return a.items.map(itemKey).sort().join('\n') === b.items.map(itemKey).sort().join('\n');
 }
 function deleteReviewer(r) {
   R = R.filter(x => x !== r);
   const used = new Set();
-  R.forEach(x => x.items.forEach(it => { if (it.type === 'img' && it.imageId) used.add(it.imageId); }));
-  r.items.forEach(it => { if (it.type === 'img' && it.imageId && !used.has(it.imageId)) dropImage(it.imageId); });
+  R.forEach(x => [...x.items, ...(x.removed || [])].forEach(it => { if (it.type === 'img' && it.imageId) used.add(it.imageId); }));
+  [...r.items, ...(r.removed || [])].forEach(it => { if (it.type === 'img' && it.imageId && !used.has(it.imageId)) dropImage(it.imageId); });
   save(); home();
 }
 
@@ -435,6 +503,10 @@ async function run() {
   busy = true; err = ''; status = 'Starting…'; home();
   try {
     let lines = [], tags = [];
+    if (!files.length) {
+      lines = pasteLines(pasteText);
+      if (lines.length < 3) throw new Error('Choose a file, or paste at least a few lines of notes.');
+    }
     for (const f of files) {
       const t = []; let l; // t[i] = page or slide of l[i]
       if (/\.pdf$/i.test(f.name)) l = await pdfLines(await loadPdfjs(), await f.arrayBuffer(), t);
@@ -448,10 +520,11 @@ async function run() {
     }
     if (lines.join('').length < 200) throw new Error('No readable text found. Scanned PDFs or slides that are only pictures cannot be read offline.');
     status = 'Building items…'; home();
-    const opts = { max: optMax, mcOnly: optMc }, items = generate(lines, tags, opts);
+    const opts = { max: optMax, mcOnly: optMc, noTF: optNoTF, noEnum: optNoEnum }, items = generate(lines, tags, opts);
     if (items.length < 3) throw new Error('Could not find enough definitions or lists in this file. Notes written as full sentences ("X is …") work best.');
-    const title = document.getElementById('title').value.trim() || files[0].name.replace(/\.[^.]+$/, '');
-    pending = { title, items, src: lines, tags, opts, hidden: [] }; files = []; preview(); // saved only after the student checks the questions
+    const titleEl = document.getElementById('title');
+    const title = (titleEl && titleEl.value.trim()) || (files[0] ? files[0].name.replace(/\.[^.]+$/, '') : 'Pasted notes');
+    pending = { title, items, src: lines, tags, opts, hidden: [], removed: [] }; files = []; preview(); // saved only after the student checks the questions
   } catch (e) { err = String(e.message || e); }
   busy = false; status = ''; if (!cur && !pending) home();
 }
@@ -460,7 +533,8 @@ function savePending() {
   const p = pending, src = capSrc(p.src);
   // Tags are one string per source line, so they are trimmed with the source they describe.
   const tags = Array.isArray(p.tags) ? p.tags.slice(0, src.length) : [];
-  const r = { id: newRid(), title: p.title, items: p.items, ans: {}, src, tags, opts: p.opts, plan: { exam: '', srs: {} }, hidden: cleanHidden(p.hidden) };
+  const removed = (p.removed || []).slice(0, 200).map(cleanItem).filter(Boolean);
+  const r = { id: newRid(), title: p.title, items: p.items, ans: {}, src, tags, opts: p.opts, plan: { exam: '', srs: {} }, hidden: cleanHidden(p.hidden), removed };
   pending = null; R.unshift(r); save(); open(r);
 }
 let removedAt = null;
@@ -471,13 +545,152 @@ function preview() {
     h('h1', null, 'Check your questions'),
     h('p', { class: 'sub' }, 'Remove any question that looks wrong or confusing, then save. A removed question stays out of later shuffles.'),
     h('div', { class: 'row' }, h('button', { class: 'btn', disabled: few ? '' : null, onclick: savePending }, 'Save reviewer (' + p.items.length + ' questions)'),
+      h('button', { class: 'btn alt', onclick: () => openItemEditor({ items: p.items, hidden: p.hidden, removed: p.removed, index: -1, back: preview }) }, 'Add a question'),
       few && h('span', { class: 'err' }, 'Keep at least 3 questions.')),
     h('div', { class: 'items' }, p.items.map((it, i) => h('div', { class: 'card' },
       h('div', { class: 'k' }, TABS[it.type]), h('div', { class: 'q' }, it.q), h('p', null, 'Answer: ' + flashAnswer(it)),
-      h('button', { class: 'btn alt rm', 'aria-label': 'Remove question ' + (i + 1), onclick: () => { p.hidden = cleanHidden([...(p.hidden || []), itemKey(it)]); p.items.splice(i, 1); removedAt = i; preview(); say('Removed. ' + p.items.length + ' questions left.'); } }, 'Remove'))))), 'preview');
+      h('div', { class: 'row' },
+        h('button', { class: 'btn alt', onclick: () => openItemEditor({ items: p.items, hidden: p.hidden, removed: p.removed, index: i, back: preview }) }, 'Edit'),
+        h('button', { class: 'btn alt rm', 'aria-label': 'Remove question ' + (i + 1), onclick: () => { p.hidden = cleanHidden([...(p.hidden || []), itemKey(it)]); p.removed = [...(p.removed || []), it]; p.items.splice(i, 1); removedAt = i; preview(); say('Removed. ' + p.items.length + ' questions left.'); } }, 'Remove')))))), 'preview');
   // The removed card is gone; put focus on the Remove button that took its place.
   const rm = app.querySelectorAll('.rm'); if (rm.length && removedAt !== null) rm[Math.min(removedAt, rm.length - 1)].focus();
   removedAt = null;
+}
+
+// Editing a question in place. The same screen serves a saved reviewer and the pending preview:
+// the target carries the list to change, where to go back to, and whether the reviewer owns
+// progress that has to be pruned. Any edited question is pinned, because it no longer matches a
+// source line and Shuffle would otherwise regenerate the old wording.
+let editTarget = null, editDraft = null, editErr = '';
+function openItemEditor(target) {
+  const before = target.index >= 0 ? target.items[target.index] : null;
+  const it = before || { type: 'id' };
+  editTarget = { ...target, before };
+  editDraft = {
+    type: it.type,
+    q: it.q || '',
+    answer: it.answer || '',
+    exp: it.exp || '',
+    options: it.type === 'mc' ? [...it.options, '', '', ''].slice(0, 4) : ['', '', '', ''],
+    correct: it.type === 'mc' ? it.answer : 0,
+    enumText: it.type === 'enum' ? it.items.join('\n') : ''
+  };
+  editErr = '';
+  itemEditor();
+}
+function itemEditor() {
+  const d = editDraft, t = editTarget;
+  if (!d || !t) return;
+  const label = (text, node) => h('label', null, text, node);
+  const option = (value, i) => h('label', { class: 'row' },
+    h('input', { type: 'radio', name: 'q-correct', checked: d.correct === i ? '' : null, onchange: () => { editDraft.correct = i; } }),
+    h('input', { type: 'text', value, 'aria-label': 'Option ' + (i + 1), placeholder: 'Option ' + (i + 1), oninput: e => { editDraft.options[i] = e.target.value; } }));
+  const node = h('div', null,
+    h('button', { class: 'btn alt', onclick: () => { editTarget = null; editDraft = null; t.back(); } }, '← Cancel'),
+    h('h1', null, t.index < 0 ? 'Add a question' : 'Edit question'),
+    h('p', { class: 'sub' }, 'A saved question keeps its study schedule. Changing its answer clears the old result so it is graded fresh.'),
+    h('div', { class: 'card' },
+      h('p', { class: 'k' }, TABS[d.type] || 'Question'),
+      label('Question', h('textarea', { rows: 3, 'aria-label': 'Question', oninput: e => { editDraft.q = e.target.value; } }, d.q)),
+      d.type === 'mc'
+        ? h('div', null, d.options.map(option), h('p', { class: 'k' }, 'Mark the correct option. Leave an option empty to use fewer than four.'))
+        : d.type === 'enum'
+          ? label('Answers (one per line)', h('textarea', { rows: 5, 'aria-label': 'Enumeration answers', oninput: e => { editDraft.enumText = e.target.value; } }, d.enumText))
+          : label(d.type === 'img' ? 'Label' : 'Answer', h('input', { type: 'text', value: d.answer, 'aria-label': 'Answer', oninput: e => { editDraft.answer = e.target.value; } })),
+      label('Explanation (optional)', h('input', { type: 'text', value: d.exp, 'aria-label': 'Explanation', oninput: e => { editDraft.exp = e.target.value; } })),
+      editErr && h('p', { class: 'err', role: 'alert' }, editErr),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn', onclick: saveEditor }, 'Save question'),
+        t.index >= 0 && h('button', { class: 'btn alt', onclick: deleteFromEditor }, 'Delete'))));
+  draw(node, 'editor');
+}
+function saveEditor() {
+  const t = editTarget, d = editDraft, old = t.before;
+  if (!d.q.trim()) { editErr = 'Write the question first.'; itemEditor(); return; }
+  const base = { id: old ? old.id : newItemId(), type: d.type, q: d.q.trim(), exp: d.exp.trim(), pinned: true };
+  let candidate;
+  if (d.type === 'mc') {
+    const options = d.options.map(o => String(o).trim()).filter(Boolean);
+    const chosen = String(d.options[d.correct] || '').trim();
+    if (options.length < 2) { editErr = 'Give at least two options.'; itemEditor(); return; }
+    if (!chosen || options.indexOf(chosen) < 0) { editErr = 'Mark the correct option.'; itemEditor(); return; }
+    candidate = { ...base, options, answer: options.indexOf(chosen) };
+  } else if (d.type === 'enum') {
+    candidate = { ...base, items: d.enumText.split(/\r?\n|,/).map(s => s.trim()).filter(Boolean) };
+  } else if (d.type === 'img') {
+    candidate = { ...base, answer: d.answer.trim(), imageId: old && old.imageId, hotspot: old && old.hotspot };
+  } else {
+    candidate = { ...base, answer: d.answer.trim() };
+  }
+  const clean = cleanItem(candidate);
+  if (!clean) { editErr = d.type === 'enum' ? 'Add at least one answer.' : 'A question needs its text and a correct answer.'; itemEditor(); return; }
+  const keyChanged = old && itemKey(old) !== itemKey(clean);
+  if (t.index >= 0) t.items[t.index] = clean; else t.items.push(clean);
+  // Remember the old wording so Shuffle cannot regenerate the version that was just replaced.
+  const hidden = t.reviewer ? (t.reviewer.hidden || (t.reviewer.hidden = [])) : t.hidden;
+  if (hidden) {
+    if (old && keyChanged) hidden.push(itemKey(old));
+    const keep = cleanHidden(hidden).filter(k => k !== itemKey(clean));
+    hidden.length = 0; hidden.push(...keep);
+  }
+  if (t.reviewer) {
+    if (old && keyChanged) { delete t.reviewer.ans[clean.id]; delete draft[clean.id]; }
+    t.reviewer.removed = (t.reviewer.removed || []).filter(x => x.id !== clean.id);
+    save();
+  }
+  editTarget = null; editDraft = null; editErr = '';
+  t.back();
+}
+function deleteFromEditor() {
+  const t = editTarget;
+  if (!t) return;
+  if (t.items.length <= 3) { editErr = 'Keep at least three questions.'; itemEditor(); return; }
+  if (!confirm('Delete this question?')) return;
+  const it = t.items[t.index];
+  if (t.reviewer) removeItem(t.reviewer, it);
+  else {
+    t.items.splice(t.index, 1);
+    if (t.removed) t.removed.push(it);
+    if (t.hidden) { t.hidden.push(itemKey(it)); const keep = cleanHidden(t.hidden); t.hidden.length = 0; t.hidden.push(...keep); }
+  }
+  editTarget = null; editDraft = null; editErr = '';
+  t.back();
+}
+// Removing an item prunes only that item's progress. The item itself is kept so it can come back
+// from the Removed list; its key stays hidden so Shuffle cannot regenerate a copy meanwhile.
+function removeItem(r, it) {
+  if (!r || !it || r.items.length <= 3) return false;
+  r.items = r.items.filter(x => x.id !== it.id);
+  delete r.ans[it.id];
+  if (r.plan && r.plan.srs) delete r.plan.srs[it.id];
+  r.flashKnown = (r.flashKnown || []).filter(k => k !== it.id);
+  r.flashLearn = (r.flashLearn || []).filter(k => k !== it.id);
+  r.removed = [...(r.removed || []).filter(x => x.id !== it.id), it];
+  r.hidden = cleanHidden([...(r.hidden || []), itemKey(it)]);
+  save();
+  return true;
+}
+function restoreItem(r, it) {
+  if (!r || !it) return false;
+  r.removed = (r.removed || []).filter(x => x.id !== it.id);
+  r.hidden = cleanHidden((r.hidden || []).filter(k => k !== itemKey(it)));
+  if (!r.items.some(x => x.id === it.id)) r.items.push(it);
+  save();
+  return true;
+}
+function removedScreen(r) {
+  const node = h('div', null,
+    h('div', { class: 'row' }, h('button', { class: 'btn alt', onclick: () => open(r) }, '← Back'), h('span', { class: 'k' }, 'REMOVED')),
+    h('h1', null, 'Removed questions'),
+    h('p', { class: 'sub' }, 'Restore a question to practice it again. Its old answer and study schedule are not restored.'),
+    (r.removed && r.removed.length)
+      ? h('div', { class: 'items' }, r.removed.map(it => h('div', { class: 'card' },
+          h('div', { class: 'k' }, TABS[it.type]),
+          h('div', { class: 'q' }, it.q),
+          h('p', null, 'Answer: ' + flashAnswer(it)),
+          h('button', { class: 'btn', onclick: () => { restoreItem(r, it); removedScreen(r); say('Question restored.'); } }, 'Restore'))))
+      : h('p', { class: 'k' }, 'Nothing has been removed from this reviewer.'));
+  draw(node, 'removed');
 }
 
 // Diagram reviewer: one image, tap the parts, name each one, then practice naming them offline.
@@ -881,6 +1094,15 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && fo
 focusRender();
 if (focus.running) { focusTick(); focusTickStart(); }
 
+// Saved-reviewer order. "Recent" keeps the order they were added in, which is the only date the
+// reviewer record has; the others are cheap to compute from the plan.
+function sortReviewers(list) {
+  const m = list.slice();
+  if (qSort === 'due') m.sort((a, b) => dueCount(b) - dueCount(a));
+  else if (qSort === 'exam') m.sort((a, b) => (examDaysLeft(planOf(a).exam) ?? 1e9) - (examDaysLeft(planOf(b).exam) ?? 1e9));
+  else if (qSort === 'title') m.sort((a, b) => a.title.localeCompare(b.title));
+  return m;
+}
 function home() {
   pending = null;
   if (reciteActive) stopVoice();
@@ -899,10 +1121,14 @@ function home() {
       h('input', { type: 'file', id: 'file', 'aria-label': 'Choose a PDF, PowerPoint, Word or text file', accept: '.pdf,.pptx,.ppt,.docx,.txt,.md,text/plain,application/pdf', multiple: '', onchange: e => { files = [...e.target.files]; home(); } }),
       h('p', { class: 'k' }, files.length ? files.length + ' file(s): ' + files.map(f => f.name).join(', ') : 'No file chosen'),
       h('input', { type: 'text', id: 'title', 'aria-label': 'Reviewer title (optional)', placeholder: 'Reviewer title (optional)', value: tv }),
+      h('textarea', { rows: 5, 'aria-label': 'Paste notes', placeholder: '…or paste your notes here (at least 200 characters)', oninput: e => { pasteText = e.target.value; } }, pasteText),
       h('div', { class: 'row' },
-        h('label', null, 'Questions: ', h('select', { onchange: e => { optMax = Number(e.target.value); } }, [[0, 'All'], [10, '10'], [20, '20']].map(([v, t]) => h('option', { value: v, selected: v === optMax ? '' : null }, t)))),
+        h('label', null, 'Questions: ', h('select', { onchange: e => { optMax = Number(e.target.value); } }, [[0, 'All (max ' + (ITEM_CAP.mc + ITEM_CAP.id + ITEM_CAP.tf + ITEM_CAP.enum) + ')'], [10, '10'], [20, '20']].map(([v, t]) => h('option', { value: v, selected: v === optMax ? '' : null }, t)))),
         h('label', null, h('input', { type: 'checkbox', checked: optMc ? '' : null, onchange: e => { optMc = e.target.checked; } }), 'Multiple choice only')),
-      h('p', null, h('button', { class: 'btn', disabled: busy || !files.length ? '' : null, onclick: run }, busy ? 'Working…' : 'Generate reviewer')),
+      h('div', { class: 'row' },
+        h('label', null, h('input', { type: 'checkbox', checked: optNoTF ? null : '', onchange: e => { optNoTF = !e.target.checked; } }), 'True / false'),
+        h('label', null, h('input', { type: 'checkbox', checked: optNoEnum ? null : '', onchange: e => { optNoEnum = !e.target.checked; } }), 'Enumeration')),
+      h('p', null, h('button', { class: 'btn', disabled: busy ? '' : null, onclick: run }, busy ? 'Working…' : 'Generate reviewer')),
       status && h('p', { class: 'k', role: 'status' }, status), err && h('p', { class: 'err', role: 'alert' }, err)),
     h('div', { class: 'card' },
       h('h2', { class: 'k' }, 'Diagrams'),
@@ -914,24 +1140,32 @@ function home() {
         h('label', null, 'Import a backup: ', h('input', { type: 'file', accept: '.json,application/json', onchange: e => { if (e.target.files[0]) importFile(e.target.files[0]); } }))),
       n && h('p', { role: 'status' }, n)),
     R.length > 0 && h('h2', { class: 'k' }, 'Saved reviewers'),
-    R.length > 5 && h('input', { type: 'text', 'aria-label': 'Search saved reviewers', placeholder: 'Search saved reviewers', value: q, oninput: e => { q = e.target.value; fill(); } }),
+    R.length > 2 && h('div', { class: 'row' },
+      h('input', { type: 'search', 'aria-label': 'Search saved reviewers', placeholder: 'Search saved reviewers', value: q, oninput: e => { q = e.target.value; fill(); } }),
+      h('label', null, 'Sort ', h('select', { onchange: e => { qSort = e.target.value; home(); } }, [['recent', 'Recently added'], ['due', 'Most due'], ['exam', 'Next exam'], ['title', 'Title']].map(([v, t]) => h('option', { value: v, selected: v === qSort ? '' : null }, t)))),
+      h('label', null, h('input', { type: 'checkbox', checked: qDue ? '' : null, onchange: e => { qDue = e.target.checked; home(); } }), 'Due only')),
     list);
-  const match = r => R.length <= 5 || r.title.toLowerCase().includes(q.trim().toLowerCase());
-  const fill = () => { const m = R.filter(match); list.replaceChildren(...(m.length || !R.length ? m.map(card) : [h('p', { class: 'k' }, 'No saved reviewer matches "' + q + '".')])); };
+  const match = r => (R.length <= 2 || r.title.toLowerCase().includes(q.trim().toLowerCase())) && (!qDue || dueCount(r) > 0);
+  const fill = () => { const m = sortReviewers(R.filter(match)); list.replaceChildren(...(m.length || !R.length ? m.map(card) : [h('p', { class: 'k' }, 'No saved reviewer matches "' + q + '".')])); };
   const card = r => h('div', { class: 'card saved' },
       h('div', null, h('b', null, r.title),
         h('div', { class: 'k' }, r.items.length + ' items · ' + Object.values(r.ans).filter(a => a.ok).length + ' correct'
           + (dueCount(r) ? ' · ' + dueCount(r) + ' due' : '')
           + (examDaysLeft(r.plan && r.plan.exam) !== null ? ' · ' + examText(r.plan.exam) : ''))),
       h('div', { class: 'row actions' },
-        dueCount(r) > 0 && h('button', { class: 'btn', onclick: () => { open(r); startFlash('due'); } }, 'Review ' + dueCount(r)),
+        dueCount(r) > 0 && h('button', { class: 'btn', onclick: () => { open(r); startFlash('due', optCap); } }, 'Review ' + dueCount(r)),
         h('button', { class: 'btn alt', onclick: () => open(r) }, 'Open'),
+        h('button', { class: 'btn alt', onclick: () => exportAll(r) }, 'Save file'),
         h('button', { class: 'btn alt', onclick: () => { if (confirm('Delete "' + r.title + '"?')) deleteReviewer(r); } }, 'Delete')));
   fill(); cur = null; draw(node, 'home'); if (n) say(n);
   const nt = document.getElementById('title'); if (nt) nt.value = tv;
 }
 
 const TABS = { mc: 'Multiple choice', id: 'Identification', enum: 'Enumeration', img: 'Diagram' };
+// A partial enumeration answer earns its fraction; every other type is all or nothing.
+const credit = a => (a && typeof a.part === 'number' ? a.part : a && a.ok ? 1 : 0);
+const scoreText = n => String(Math.round(n * 10) / 10);
+let lastUndo = null;
 function wipe() { for (const k in draft) delete draft[k]; }
 // Shuffle = rebuild a new question set from the saved file text (random pick, new wrong options, new order).
 // Reviewers saved before source text was kept can only reorder what they have. Ids are rebuilt, so
@@ -939,8 +1173,12 @@ function wipe() { for (const k in draft) delete draft[k]; }
 function shuffleAll() {
   const old = cur.items, hidden = new Set(cur.hidden || []);
   const visible = old.filter(it => !hidden.has(itemKey(it)));
-  const fresh = (cur.src ? generate(cur.src, cur.tags, cur.opts) : []).filter(it => !hidden.has(itemKey(it)));
-  if (fresh.length >= 3) cur.items = fresh;
+  // Questions added or edited by hand have no source line to rebuild from, so they are carried
+  // forward and a freshly generated copy of the same fact is skipped in favour of the pinned one.
+  const pinned = visible.filter(it => it.pinned === true), pinnedKeys = new Set(pinned.map(itemKey));
+  const fresh = (cur.src ? generate(cur.src, cur.tags, cur.opts) : []).filter(it => !hidden.has(itemKey(it)) && !pinnedKeys.has(itemKey(it)));
+  const next = [...pinned, ...fresh];
+  if (next.length >= 3) cur.items = next;
   else {
     // Copies, not the saved objects: carryProgress() needs the old option order to move a chosen
     // option to its new index. "visible" already excludes removed questions.
@@ -971,11 +1209,12 @@ function open(r) {
 let flashIndex = 0, flashRevealed = false, flashing = false, flashMode = 'all', flashOrder = [];
 // flashMode: 'all' | 'unknown' (not marked known yet) | 'due' (scheduled for today or overdue).
 // flashOrder = item positions to study this session. "Review again" moves a card a few places later so it returns soon.
-function startFlash(mode = 'all') {
+function startFlash(mode = 'all', cap = 0) {
   stopTimer(); flashMode = mode; flashIndex = 0; flashRevealed = false;
   const known = new Set(cur.flashKnown || []), due = new Set(dueIds(cur));
   flashOrder = cur.items.map((_, i) => i).filter(i =>
     mode === 'all' ? true : mode === 'unknown' ? !known.has(cur.items[i].id) : due.has(cur.items[i].id));
+  if (mode === 'due' && cap > 0) flashOrder = flashOrder.slice(0, cap);
   flipcards(); scrollTo(0, 0);
 }
 function flashAnswer(it) {
@@ -1162,24 +1401,50 @@ function startTimed(list) {
   quiz();
 }
 
+// One level of undo for an answer or a "Count it correct" tap. The answer and the plan entry are
+// put back exactly as they were; the streak is not rewound, because the time was spent either way.
+function snapshotAnswer(r, id) {
+  const s = planOf(r).srs[id];
+  return { r, id, ans: r.ans[id] ? { ...r.ans[id] } : null, srs: s ? { ...s } : null };
+}
+function undoAnswer() {
+  const u = lastUndo;
+  if (!u || cur !== u.r) return;
+  if (u.ans) u.r.ans[u.id] = u.ans; else delete u.r.ans[u.id];
+  u.r.plan = planOf(u.r);
+  if (u.srs) u.r.plan.srs[u.id] = u.srs; else delete u.r.plan.srs[u.id];
+  lastUndo = null; save(); quiz(); say('Answer undone.');
+}
+function markCorrect(r, it) {
+  const a = r.ans[it.id];
+  if (!a) return;
+  lastUndo = snapshotAnswer(r, it.id);
+  a.ok = true;
+  reviewItem(r, it.id, true);
+  save(); quiz(); say('Marked correct. Undo is available.');
+}
 function answer(it, val) {
-  let ok, exp;
+  let ok, exp, part;
   if (it.type === 'mc') { ok = val === it.answer; exp = it.options[it.answer]; }
   else if (it.type === 'id' || it.type === 'img') { ok = idOk(it.answer, val); exp = it.answer; }
-  else { const c = enumCheck(it.items, val); ok = c.ok; exp = it.items.join(', ') + (c.ok ? '' : ' (you missed: ' + c.missing.join(', ') + ')'); }
-  cur.ans[it.id] = { val, ok, exp };
+  else { const c = enumCheck(it.items, val); ok = c.ok; exp = it.items.join(', ') + (c.ok ? '' : ' (you missed: ' + c.missing.join(', ') + ')'); part = it.items.length ? c.got.length / it.items.length : 0; }
+  lastUndo = snapshotAnswer(cur, it.id);
+  const a = { val, ok, exp };
+  if (part != null) a.part = part;
+  cur.ans[it.id] = a;
   reviewItem(cur, it.id, ok);
-  const part = cur.items.filter(i => i.type === tab), done = part.every(i => cur.ans[i.id]);
+  const mine = cur.items.filter(i => i.type === tab), done = mine.every(i => cur.ans[i.id]);
   if (done) stopTimer();
   save(); quiz();
-  say((ok ? 'Correct. ' : 'Not quite. Answer: ' + exp + '. ') + (done ? 'Part finished: ' + part.filter(i => cur.ans[i.id].ok).length + ' of ' + part.length + ' correct.' : ''));
+  const got = mine.reduce((n, i) => n + credit(cur.ans[i.id]), 0);
+  say((ok ? 'Correct. ' : 'Not quite. Answer: ' + exp + '. ') + (done ? 'Part finished: ' + scoreText(got) + ' of ' + mine.length + ' correct.' : ''));
   const fb = document.getElementById('fb-' + it.id); if (fb) fb.focus({ preventScroll: true });
 }
 
 function quiz() {
   const r = cur, ts = Object.keys(TABS).filter(k => r.items.some(i => i.type === k));
   if (!ts.includes(tab)) tab = ts[0];
-  const good = x => x.filter(i => r.ans[i.id] && r.ans[i.id].ok).length;
+  const good = x => x.reduce((n, i) => n + credit(r.ans[i.id]), 0);
   const total = good(r.items), n = r.items.length;
   const mine = r.items.filter(i => i.type === tab);
   const missed = mine.filter(i => r.ans[i.id] && !r.ans[i.id].ok);
@@ -1201,12 +1466,12 @@ function quiz() {
         save(); quiz();
       } })),
       examDaysLeft(r.plan && r.plan.exam) !== null && h('span', { class: 'k' }, examText(r.plan.exam)),
-      h('button', { class: 'btn alt', disabled: dueCount(r) ? null : '', onclick: () => startFlash('due') }, 'Review due (' + dueCount(r) + ')')),
-    h('div', { class: 'row' }, h('span', { class: 'mono big' }, total + '/' + n),
+      h('button', { class: 'btn alt', disabled: dueCount(r) ? null : '', onclick: () => startFlash('due', optCap) }, 'Review due (' + dueCount(r) + ')')),
+    h('div', { class: 'row' }, h('span', { class: 'mono big' }, scoreText(total) + '/' + n),
       h('span', { class: 'k' }, 'correct so far · ' + n + ' items'),
       bar(n ? total / n * 100 : 0, 'Correct answers')),
     h('div', { class: 'tabs' }, ts.map(k => h('button', { class: 'tab' + (k === tab ? ' on' : ''), 'aria-current': k === tab ? 'true' : null, onclick: () => { if (timed && timed.tab !== k) stopTimer(); tab = k; quiz(); scrollTo(0, 0); } },
-      TABS[k] + ' ', h('span', { class: 'k' }, good(r.items.filter(i => i.type === k)) + '/' + r.items.filter(i => i.type === k).length))),
+      TABS[k] + ' ', h('span', { class: 'k' }, scoreText(good(r.items.filter(i => i.type === k))) + '/' + r.items.filter(i => i.type === k).length))),
       h('button', { class: 'tab', onclick: () => startFlash('all') }, '✦ Flipcards')),
     h('div', { class: 'row' },
       h('button', { class: 'btn', disabled: missed.length ? null : '', onclick: () => clear(missed) }, 'Retry missed (' + missed.length + ')'),
@@ -1218,6 +1483,8 @@ function quiz() {
       h('div', { class: 'row' },
         h('button', { class: 'btn alt', onclick: shuffleAll }, r.src ? 'Shuffle · new questions' : 'Shuffle'),
         h('button', { class: 'btn alt', onclick: rename }, 'Rename'),
+        h('button', { class: 'btn alt', onclick: () => openItemEditor({ items: r.items, hidden: r.hidden || (r.hidden = []), reviewer: r, index: -1, back: quiz }) }, 'Add a question'),
+        (r.removed && r.removed.length) && h('button', { class: 'btn alt', onclick: () => removedScreen(r) }, 'Removed questions (' + r.removed.length + ')'),
         ts.includes('img') && h('button', { class: 'btn alt', onclick: () => openCovers(r) }, r.masks && r.masks.length ? 'Edit label covers' : 'Hide printed labels'),
         h('button', { class: 'btn alt', onclick: () => window.print() }, 'Print this part'))),
     tab === 'mc' && h('p', { class: 'k keys' }, 'Keys: 1–4 answer the next question.'),
@@ -1225,7 +1492,8 @@ function quiz() {
     h('div', { class: 'items' }, mine.map((it, idx) => {
       const a = r.ans[it.id];
       return h('div', { class: 'item' },
-        h('div', { class: 'k' }, 'Q' + (idx + 1) + (a ? ' · ' : ''), a && h('span', { class: a.ok ? 'good' : 'miss' }, a.ok ? 'correct' : 'missed')),
+        h('div', { class: 'k' }, 'Q' + (idx + 1) + (a ? ' · ' : ''), a && h('span', { class: a.ok ? 'good' : 'miss' }, a.ok ? 'correct' : 'missed'),
+          h('button', { class: 'btn alt', onclick: () => openItemEditor({ items: r.items, hidden: r.hidden || (r.hidden = []), reviewer: r, index: r.items.indexOf(it), back: quiz }) }, 'Edit')),
         h('div', { class: 'q', id: 'q-' + it.id }, it.q),
         it.type === 'mc'
           ? h('div', { role: 'group', 'aria-labelledby': 'q-' + it.id }, it.options.map((o, oi) => h('button', { class: 'opt' + (a ? (oi === it.answer ? ' ok' : oi === a.val ? ' bad' : '') : ''), disabled: a || over ? '' : null, onclick: () => answer(it, oi) }, h('b', null, 'ABCD'[oi]), o, a && oi === it.answer && h('span', { class: 'mark' }, '✓ Correct answer'), a && oi === a.val && oi !== it.answer && h('span', { class: 'mark' }, '✗ Your answer'))))
@@ -1241,11 +1509,13 @@ function quiz() {
             !a && !over && h('p', null, h('button', { class: 'btn', onclick: () => answer(it, draft[it.id] || '') }, 'Check'))),
         a && h('div', { class: 'fb' + (a.ok ? '' : ' bad'), id: 'fb-' + it.id, tabindex: '-1' }, h('b', null, a.ok ? 'Correct.' : 'Not quite.'),
           h('div', null, 'Answer: ' + a.exp + '.'),
-          !a.ok && it.type !== 'mc' && h('button', { class: 'btn alt', onclick: () => { a.ok = true; reviewItem(r, it.id, true); save(); quiz(); say('Marked correct.'); } }, 'Count it correct')),
+          a.part != null && a.part < 1 && h('div', null, Math.round(a.part * it.items.length) + ' of ' + it.items.length + ' required answers were right.'),
+          !a.ok && it.type !== 'mc' && h('button', { class: 'btn alt', onclick: () => markCorrect(r, it) }, 'Count it correct'),
+          lastUndo && lastUndo.r === r && lastUndo.id === it.id && h('button', { class: 'btn alt', onclick: undoAnswer }, 'Undo')),
         a && it.type !== 'img' && sourcePanel(r, it),
         h('div', { class: 'ans-print' }, 'Answer: ' + flashAnswer(it)));
     })),
-    (done || over) && h('div', { class: 'card done', role: 'status' }, h('b', null, (over && !done ? 'Time is up. ' : '') + 'Part score: ' + partGood + ' of ' + mine.length + ' correct (' + Math.round(partGood / mine.length * 100) + '%)'),
+    (done || over) && h('div', { class: 'card done', role: 'status' }, h('b', null, (over && !done ? 'Time is up. ' : '') + 'Part score: ' + scoreText(partGood) + ' of ' + mine.length + ' correct (' + Math.round(partGood / mine.length * 100) + '%)'),
       h('p', null, partGood === mine.length ? 'Perfect. Try another part or the flashcards.' : 'Use "Retry missed" at the top to practice the ones you got wrong.')));
   flashing = false;
   draw(node, 'quiz');

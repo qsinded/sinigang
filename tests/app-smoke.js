@@ -425,16 +425,177 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
 
   // Removing a question in the check screen is remembered on the saved reviewer.
   const pendingItems = [0, 1, 2, 3].map(i => ({ id: 'id' + i, type: 'id', q: 'Pending question ' + i, answer: 'a' + i, exp: '' }));
-  vm.runInContext('pending = ' + JSON.stringify({ title: 'Pending', items: pendingItems, src: [], tags: [], opts: { max: 0, mcOnly: false }, hidden: [] }), ctx);
+  vm.runInContext('pending = ' + JSON.stringify({ title: 'Pending', items: pendingItems, src: [], tags: [], opts: { max: 0, mcOnly: false }, hidden: [], removed: [] }), ctx);
   ctx.preview();
   const removeButtons = find(appEl, e => String(e.className).split(' ').includes('rm'));
   assert.strictEqual(removeButtons.length, 4, 'every checked question can be removed');
   removeButtons[2].onclick();
   assert.strictEqual(vm.runInContext('pending.items.length', ctx), 3, 'the question leaves the pending set');
   assert.deepStrictEqual(plain(vm.runInContext('pending.hidden', ctx)), [ctx.itemKey(pendingItems[2])], 'the removal is remembered by key');
+  assert.strictEqual(vm.runInContext('pending.removed.length', ctx), 1, 'the preview keeps the removed question for restore');
   ctx.savePending();
   const savedPending = vm.runInContext('R[0]', ctx);
   assert.ok(savedPending.hidden.includes(ctx.itemKey(pendingItems[2])), 'the saved reviewer remembers what was removed');
+  assert.strictEqual(savedPending.removed.length, 1, 'the saved reviewer keeps the removed question');
+
+  // 13. Phase 1: edit in place, add, remove and restore, and keep pinned questions on Shuffle.
+  const editable = ctx.cleanReviewer({ title: 'Editable', items: [
+    { id: 'id0', type: 'id', q: 'Which term runs instructions?', answer: 'CPU', exp: '' },
+    { id: 'id1', type: 'id', q: 'Which term holds running programs?', answer: 'RAM', exp: '' },
+    { id: 'id2', type: 'id', q: 'Which term forwards data between networks?', answer: 'router', exp: '' },
+    { id: 'id3', type: 'id', q: 'Which term connects devices inside one network?', answer: 'switch', exp: '' }
+  ] });
+  editable.ans.id1 = { val: 'RAM', ok: true, exp: '' };
+  editable.plan.srs.id1 = { box: 1, due: ctx.todayNumber() + 3 };
+  ctx.open(editable);
+  const oldKey = ctx.itemKey(editable.items[1]);
+  ctx.openItemEditor({ items: editable.items, hidden: editable.hidden, reviewer: editable, index: 1, back: () => {} });
+  vm.runInContext("editDraft.q = 'Which term holds programs and data while they run?'; editDraft.answer = 'RAM';", ctx);
+  ctx.saveEditor();
+  assert.strictEqual(editable.items[1].q, 'Which term holds programs and data while they run?', 'the question is edited in place');
+  assert.strictEqual(editable.items[1].id, 'id1', 'the id is unchanged');
+  assert.strictEqual(editable.items[1].pinned, true, 'an edited question is pinned');
+  assert.strictEqual(editable.ans.id1, undefined, 'changing the question clears its old answer');
+  assert.deepStrictEqual(plain(editable.plan.srs.id1), { box: 1, due: ctx.todayNumber() + 3 }, 'the study schedule stays with the item');
+  assert.ok(editable.hidden.includes(oldKey), 'the old wording is hidden from Shuffle');
+  assert.ok(!editable.hidden.includes(ctx.itemKey(editable.items[1])), 'the edited wording is not hidden');
+
+  // An explanation-only edit keeps the answer and the key.
+  editable.ans.id1 = { val: 'RAM', ok: true, exp: '' };
+  ctx.openItemEditor({ items: editable.items, hidden: editable.hidden, reviewer: editable, index: 1, back: () => {} });
+  vm.runInContext("editDraft.exp = 'RAM is working memory.';", ctx);
+  ctx.saveEditor();
+  assert.deepStrictEqual(plain(editable.ans.id1), { val: 'RAM', ok: true, exp: '' }, 'an explanation-only edit keeps the answer');
+
+  // A question added by hand is pinned and defaults to identification.
+  const beforeAdd = editable.items.length;
+  ctx.openItemEditor({ items: editable.items, hidden: editable.hidden, removed: editable.removed, reviewer: editable, index: -1, back: () => {} });
+  vm.runInContext("editDraft.q = 'What does the ALU do?'; editDraft.answer = 'arithmetic and logic';", ctx);
+  ctx.saveEditor();
+  assert.strictEqual(editable.items.length, beforeAdd + 1, 'a question can be added');
+  assert.strictEqual(editable.items[beforeAdd].pinned, true, 'an added question is pinned');
+  assert.strictEqual(editable.items[beforeAdd].type, 'id', 'an added question defaults to identification');
+
+  // Remove and restore: only that item's progress is pruned.
+  editable.ans[editable.items[2].id] = { val: 'router', ok: true, exp: '' };
+  editable.plan.srs[editable.items[2].id] = { box: 2, due: ctx.todayNumber() + 7 };
+  const removedItem = editable.items[2];
+  assert.strictEqual(ctx.removeItem(editable, removedItem), true, 'a reviewer above the minimum can lose one');
+  assert.ok(!editable.items.some(x => x.id === removedItem.id), 'the item leaves the practice set');
+  assert.ok(editable.removed.some(x => x.id === removedItem.id), 'the item is kept for restore');
+  assert.strictEqual(editable.ans[removedItem.id], undefined, 'its answer is pruned');
+  assert.strictEqual(editable.plan.srs[removedItem.id], undefined, 'its schedule is pruned');
+  assert.deepStrictEqual(plain(editable.ans.id1), { val: 'RAM', ok: true, exp: '' }, 'another item keeps its answer');
+  ctx.restoreItem(editable, removedItem);
+  assert.ok(editable.items.some(x => x.id === removedItem.id), 'the item is restored');
+  assert.ok(!editable.hidden.includes(ctx.itemKey(removedItem)), 'the restored item is no longer hidden');
+  const threeOnly = ctx.cleanReviewer({ ...base });
+  assert.strictEqual(ctx.removeItem(threeOnly, threeOnly.items[0]), false, 'a three-item reviewer cannot go below three');
+
+  // A pinned question is not regenerated and not duplicated by Shuffle.
+  const pinnedSet = ctx.cleanReviewer({ title: 'Pinned', items: [
+    { id: 'p0', type: 'id', q: 'Pinned one?', answer: 'one', exp: '' },
+    { id: 'p1', type: 'id', q: 'Pinned two?', answer: 'two', exp: '' },
+    { id: 'p2', type: 'id', q: 'Pinned three?', answer: 'three', exp: '' }
+  ] });
+  pinnedSet.items[0].pinned = true;
+  ctx.open(pinnedSet);
+  ctx.shuffleAll();
+  assert.ok(pinnedSet.items.some(it => it.answer === 'one' && it.pinned), 'a pinned question survives Shuffle');
+  assert.strictEqual(pinnedSet.items.filter(it => it.answer === 'one').length, 1, 'it is not duplicated');
+
+  // Multiple choice: empty option slots are dropped and the key follows the marked option.
+  const mcSet = ctx.cleanReviewer({ title: 'MC', items: [
+    { id: 'mc0', type: 'mc', q: 'Pick one', options: ['A', 'B'], answer: 0, exp: '' },
+    { id: 'mc1', type: 'mc', q: 'Pick two', options: ['C', 'D'], answer: 0, exp: '' },
+    { id: 'mc2', type: 'mc', q: 'Pick three', options: ['E', 'F'], answer: 0, exp: '' }
+  ] });
+  ctx.openItemEditor({ items: mcSet.items, hidden: [], reviewer: mcSet, index: 0, back: () => {} });
+  vm.runInContext("editDraft.options = ['A', 'B', 'C', '']; editDraft.correct = 2;", ctx);
+  ctx.saveEditor();
+  assert.deepStrictEqual(plain(mcSet.items[0].options), ['A', 'B', 'C'], 'empty options are dropped');
+  assert.strictEqual(mcSet.items[0].answer, 2, 'the chosen option becomes the key');
+
+  // Validation keeps the new fields and reassigns colliding removed ids.
+  assert.strictEqual(ctx.cleanItem({ id: 'x', type: 'id', q: 'Q', answer: 'A', pinned: true }).pinned, true, 'a pinned item survives validation');
+  assert.strictEqual(ctx.cleanItem({ id: 'x', type: 'id', q: 'Q', answer: 'A' }).pinned, undefined, 'a generated item is not pinned');
+  const withRemoved = ctx.cleanReviewer({ ...base, removed: [{ ...base.items[0], id: 'id0' }, { ...base.items[1], id: 'id0' }] });
+  assert.strictEqual(withRemoved.removed.length, 2, 'removed questions survive validation');
+  assert.notStrictEqual(withRemoved.removed[0].id, withRemoved.removed[1].id, 'colliding removed ids are reassigned');
+
+  // 14. Phase 2: exam-aware plan, forecast, daily cap, partial credit and undo.
+  const isoIn = days => { const d = new Date(); d.setDate(d.getDate() + days); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+  const examR = ctx.cleanReviewer({ ...base, plan: { exam: isoIn(2), srs: {} } });
+  examR.plan.srs.id0 = { box: 4, due: ctx.todayNumber() };
+  ctx.reviewItem(examR, 'id0', true);
+  assert.strictEqual(examR.plan.srs.id0.due, ctx.todayNumber() + 2, 'a card never waits past the exam');
+  const pastR = ctx.cleanReviewer({ ...base, plan: { exam: isoIn(-2), srs: {} } });
+  pastR.plan.srs.id0 = { box: 4, due: ctx.todayNumber() };
+  ctx.reviewItem(pastR, 'id0', true);
+  assert.strictEqual(pastR.plan.srs.id0.due, ctx.todayNumber() + 16, 'a passed exam date stops clamping');
+  assert.deepStrictEqual(plain(ctx.forecast(examR)), [2, 0, 1, 0, 0, 0, 0], 'the forecast counts today and the clamped item');
+
+  const capR = ctx.cleanReviewer({ ...base, items: [0, 1, 2, 3].map(i => ({ id: 'c' + i, type: 'id', q: 'Cap ' + i, answer: 'a' + i, exp: '' })) });
+  ctx.open(capR);
+  ctx.startFlash('due', 2);
+  assert.strictEqual(vm.runInContext('flashOrder.length', ctx), 2, 'the daily limit caps a due session');
+  ctx.startFlash('due', 0);
+  assert.strictEqual(vm.runInContext('flashOrder.length', ctx), 4, 'zero means study all');
+
+  const enumR = ctx.cleanReviewer({ ...base, title: 'Enum', items: [
+    { id: 'e0', type: 'enum', q: 'List three', items: ['a', 'b', 'c'], exp: '' },
+    { id: 'e1', type: 'enum', q: 'List two', items: ['d', 'e'], exp: '' },
+    { id: 'e2', type: 'id', q: 'Which one?', answer: 'f', exp: '' }
+  ] });
+  ctx.open(enumR);
+  vm.runInContext("tab = 'enum';", ctx); ctx.quiz();
+  ctx.answer(enumR.items[0], 'a, b');
+  assert.strictEqual(enumR.ans.e0.ok, false, 'a partial list is not full credit');
+  assert.ok(Math.abs(enumR.ans.e0.part - 2 / 3) < 1e-9, 'the earned fraction is stored');
+  assert.match(screenText(appEl), /2 of 3 required answers were right/, 'the feedback shows the partial score');
+  vm.runInContext('__credit = ' + JSON.stringify(enumR.ans.e0), ctx);
+  assert.strictEqual(vm.runInContext('credit(__credit)', ctx), 2 / 3, 'the score uses the fraction');
+  ctx.undoAnswer();
+  assert.strictEqual(enumR.ans.e0, undefined, 'undo removes the answer');
+  assert.strictEqual(enumR.plan.srs.e0, undefined, 'undo restores the empty schedule');
+  ctx.answer(enumR.items[2], 'wrong');
+  ctx.markCorrect(enumR, enumR.items[2]);
+  assert.strictEqual(enumR.ans.e2.ok, true, 'a correct-by-hand answer is recorded');
+  ctx.undoAnswer();
+  assert.strictEqual(enumR.ans.e2.ok, false, 'undo puts the previous wrong answer back');
+  const keptPart = ctx.cleanReviewer({ ...base, ans: { id0: { val: 'a', ok: false, exp: '', part: 0.5 } } });
+  assert.strictEqual(keptPart.ans.id0.part, 0.5, 'a saved partial score survives validation');
+
+  // 15. Phase 3/4: paste input, type toggles, sort, and duplicate-safe import.
+  vm.runInContext('__raw = ' + JSON.stringify(' one \n\n two \r\n three '), ctx);
+  assert.deepStrictEqual(plain(vm.runInContext('pasteLines(__raw)', ctx)), ['one', 'two', 'three'], 'pasted text is split into notes');
+  assert.strictEqual(vm.runInContext('ITEM_CAP.mc', ctx), 30, 'the item cap is exposed to the interface');
+  const quietGen = ctx.generate(['The CPU is the part of a computer that runs instructions.', 'RAM is memory that holds running programs.', 'A router is a device that forwards data between networks.', 'A switch is a device that connects devices inside one network.', 'A cache is a small fast memory placed close to the CPU.'], [], { noTF: true, noEnum: true });
+  assert.ok(quietGen.length >= 3, 'notes still generate without true/false or enumeration');
+  assert.ok(!quietGen.some(x => x.type === 'enum' || /^True or false: /.test(x.q)), 'the type toggles are honoured');
+
+  const sortA = ctx.cleanReviewer({ ...base, title: 'Beta', plan: { exam: '', srs: {} } });
+  const sortB = ctx.cleanReviewer({ ...base, title: 'Alpha', plan: { exam: isoIn(1), srs: {} } });
+  vm.runInContext("qSort = 'title'", ctx);
+  assert.deepStrictEqual(plain(ctx.sortReviewers([sortA, sortB]).map(r => r.title)), ['Alpha', 'Beta'], 'title sort');
+  vm.runInContext("qSort = 'exam'", ctx);
+  assert.deepStrictEqual(plain(ctx.sortReviewers([sortA, sortB]).map(r => r.title)), ['Alpha', 'Beta'], 'next-exam sort puts a dated reviewer first');
+  vm.runInContext("qSort = 'recent'", ctx);
+
+  const imp = ctx.cleanReviewer({ ...base, title: 'Group notes' });
+  assert.strictEqual(ctx.sameReviewer(imp, ctx.cleanReviewer({ ...base, title: 'group notes' })), true, 'the same questions and title are the same reviewer');
+  assert.strictEqual(ctx.sameReviewer(imp, sortA), false, 'a different title is a different reviewer');
+  vm.runInContext('R = []', ctx);
+  sandbox.confirm = () => true;
+  const backup = JSON.stringify({ version: 2, reviewers: [imp], images: {} });
+  await ctx.importFile({ text: async () => backup });
+  const imported = vm.runInContext('R[0]', ctx);
+  imported.ans.id0 = { val: 'a', ok: true, exp: '' };
+  imported.plan.srs.id0 = { box: 1, due: ctx.todayNumber() + 3 };
+  await ctx.importFile({ text: async () => backup });
+  assert.strictEqual(vm.runInContext('R.length', ctx), 1, 'importing the same backup twice replaces instead of duplicating');
+  const replaced = vm.runInContext('R[0]', ctx);
+  assert.deepStrictEqual(plain(replaced.ans.id0), { val: 'a', ok: true, exp: '' }, 'replacing keeps the old progress');
 
   console.log('app smoke checks passed');
 })().catch(e => { console.error(e); process.exit(1); });

@@ -19,8 +19,9 @@ no account and no build step.
   its original paragraph, with the answer highlighted, so feedback points at the student's own
   material instead of a canned explanation.
 - **Exam-date study plan**: give a reviewer its exam date and every item is scheduled with a small
-  Leitner box (0, 1, 3, 7 and 16 day waits). The home screen shows what is due today and the next
-  exam; reviewers get a one-tap **Review** button for due items.
+  Leitner box (0, 1, 3, 7 and 16 day waits). A wait is clamped to the exam day, so the last review
+  never lands after the test. The home screen shows what is due today, a seven-day forecast and the
+  next exam, and the daily limit (10, 20, 40 or all) decides how much a due session serves.
 - **Diagram reviewers**: upload a heart, cell, map or any diagram image, tap each part and type its
   name; every hotspot becomes an identification question, and the same image shows up in
   flashcards and recitation. Labels already printed on the image can be boxed out with covers, so
@@ -32,7 +33,15 @@ no account and no build step.
 - **Practice modes**: flashcards with known/learning tracking, shuffle into a fresh question set
   from the saved source (answers and card mastery follow a question that comes back, and questions
   removed at the check step are not resurrected), timed practice, retry-missed, print, and
-  export/import of backups.
+  export/import of backups. Enumeration answers earn the fraction of items they got right; one
+  answer can be undone after grading or after "Count it correct".
+- **Editable reviewers**: fix a question or answer, add one by hand, and remove or restore items.
+  Edited and added questions are pinned, so Shuffle carries them forward instead of regenerating the
+  old wording. Removing an item prunes only that item's progress.
+- **Input and sharing**: choose the question types, paste notes instead of making a file, export one
+  reviewer on its own, and import a backup without silently creating a duplicate (replace it and
+  keep the old progress, or keep both). Saved reviewers can be searched, sorted and filtered by due
+  status.
 - **Hands-free oral recitation**: the device's own speech voice reads each question, pauses while
   you think, then reads the answer and moves on. Speed, think time, read-answers and auto-advance
   are adjustable; Space pauses, arrows skip and Esc stops. No audio is uploaded.
@@ -136,8 +145,14 @@ image-only slides need OCR.
 - Saved reviewers keep at most 40,000 characters of source text each, so a very large file can only
   rebuild a subset of questions when you shuffle. Reviewers and progress live in this device's
   `localStorage`; diagram images live in IndexedDB. Use Export/Import to move them.
-- A removed question is remembered by its question and answer text, so a rebuilt set will not bring
-  it back. There is no restore screen yet; a backup taken before the removal still contains it.
+- A removed question is kept in its reviewer's Removed list and can be restored; its previous answer
+  and study schedule are not restored. A rebuilt set will not bring it back on its own.
+- An edited question is pinned to the reviewer and no longer regenerates from the source text.
+  Changing its answer clears that item's stored result, but keeps its study schedule.
+- Partial enumeration credit affects the score only: the Leitner box advances only when every
+  required item is given. The daily limit applies to due flashcard sessions, not to a graded quiz.
+- Paste and OCR: text can be pasted directly, but a scanned handout or a photo of a page still needs
+  OCR before it can be read; the app does not bundle it.
 - Diagram reviewers need IndexedDB; private windows and some locked-down browsers block it, in which
   case the setup screen explains that images cannot be stored. Labeling is manual — the app does not
   detect labels or arrows in an uploaded image.
