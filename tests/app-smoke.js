@@ -597,5 +597,45 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   const replaced = vm.runInContext('R[0]', ctx);
   assert.deepStrictEqual(plain(replaced.ans.id0), { val: 'a', ok: true, exp: '' }, 'replacing keeps the old progress');
 
+  // 16. Phase 6 slice: one-question mode, position, flags and Jump.
+  const oneR = ctx.cleanReviewer({ ...base, title: 'One at a time' });
+  vm.runInContext("quizView = null; quizIndex = 0; localStorage.removeItem('reviewer_quiz_view');", ctx);
+  sandbox.matchMedia = () => ({ matches: true });
+  ctx.open(oneR);
+  assert.strictEqual(vm.runInContext('viewMode()', ctx), 'one', 'a narrow screen defaults to one question');
+  assert.match(screenText(appEl), /Q 1 of 3/, 'one mode shows the position');
+  assert.strictEqual(screenText(appEl).includes('q1'), false, 'only the current card is rendered');
+  assert.strictEqual(screenText(appEl).includes('q2'), false, 'the rest of the part is not rendered yet');
+  ctx.nextQuiz();
+  assert.match(screenText(appEl), /Q 2 of 3/, 'Next moves one card');
+  assert.match(screenText(appEl), /q1/);
+  assert.strictEqual(screenText(appEl).includes('q2'), false, 'the next card is still hidden');
+  ctx.prevQuiz();
+  ctx.nextQuiz();
+  ctx.answer(oneR.items[1], oneR.items[1].answer);
+  assert.match(screenText(appEl), /Correct\./);
+  assert.match(screenText(appEl), /Next question →/, 'feedback offers the next card');
+  const flagId = oneR.items[1].id;
+  ctx.toggleFlag(oneR, oneR.items[1]);
+  assert.ok(oneR.flags.includes(flagId), 'a flag is stored on the item');
+  assert.match(screenText(appEl), /Flagged/);
+  ctx.jumpScreen(oneR);
+  assert.match(screenText(appEl), /Question 2 of 3/);
+  const jumps = find(appEl, e => String(e.className).includes('jump-btn'));
+  assert.strictEqual(jumps.length, 3, 'Jump lists every card in the part');
+  jumps[2].onclick();
+  assert.strictEqual(vm.runInContext('quizIndex', ctx), 2, 'a jump number moves to that card');
+  vm.runInContext("setQuizView('list')", ctx);
+  assert.strictEqual(vm.runInContext("localStorage.getItem('reviewer_quiz_view')", ctx), 'list', 'the layout choice is remembered');
+  assert.match(screenText(appEl), /q2/, 'List shows the whole part again');
+  assert.strictEqual(screenText(appEl).includes('q0'), true, 'List also shows the first card');
+  ctx.shuffleAll();
+  assert.ok(oneR.flags.includes(flagId), 'a flag follows its question through Shuffle');
+  const flagR = ctx.cleanReviewer({ ...base, flags: ['id0', 'ghost', 5] });
+  assert.deepStrictEqual(plain(flagR.flags), ['id0'], 'flags are validated on import');
+  sandbox.matchMedia = () => ({ matches: false });
+  vm.runInContext("quizView = null; localStorage.removeItem('reviewer_quiz_view');", ctx);
+  assert.strictEqual(vm.runInContext('viewMode()', ctx), 'list', 'a wide screen defaults to the list');
+
   console.log('app smoke checks passed');
 })().catch(e => { console.error(e); process.exit(1); });

@@ -13,7 +13,7 @@ const BACKUP_KEY = 'reviewer_gen_backup';
 const backupOld = () => { try { const t = Number(localStorage.getItem(BACKUP_KEY)); return !t || Date.now() - t > 14 * 864e5; } catch (e) { return false; } };
 const warn = () => saveWarn && h('p', { class: 'err', role: 'alert' }, saveWarn);
 let R = load();
-let q = '', qSort = 'recent', qDue = false, optMax = 0, optMc = false, optNoTF = false, optNoEnum = false, pasteText = '', pending = null, cur = null, tab = null, files = [], status = '', err = '', busy = false;
+let q = '', qSort = 'recent', qDue = false, optMax = 0, optMc = false, optNoTF = false, optNoEnum = false, pasteText = '', pending = null, cur = null, tab = null, quizIndex = 0, files = [], status = '', err = '', busy = false;
 // How many items a day's due session serves. 0 = all. The cap is a study plan, not a hard limit on
 // the reviewer; the home card still shows the full backlog.
 let optCap = 20;
@@ -423,7 +423,7 @@ function cleanReviewer(x) {
     seen.add(out.id);
     return out;
   });
-  return { id: newRid(), title, items, ans, flashKnown: idList(x.flashKnown), flashLearn: idList(x.flashLearn), src, tags, opts, plan, masks: cleanMasks(x.masks), hidden, removed };
+  return { id: newRid(), title, items, ans, flashKnown: idList(x.flashKnown), flashLearn: idList(x.flashLearn), flags: idList(x.flags), src, tags, opts, plan, masks: cleanMasks(x.masks), hidden, removed };
 }
 let note = ''; // one-time message shown on the home screen after export or import
 // Backups carry reviewer data plus any diagram images as data URLs, so a file still works on
@@ -472,8 +472,8 @@ async function importFile(f) {
       const dup = R.find(r => sameReviewer(r, nr));
       // A duplicate is never created silently: replacing carries the old progress onto the new copy.
       if (dup && confirm('A reviewer with the same title and questions already exists ("' + dup.title + '"). Replace it and keep its progress? Choose Cancel to keep both.')) {
-        const kept = carryProgress(dup.items, nr.items, { ans: dup.ans, known: dup.flashKnown || [], learn: dup.flashLearn || [], srs: planOf(dup).srs || {} });
-        nr.ans = kept.ans; nr.flashKnown = [...kept.known]; nr.flashLearn = [...kept.learn];
+        const kept = carryProgress(dup.items, nr.items, { ans: dup.ans, known: dup.flashKnown || [], learn: dup.flashLearn || [], srs: planOf(dup).srs || {}, flags: dup.flags || [] });
+        nr.ans = kept.ans; nr.flashKnown = [...kept.known]; nr.flashLearn = [...kept.learn]; nr.flags = [...kept.flags];
         nr.plan = planOf(nr); nr.plan.srs = kept.srs;
         nr.hidden = cleanHidden([...(nr.hidden || []), ...(dup.hidden || [])]);
         R = R.filter(r => r !== dup);
@@ -534,7 +534,7 @@ function savePending() {
   // Tags are one string per source line, so they are trimmed with the source they describe.
   const tags = Array.isArray(p.tags) ? p.tags.slice(0, src.length) : [];
   const removed = (p.removed || []).slice(0, 200).map(cleanItem).filter(Boolean);
-  const r = { id: newRid(), title: p.title, items: p.items, ans: {}, src, tags, opts: p.opts, plan: { exam: '', srs: {} }, hidden: cleanHidden(p.hidden), removed };
+  const r = { id: newRid(), title: p.title, items: p.items, ans: {}, src, tags, opts: p.opts, plan: { exam: '', srs: {} }, flags: [], hidden: cleanHidden(p.hidden), removed };
   pending = null; R.unshift(r); save(); open(r);
 }
 let removedAt = null;
@@ -665,6 +665,7 @@ function removeItem(r, it) {
   if (r.plan && r.plan.srs) delete r.plan.srs[it.id];
   r.flashKnown = (r.flashKnown || []).filter(k => k !== it.id);
   r.flashLearn = (r.flashLearn || []).filter(k => k !== it.id);
+  r.flags = (r.flags || []).filter(k => k !== it.id);
   r.removed = [...(r.removed || []).filter(x => x.id !== it.id), it];
   r.hidden = cleanHidden([...(r.hidden || []), itemKey(it)]);
   save();
@@ -769,7 +770,7 @@ async function createDiagram() {
     if (token !== diagToken) { dropImage(imageId); return; }
     const title = (diagTitleText.trim() || 'Diagram').slice(0, 120);
     const items = diagParts.map((p, i) => ({ id: 'img' + i, type: 'img', q: 'Identify the part marked on the diagram.', answer: p.name, imageId, hotspot: { x: p.x, y: p.y }, exp: '' }));
-    const r = { id: newRid(), title, items, ans: {}, src: undefined, tags: undefined, opts: { max: 0, mcOnly: false }, plan: { exam: '', srs: {} }, masks: [] };
+    const r = { id: newRid(), title, items, ans: {}, src: undefined, tags: undefined, opts: { max: 0, mcOnly: false }, plan: { exam: '', srs: {} }, flags: [], masks: [] };
     R.unshift(r); save(); clearDiagram(); open(r);
   } catch (e) {
     if (token !== diagToken) return;
@@ -1166,6 +1167,62 @@ const TABS = { mc: 'Multiple choice', id: 'Identification', enum: 'Enumeration',
 const credit = a => (a && typeof a.part === 'number' ? a.part : a && a.ok ? 1 : 0);
 const scoreText = n => String(Math.round(n * 10) / 10);
 let lastUndo = null;
+// One-question mode: chosen explicitly (and remembered) or defaulted by width. A stored choice wins,
+// so a student who prefers the list on a phone keeps it after the first tap.
+const VIEW_KEY = 'reviewer_quiz_view';
+let quizView = null;
+try { const v = localStorage.getItem(VIEW_KEY); if (v === 'one' || v === 'list') quizView = v; } catch (_) { /* follow the width */ }
+const narrowQuiz = () => typeof matchMedia === 'function' && matchMedia('(max-width: 520px)').matches;
+function viewMode() { return quizView || (narrowQuiz() ? 'one' : 'list'); }
+function setQuizView(v) {
+  quizView = v;
+  try { localStorage.setItem(VIEW_KEY, v); } catch (_) { /* this visit only */ }
+  quiz(); scrollTo(0, 0);
+}
+function nextQuiz() {
+  if (!cur) return;
+  const n = cur.items.filter(i => i.type === tab).length;
+  quizIndex = Math.min(quizIndex + 1, Math.max(0, n - 1));
+  quiz(); scrollTo(0, 0);
+}
+function prevQuiz() {
+  if (!cur) return;
+  quizIndex = Math.max(0, quizIndex - 1);
+  quiz(); scrollTo(0, 0);
+}
+function toggleFlag(r, it) {
+  const set = new Set(r.flags || []);
+  if (set.has(it.id)) set.delete(it.id); else set.add(it.id);
+  r.flags = [...set]; save();
+  if (lastScreen === 'jump') jumpScreen(r); else quiz();
+  say(set.has(it.id) ? 'Flagged for later.' : 'Flag removed.');
+}
+function jumpScreen(r) {
+  const items = r.items.filter(i => i.type === tab), flags = new Set(r.flags || []);
+  const node = h('div', null,
+    h('div', { class: 'row' }, h('button', { class: 'btn alt', onclick: quiz }, '← Back'), h('span', { class: 'k' }, 'JUMP TO')),
+    h('h1', null, 'Question ' + (quizIndex + 1) + ' of ' + items.length),
+    h('p', { class: 'sub' }, TABS[tab] + ' · ' + items.length + ' questions'),
+    h('div', { class: 'jump-grid', role: 'group', 'aria-label': 'Jump to question' }, items.map((it, i) => {
+      const a = r.ans[it.id];
+      const cls = 'jump-btn' + (a ? (a.ok ? ' ok' : ' bad') : '') + (i === quizIndex ? ' now' : '') + (flags.has(it.id) ? ' flagged' : '');
+      return h('button', { class: cls, 'aria-label': 'Question ' + (i + 1) + (a ? (a.ok ? ', correct' : ', missed') : ', not answered') + (flags.has(it.id) ? ', flagged' : ''), onclick: () => { quizIndex = i; quiz(); scrollTo(0, 0); } }, String(i + 1));
+    })),
+    h('div', { class: 'jump-legend' },
+      h('span', null, h('i', { class: 'o' }), 'correct'),
+      h('span', null, h('i', { class: 'b' }), 'missed'),
+      h('span', null, h('i', { class: 'n' }), 'not answered'),
+      h('span', null, h('i', { class: 'f' }), 'flagged')),
+    h('p', null, h('button', { class: 'btn wide', onclick: quiz }, 'Close')));
+  draw(node, 'jump');
+}
+function printPart() {
+  if (viewMode() !== 'one') { window.print(); return; }
+  // One mode only has one card in the DOM; print the whole part, then return to the student's view.
+  const stored = quizView;
+  quizView = 'list'; quiz();
+  setTimeout(() => { window.print(); quizView = stored; quiz(); }, 100);
+}
 function wipe() { for (const k in draft) delete draft[k]; }
 // Shuffle = rebuild a new question set from the saved file text (random pick, new wrong options, new order).
 // Reviewers saved before source text was kept can only reorder what they have. Ids are rebuilt, so
@@ -1188,10 +1245,10 @@ function shuffleAll() {
       return copy;
     });
   }
-  const kept = carryProgress(old, cur.items, { ans: cur.ans, known: cur.flashKnown || [], learn: cur.flashLearn || [], srs: planOf(cur).srs || {} });
-  cur.ans = kept.ans; cur.flashKnown = [...kept.known]; cur.flashLearn = [...kept.learn];
+  const kept = carryProgress(old, cur.items, { ans: cur.ans, known: cur.flashKnown || [], learn: cur.flashLearn || [], srs: planOf(cur).srs || {}, flags: cur.flags || [] });
+  cur.ans = kept.ans; cur.flashKnown = [...kept.known]; cur.flashLearn = [...kept.learn]; cur.flags = [...kept.flags];
   cur.plan = planOf(cur); cur.plan.srs = kept.srs;
-  flashIndex = 0; flashRevealed = false;
+  flashIndex = 0; quizIndex = 0; flashRevealed = false;
   wipe(); save(); quiz(); scrollTo(0, 0);
   say('New question set. Kept progress for ' + kept.kept + ' of ' + visible.length + ' items' + (hidden.size ? '; removed questions stay out.' : '.'));
 }
@@ -1199,8 +1256,8 @@ function open(r) {
   // Drafts are keyed by item id, and item ids restart at id0 in every reviewer, so a half-typed answer
   // from another reviewer would appear here if they were kept.
   wipe();
-  cur = r; const ts = Object.keys(TABS).filter(k => r.items.some(i => i.type === k)); tab = ts[0];
-  r.flashKnown ||= []; flashIndex = 0; flashRevealed = false; r.flashLearn ||= [];
+  cur = r; const ts = Object.keys(TABS).filter(k => r.items.some(i => i.type === k)); tab = ts[0]; quizIndex = 0;
+  r.flashKnown ||= []; flashIndex = 0; flashRevealed = false; r.flashLearn ||= []; r.flags ||= [];
   r.plan = planOf(r); r.plan.srs ||= {};
   quiz();
 }
@@ -1390,7 +1447,7 @@ const fmt = ms => { const s = Math.ceil(ms / 1000); return Math.floor(s / 60) + 
 function stopTimer() { clearInterval(tick); timed = null; }
 function startTimed(list) {
   if (list.some(i => cur.ans[i.id]) && !confirm('Timed practice clears your answers for this part. Continue?')) return;
-  list.forEach(i => delete cur.ans[i.id]); wipe(); save(); stopTimer();
+  list.forEach(i => delete cur.ans[i.id]); wipe(); save(); stopTimer(); quizIndex = 0;
   timed = { tab, end: Date.now() + list.length * 30000, over: false };
   tick = setInterval(() => {
     if (!cur || flashing) return stopTimer();
@@ -1441,6 +1498,33 @@ function answer(it, val) {
   const fb = document.getElementById('fb-' + it.id); if (fb) fb.focus({ preventScroll: true });
 }
 
+function quizItem(r, it, idx, one) {
+  const a = r.ans[it.id], over = !!(timed && timed.over && timed.tab === tab), flagged = (r.flags || []).includes(it.id);
+  return h('div', { class: 'item' + (one ? ' one' : '') },
+    h('div', { class: 'k' }, 'Q' + (idx + 1) + (a ? ' · ' : ''), a && h('span', { class: a.ok ? 'good' : 'miss' }, a.ok ? 'correct' : 'missed'),
+      h('button', { class: 'btn alt flag-btn', 'aria-pressed': flagged ? 'true' : 'false', onclick: () => toggleFlag(r, it) }, flagged ? '⚑ Flagged' : '⚑ Flag'),
+      h('button', { class: 'btn alt', onclick: () => openItemEditor({ items: r.items, hidden: r.hidden || (r.hidden = []), reviewer: r, index: r.items.indexOf(it), back: quiz }) }, 'Edit')),
+    h('div', { class: 'q', id: 'q-' + it.id }, it.q),
+    it.type === 'mc'
+      ? h('div', { role: 'group', 'aria-labelledby': 'q-' + it.id }, it.options.map((o, oi) => h('button', { class: 'opt' + (a ? (oi === it.answer ? ' ok' : oi === a.val ? ' bad' : '') : ''), disabled: a || over ? '' : null, onclick: () => answer(it, oi) }, h('b', null, 'ABCD'[oi]), o, a && oi === it.answer && h('span', { class: 'mark' }, '✓ Correct answer'), a && oi === a.val && oi !== it.answer && h('span', { class: 'mark' }, '✗ Your answer'))))
+      : h('div', null,
+        it.type === 'img' && imageBlock(it),
+        // The labels are right there in front of the reader, so the way to hide them belongs here
+        // too, not only in a menu above the first question.
+        it.type === 'img' && !(r.masks && r.masks.length) && h('p', { class: 'k' }, 'The printed labels give the answer away. ',
+          h('button', { class: 'btn alt', onclick: () => openCovers(r) }, 'Hide printed labels')),
+        it.type === 'enum'
+          ? h('textarea', { rows: 4, 'aria-labelledby': 'q-' + it.id, placeholder: 'One per line or separated by commas', disabled: a || over ? '' : null, oninput: e => { draft[it.id] = e.target.value; }, onkeydown: e => { if (e.key === 'Enter' && e.ctrlKey) answer(it, draft[it.id] || ''); } }, a ? a.val : draft[it.id] || '')
+          : h('input', { type: 'text', 'aria-labelledby': 'q-' + it.id, placeholder: 'Your answer', value: a ? a.val : draft[it.id] || '', disabled: a || over ? '' : null, oninput: e => { draft[it.id] = e.target.value; }, onkeydown: e => { if (e.key === 'Enter') answer(it, draft[it.id] || ''); } }),
+        !a && !over && h('p', null, h('button', { class: 'btn', onclick: () => answer(it, draft[it.id] || '') }, 'Check'))),
+    a && h('div', { class: 'fb' + (a.ok ? '' : ' bad'), id: 'fb-' + it.id, tabindex: '-1' }, h('b', null, a.ok ? 'Correct.' : 'Not quite.'),
+      h('div', null, 'Answer: ' + a.exp + '.'),
+      a.part != null && a.part < 1 && h('div', null, Math.round(a.part * it.items.length) + ' of ' + it.items.length + ' required answers were right.'),
+      !a.ok && it.type !== 'mc' && h('button', { class: 'btn alt', onclick: () => markCorrect(r, it) }, 'Count it correct'),
+      lastUndo && lastUndo.r === r && lastUndo.id === it.id && h('button', { class: 'btn alt', onclick: undoAnswer }, 'Undo')),
+    a && it.type !== 'img' && sourcePanel(r, it),
+    h('div', { class: 'ans-print' }, 'Answer: ' + flashAnswer(it)));
+}
 function quiz() {
   const r = cur, ts = Object.keys(TABS).filter(k => r.items.some(i => i.type === k));
   if (!ts.includes(tab)) tab = ts[0];
@@ -1451,9 +1535,16 @@ function quiz() {
   const done = mine.length > 0 && mine.every(i => r.ans[i.id]), partGood = good(mine);
   const over = !!(timed && timed.over && timed.tab === tab), running = !!(timed && !timed.over && timed.tab === tab);
   const rename = () => { const t = prompt('New title', r.title), v = t && t.trim().slice(0, 120); if (v) { r.title = v; save(); quiz(); } };
-  const clear = list => { list.forEach(i => delete r.ans[i.id]); save(); quiz(); };
+  const clear = list => { list.forEach(i => delete r.ans[i.id]); quizIndex = 0; save(); quiz(); };
+  const view = viewMode();
+  quizIndex = Math.max(0, Math.min(quizIndex, Math.max(0, mine.length - 1)));
+  const current = mine[quizIndex];
   const node = h('div', null,
-    h('button', { class: 'btn alt', onclick: home }, '← Back'),
+    h('div', { class: 'row quiz-head' },
+      h('button', { class: 'btn alt', onclick: home }, '← Back'),
+      h('div', { class: 'seg', role: 'group', 'aria-label': 'Quiz layout' },
+        h('button', { class: 'seg-btn' + (view === 'one' ? ' on' : ''), 'aria-pressed': view === 'one' ? 'true' : 'false', onclick: () => setQuizView('one') }, 'One'),
+        h('button', { class: 'seg-btn' + (view === 'list' ? ' on' : ''), 'aria-pressed': view === 'list' ? 'true' : 'false', onclick: () => setQuizView('list') }, 'List'))),
     h('h1', null, r.title),
     h('p', { class: 'sub' }, 'Answer each item. You get the result and an explanation right away. Missed items stay marked so you can retry them.'),
     warn(),
@@ -1467,10 +1558,14 @@ function quiz() {
       } })),
       examDaysLeft(r.plan && r.plan.exam) !== null && h('span', { class: 'k' }, examText(r.plan.exam)),
       h('button', { class: 'btn alt', disabled: dueCount(r) ? null : '', onclick: () => startFlash('due', optCap) }, 'Review due (' + dueCount(r) + ')')),
-    h('div', { class: 'row' }, h('span', { class: 'mono big' }, scoreText(total) + '/' + n),
-      h('span', { class: 'k' }, 'correct so far · ' + n + ' items'),
-      bar(n ? total / n * 100 : 0, 'Correct answers')),
-    h('div', { class: 'tabs' }, ts.map(k => h('button', { class: 'tab' + (k === tab ? ' on' : ''), 'aria-current': k === tab ? 'true' : null, onclick: () => { if (timed && timed.tab !== k) stopTimer(); tab = k; quiz(); scrollTo(0, 0); } },
+    view === 'one'
+      ? h('div', { class: 'row one-meta' }, h('span', { class: 'mono big' }, 'Q ' + (quizIndex + 1) + ' of ' + mine.length),
+          h('span', { class: 'k' }, scoreText(total) + '/' + n + ' correct'),
+          bar(mine.length ? (quizIndex + 1) / mine.length * 100 : 0, 'Question position'))
+      : h('div', { class: 'row' }, h('span', { class: 'mono big' }, scoreText(total) + '/' + n),
+          h('span', { class: 'k' }, 'correct so far · ' + n + ' items'),
+          bar(n ? total / n * 100 : 0, 'Correct answers')),
+    h('div', { class: 'tabs' }, ts.map(k => h('button', { class: 'tab' + (k === tab ? ' on' : ''), 'aria-current': k === tab ? 'true' : null, onclick: () => { if (timed && timed.tab !== k) stopTimer(); tab = k; quizIndex = 0; quiz(); scrollTo(0, 0); } },
       TABS[k] + ' ', h('span', { class: 'k' }, scoreText(good(r.items.filter(i => i.type === k))) + '/' + r.items.filter(i => i.type === k).length))),
       h('button', { class: 'tab', onclick: () => startFlash('all') }, '✦ Flipcards')),
     h('div', { class: 'row' },
@@ -1487,35 +1582,18 @@ function quiz() {
         h('button', { class: 'btn alt', onclick: () => openItemEditor({ items: r.items, hidden: r.hidden || (r.hidden = []), reviewer: r, index: -1, back: quiz }) }, 'Add a question'),
         (r.removed && r.removed.length) && h('button', { class: 'btn alt', onclick: () => removedScreen(r) }, 'Removed questions (' + r.removed.length + ')'),
         ts.includes('img') && h('button', { class: 'btn alt', onclick: () => openCovers(r) }, r.masks && r.masks.length ? 'Edit label covers' : 'Hide printed labels'),
-        h('button', { class: 'btn alt', onclick: () => window.print() }, 'Print this part'))),
-    tab === 'mc' && h('p', { class: 'k keys' }, 'Keys: 1–4 answer the next question.'),
+        h('button', { class: 'btn alt', onclick: printPart }, 'Print this part'))),
+    tab === 'mc' && h('p', { class: 'k keys' }, 'Keys: 1–4 answer the ' + (view === 'one' ? 'current' : 'next') + ' question.'),
     running && h('p', { class: 'k' }, 'Time left: ', h('b', { id: 'clock', class: 'mono' }, fmt(timed.end - Date.now()))),
-    h('div', { class: 'items' }, mine.map((it, idx) => {
-      const a = r.ans[it.id];
-      return h('div', { class: 'item' },
-        h('div', { class: 'k' }, 'Q' + (idx + 1) + (a ? ' · ' : ''), a && h('span', { class: a.ok ? 'good' : 'miss' }, a.ok ? 'correct' : 'missed'),
-          h('button', { class: 'btn alt', onclick: () => openItemEditor({ items: r.items, hidden: r.hidden || (r.hidden = []), reviewer: r, index: r.items.indexOf(it), back: quiz }) }, 'Edit')),
-        h('div', { class: 'q', id: 'q-' + it.id }, it.q),
-        it.type === 'mc'
-          ? h('div', { role: 'group', 'aria-labelledby': 'q-' + it.id }, it.options.map((o, oi) => h('button', { class: 'opt' + (a ? (oi === it.answer ? ' ok' : oi === a.val ? ' bad' : '') : ''), disabled: a || over ? '' : null, onclick: () => answer(it, oi) }, h('b', null, 'ABCD'[oi]), o, a && oi === it.answer && h('span', { class: 'mark' }, '✓ Correct answer'), a && oi === a.val && oi !== it.answer && h('span', { class: 'mark' }, '✗ Your answer'))))
-          : h('div', null,
-            it.type === 'img' && imageBlock(it),
-            // The labels are right there in front of the reader, so the way to hide them belongs here
-            // too, not only in a menu above the first question.
-            it.type === 'img' && !(r.masks && r.masks.length) && h('p', { class: 'k' }, 'The printed labels give the answer away. ',
-              h('button', { class: 'btn alt', onclick: () => openCovers(r) }, 'Hide printed labels')),
-            it.type === 'enum'
-              ? h('textarea', { rows: 4, 'aria-labelledby': 'q-' + it.id, placeholder: 'One per line or separated by commas', disabled: a || over ? '' : null, oninput: e => { draft[it.id] = e.target.value; }, onkeydown: e => { if (e.key === 'Enter' && e.ctrlKey) answer(it, draft[it.id] || ''); } }, a ? a.val : draft[it.id] || '')
-              : h('input', { type: 'text', 'aria-labelledby': 'q-' + it.id, placeholder: 'Your answer', value: a ? a.val : draft[it.id] || '', disabled: a || over ? '' : null, oninput: e => { draft[it.id] = e.target.value; }, onkeydown: e => { if (e.key === 'Enter') answer(it, draft[it.id] || ''); } }),
-            !a && !over && h('p', null, h('button', { class: 'btn', onclick: () => answer(it, draft[it.id] || '') }, 'Check'))),
-        a && h('div', { class: 'fb' + (a.ok ? '' : ' bad'), id: 'fb-' + it.id, tabindex: '-1' }, h('b', null, a.ok ? 'Correct.' : 'Not quite.'),
-          h('div', null, 'Answer: ' + a.exp + '.'),
-          a.part != null && a.part < 1 && h('div', null, Math.round(a.part * it.items.length) + ' of ' + it.items.length + ' required answers were right.'),
-          !a.ok && it.type !== 'mc' && h('button', { class: 'btn alt', onclick: () => markCorrect(r, it) }, 'Count it correct'),
-          lastUndo && lastUndo.r === r && lastUndo.id === it.id && h('button', { class: 'btn alt', onclick: undoAnswer }, 'Undo')),
-        a && it.type !== 'img' && sourcePanel(r, it),
-        h('div', { class: 'ans-print' }, 'Answer: ' + flashAnswer(it)));
-    })),
+    view === 'one'
+      ? h('div', { class: 'quiz-one' },
+          current ? quizItem(r, current, quizIndex, true) : h('p', { class: 'k' }, 'No questions in this part.'),
+          current && r.ans[current.id] && quizIndex < mine.length - 1 && h('p', null, h('button', { class: 'btn wide', onclick: nextQuiz }, 'Next question →')),
+          h('div', { class: 'quiz-nav' },
+            h('button', { class: 'btn alt', disabled: quizIndex === 0 ? '' : null, onclick: prevQuiz }, '← Previous'),
+            h('button', { class: 'btn alt jump', onclick: () => jumpScreen(r) }, (quizIndex + 1) + ' / ' + mine.length + ' · Jump'),
+            h('button', { class: 'btn alt', disabled: quizIndex >= mine.length - 1 ? '' : null, onclick: nextQuiz }, 'Next →')))
+      : h('div', { class: 'items' }, mine.map((it, idx) => quizItem(r, it, idx, false))),
     (done || over) && h('div', { class: 'card done', role: 'status' }, h('b', null, (over && !done ? 'Time is up. ' : '') + 'Part score: ' + scoreText(partGood) + ' of ' + mine.length + ' correct (' + Math.round(partGood / mine.length * 100) + '%)'),
       h('p', null, partGood === mine.length ? 'Perfect. Try another part or the flashcards.' : 'Use "Retry missed" at the top to practice the ones you got wrong.')));
   flashing = false;
@@ -1540,7 +1618,23 @@ document.addEventListener('keydown', e => {
     else if (e.key === ' ' && t !== 'BUTTON') { e.preventDefault(); flashRevealed = !flashRevealed; flipcards(); }
     return;
   }
-  const pick = Number(e.key) - 1, it = tab === 'mc' && !(timed && timed.over) && cur.items.find(i => i.type === 'mc' && !cur.ans[i.id]);
+  if (lastScreen !== 'quiz') return;
+  if (viewMode() === 'one') {
+    if (e.key === 'ArrowRight') { e.preventDefault(); nextQuiz(); return; }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); prevQuiz(); return; }
+  }
+  const pick = Number(e.key) - 1;
+  let it = null;
+  if (tab === 'mc' && !(timed && timed.over)) {
+    const list = cur.items.filter(i => i.type === 'mc');
+    it = viewMode() === 'one' ? list[quizIndex] : list.find(i => !cur.ans[i.id]);
+    if (it && cur.ans[it.id]) it = null;
+  }
   if (it && pick >= 0 && pick < it.options.length) answer(it, pick);
 });
+if (typeof matchMedia === 'function') {
+  const mq = matchMedia('(max-width: 520px)');
+  const resize = () => { if (!quizView && cur && lastScreen === 'quiz') quiz(); };
+  if (mq.addEventListener) mq.addEventListener('change', resize); else if (mq.addListener) mq.addListener(resize);
+}
 home();

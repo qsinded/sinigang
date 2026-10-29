@@ -38,6 +38,10 @@ no account and no build step.
 - **Editable reviewers**: fix a question or answer, add one by hand, and remove or restore items.
   Edited and added questions are pinned, so Shuffle carries them forward instead of regenerating the
   old wording. Removing an item prunes only that item's progress.
+- **One question at a time on a phone**: the quiz opens in One mode below 520 px, with a remembered
+  One/List switch, a position bar, and a sticky Previous / Jump / Next bar above the focus timer.
+  Jump is a colour-coded grid of the whole part; any item can be flagged, and flags follow their
+  question through a Shuffle. Arrow keys change cards in One mode, and 1–4 answer the current card.
 - **Input and sharing**: choose the question types, paste notes instead of making a file, export one
   reviewer on its own, and import a backup without silently creating a duplicate (replace it and
   keep the old progress, or keep both). Saved reviewers can be searched, sorted and filtered by due
@@ -61,7 +65,7 @@ no account and no build step.
 - `manifest.webmanifest`, `icons/` — installable app name, colours and icons
 - `tools/make-icons.js` — redraws the icons (shapes only, no font needed)
 - `tests/check.js` — generator, grading and file-reader checks
-- `tests/app-smoke.js` — page boot, storage cap, study plan, diagrams, label covers, source lookup and PDF.js checks
+- `tests/app-smoke.js` — page boot, storage cap, study plan, diagrams, label covers, source lookup, one-question quiz and PDF.js checks
 - `tests/offline.js` — service worker behaviour against fake cache/network objects
 
 ## Running the tests

@@ -173,6 +173,40 @@ p.k,.card>.k:not(h2),.err+.k{font:inherit;text-transform:none;letter-spacing:0}
 .card>h2.k:first-child{margin-top:0}
 
 
+/* One-question quiz: a single card at a time, a persistent Previous / Jump / Next bar, and a
+   colour-coded jump grid. The bar sits above the fixed focus timer, never over it. */
+.quiz-head{justify-content:space-between;margin:4px 0 2px}
+.seg{display:inline-flex;border:1.5px solid var(--edge);border-radius:10px;overflow:hidden;background:var(--card)}
+.seg-btn{min-height:40px;padding:6px 14px;border:0;background:none;color:var(--mut);font:600 .9rem/1 system-ui,sans-serif;cursor:pointer}
+.seg-btn+.seg-btn{border-left:1px solid var(--line)}
+.seg-btn.on{background:var(--ink);color:var(--bg)}
+.one-meta{margin:6px 0 12px}
+.item.one{margin:10px 0 12px;padding:18px;border:1px solid var(--line);border-radius:14px;background:var(--card);box-shadow:0 1px 2px var(--shadow),0 8px 22px var(--shadow)}
+.item.one .q{font-size:1.1rem;line-height:1.45}
+.flag-btn{padding:6px 10px;min-height:38px;font-size:.85rem;white-space:nowrap}
+.flag-btn[aria-pressed=true]{border-color:var(--acc);color:var(--acc);background:color-mix(in srgb,var(--acc) 10%,transparent)}
+.quiz-nav{position:sticky;bottom:calc(70px + env(safe-area-inset-bottom));z-index:5;display:flex;gap:8px;align-items:center;margin-top:8px;padding:10px 0;background:var(--bg);border-top:1px solid var(--line)}
+.quiz-nav .btn{min-height:46px}
+.quiz-nav .jump{flex:1;font-size:.92rem;white-space:nowrap}
+.btn.wide{width:100%;margin-top:10px}
+.quiz-one{margin-top:10px}
+.jump-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:14px 0 18px}
+.jump-btn{min-height:50px;border:1.5px solid var(--edge);border-radius:10px;background:var(--card);color:var(--ink);font:700 1.05rem/1 ui-monospace,Menlo,monospace;cursor:pointer}
+.jump-btn.ok{background:var(--okbg);border-color:var(--ok);color:var(--ok)}
+.jump-btn.bad{background:var(--badbg);border-color:var(--bad);color:var(--bad)}
+.jump-btn.now{outline:3px solid var(--acc);outline-offset:2px}
+.jump-btn.flagged{border-style:dashed}
+.jump-legend{display:flex;flex-wrap:wrap;gap:10px 16px;margin:6px 0 16px;color:var(--mut);font-size:.88rem}
+.jump-legend span{display:inline-flex;align-items:center;gap:6px}
+.jump-legend i{width:12px;height:12px;border-radius:3px;display:inline-block}
+.jump-legend .o{background:var(--okbg);border:1.5px solid var(--ok)}
+.jump-legend .b{background:var(--badbg);border:1.5px solid var(--bad)}
+.jump-legend .n{background:var(--card);border:1.5px solid var(--edge)}
+.jump-legend .f{background:var(--card);border:1.5px dashed var(--acc)}
+@media(max-width:520px){.quiz-head{flex-wrap:nowrap;gap:10px}.quiz-head>.btn{flex:0 0 auto}.seg{margin-left:auto}.seg-btn{min-height:44px;padding:6px 16px}.item.one{padding:14px}.quiz-nav .btn{padding:8px 10px;font-size:.9rem}.jump-grid{gap:7px}.jump-btn{min-height:52px}}
+@media(forced-colors:active){.seg,.jump-btn{border:2px solid ButtonText}.seg-btn.on{background:Highlight;color:HighlightText}.jump-btn.now{outline-color:Highlight}}
+@media print{.quiz-nav,.seg,.one-meta{display:none}.item.one{border:0;box-shadow:none;padding:0}}
+
 /* Saved reviewers: same box shape every time. Details on top, buttons share one row at the bottom. */
 .list{align-items:stretch!important}
 .card.saved{display:flex;flex-direction:column;gap:12px;margin:0 0 16px;overflow-wrap:anywhere}

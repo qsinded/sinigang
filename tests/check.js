@@ -249,7 +249,8 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
   ];
   const carried = carryProgress(oldSet, newSet, {
     ans: { id0: { val: 'cache', ok: true, exp: '' }, mc1: { val: 1, ok: false, exp: 'stack' }, mc2: { val: 'router', ok: true, exp: '' } },
-    known: ['id0', 'mc1', 'mc2'], learn: [], srs: { id0: { box: 2, due: 9 }, mc1: { box: 0, due: 9 }, mc2: { box: 1, due: 9 } }
+    known: ['id0', 'mc1', 'mc2'], learn: [], srs: { id0: { box: 2, due: 9 }, mc1: { box: 0, due: 9 }, mc2: { box: 1, due: 9 } },
+    flags: ['id0']
   });
   assert.deepStrictEqual(carried.ans.id4, { val: 'cache', ok: true, exp: '' }, 'a typed answer follows its question');
   assert.deepStrictEqual(carried.ans.mc5, { val: 0, ok: false, exp: 'stack' }, 'a chosen option follows the option text when the options move');
@@ -257,9 +258,13 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
   assert.deepStrictEqual(carried.srs.id6, { box: 1, due: 9 }, 'mastery follows the fact across formats');
   assert.ok(carried.known.has('id6') && carried.known.has('mc5'), 'known cards follow the fact');
   assert.strictEqual(carried.kept, 3, 'every matched item is reported');
+  assert.ok(carried.flags.has('id4'), 'a flag follows its question');
+  assert.strictEqual(carried.flags.has('id6'), false, 'a flag does not jump to another question');
   assert.strictEqual(carried.ans.id0, undefined, 'the old id is not reused');
   const ambiguous = carryProgress([fact], [{ ...fact, id: 'a' }, { ...fact, id: 'b' }], { ans: { id0: { val: 'cache', ok: true, exp: '' } } });
   assert.deepStrictEqual(ambiguous.ans, {}, 'a duplicated question cannot steal progress');
   assert.deepStrictEqual(carryProgress([fact], [{ ...fact, id: 'z', answer: 'other' }], { ans: { id0: { val: 'cache', ok: true, exp: '' } } }).ans, {}, 'a changed answer does not inherit the old result');
+  const flagOnly = carryProgress([fact], [{ ...fact, id: 'f1' }], { flags: ['id0'] });
+  assert.ok(flagOnly.flags.has('f1') && flagOnly.kept === 1, 'a flag alone is enough to carry the question');
   console.log('all checks passed');
 })().catch(e => { console.error(e); process.exit(1); });

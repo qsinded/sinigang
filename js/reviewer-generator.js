@@ -316,8 +316,8 @@ function itemKey(it) { return norm(it && it.q) + '|' + norm(answerText(it)); }
 // When the new set has two items with the same key there is no honest way to choose, so that item
 // is left alone. Returns fresh maps keyed by the new ids, plus how many items kept something.
 function carryProgress(oldItems, newItems, progress = {}) {
-  const ans = {}, known = new Set(), learn = new Set(), srs = {};
-  const oldAns = progress.ans || {}, oldKnown = new Set(progress.known || []), oldLearn = new Set(progress.learn || []), oldSrs = progress.srs || {};
+  const ans = {}, known = new Set(), learn = new Set(), srs = {}, flags = new Set();
+  const oldAns = progress.ans || {}, oldKnown = new Set(progress.known || []), oldLearn = new Set(progress.learn || []), oldSrs = progress.srs || {}, oldFlags = new Set(progress.flags || []);
   const matches = new Map();
   newItems.forEach((it, i) => { const k = itemKey(it); if (!matches.has(k)) matches.set(k, []); matches.get(k).push(i); });
   const used = new Set();
@@ -327,8 +327,9 @@ function carryProgress(oldItems, newItems, progress = {}) {
     const at = list.length === 1 && !used.has(list[0]) ? list[0] : -1;
     if (at < 0) return;
     const it = newItems[at];
-    if (!(oldAns[old.id] || oldKnown.has(old.id) || oldLearn.has(old.id) || oldSrs[old.id])) return;
+    if (!(oldAns[old.id] || oldKnown.has(old.id) || oldLearn.has(old.id) || oldSrs[old.id] || oldFlags.has(old.id))) return;
     used.add(at); kept++;
+    if (oldFlags.has(old.id)) flags.add(it.id);
     if (oldKnown.has(old.id)) known.add(it.id);
     if (oldLearn.has(old.id)) learn.add(it.id);
     const s = oldSrs[old.id];
@@ -346,7 +347,7 @@ function carryProgress(oldItems, newItems, progress = {}) {
     } else if (it.type !== old.type) return;
     ans[it.id] = { val, ok: a.ok === true, exp: a.exp };
   });
-  return { ans, known, learn, srs, kept };
+  return { ans, known, learn, srs, flags, kept };
 }
 
 if (typeof module !== 'undefined') module.exports = { generate, idOk, enumCheck, norm, itemKey, carryProgress, ITEM_CAP };
