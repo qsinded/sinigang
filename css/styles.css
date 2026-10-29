@@ -129,8 +129,20 @@ body{padding-bottom:70px}
 .ans-print{display:block;font-weight:700}
 }
 
-.more>summary{min-height:44px;display:flex;align-items:center;cursor:pointer;color:var(--mut)}
-.more{margin-top:8px}
+.more{margin-top:10px}
+/* A phone hides the native triangle and makes the summary read as body text. Give it the same
+   shape as a button, a real 48 px target, and a hint of what is behind it. */
+.more>summary{min-height:48px;display:flex;align-items:center;gap:10px;padding:10px 14px;border:1.5px solid var(--edge);border-radius:10px;background:var(--card);color:var(--ink);cursor:pointer;list-style:none;box-shadow:0 1px 2px var(--shadow);transition:border-color .12s,background-color .12s}
+.more>summary::-webkit-details-marker{display:none}
+.more>summary:hover{background:color-mix(in srgb,var(--ink) 6%,var(--card));border-color:var(--ink)}
+.more>summary:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+.more>summary b{font-size:1.05rem}
+.more-hint{display:block;font-size:.85rem;font-weight:400;color:var(--mut);margin-top:1px}
+.more>summary::after{content:'▾';margin-left:auto;font-size:1.1rem;line-height:1;transition:transform .12s}
+.more[open]>summary::after{transform:rotate(180deg)}
+.more[open]>summary{border-color:var(--acc);background:color-mix(in srgb,var(--acc) 8%,var(--card))}
+@media(max-width:520px){.more>summary{padding:12px 14px;min-height:54px}}
+@media(forced-colors:active){.more>summary{border:2px solid ButtonText}}
 @media print{.more,.keys{display:none}}
 
 /* UI polish: softer surfaces, clearer hierarchy, tactile controls. Colors still come from the variables above. */
@@ -159,8 +171,7 @@ input[type=text]:focus-visible,textarea:focus-visible{border-color:var(--ink)}
 @media(prefers-reduced-motion:reduce){.btn:not(:disabled):hover{transform:none}}
 p.k,.card>.k:not(h2),.err+.k{font:inherit;text-transform:none;letter-spacing:0}
 .card>h2.k:first-child{margin-top:0}
-.more>summary::before{content:'▸';margin-right:8px;display:inline-block;transition:transform .12s}
-.more[open]>summary::before{transform:rotate(90deg)}
+
 
 /* Saved reviewers: same box shape every time. Details on top, buttons share one row at the bottom. */
 .list{align-items:stretch!important}
