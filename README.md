@@ -42,6 +42,9 @@ no account and no build step.
   One/List switch, a position bar, and a sticky Previous / Jump / Next bar above the focus timer.
   Jump is a colour-coded grid of the whole part; any item can be flagged, and flags follow their
   question through a Shuffle. Arrow keys change cards in One mode, and 1–4 answer the current card.
+- **Stats by question type**: a Stats panel at the end of each quiz shows accuracy, answered, due
+  and flagged counts for every type, plus an all-questions total. Accuracy uses the same partial
+  enumeration credit as the score; due follows the same schedule as Review due.
 - **Input and sharing**: choose the question types, paste notes instead of making a file, export one
   reviewer on its own, and import a backup without silently creating a duplicate (replace it and
   keep the old progress, or keep both). Saved reviewers can be searched, sorted and filtered by due
@@ -155,6 +158,8 @@ image-only slides need OCR.
   Changing its answer clears that item's stored result, but keeps its study schedule.
 - Partial enumeration credit affects the score only: the Leitner box advances only when every
   required item is given. The daily limit applies to due flashcard sessions, not to a graded quiz.
+- The Stats panel counts accuracy from answered items only; unanswered items are not counted as
+  wrong. It breaks results down by question type, not by page or slide section yet.
 - Paste and OCR: text can be pasted directly, but a scanned handout or a photo of a page still needs
   OCR before it can be read; the app does not bundle it.
 - Diagram reviewers need IndexedDB; private windows and some locked-down browsers block it, in which

@@ -637,5 +637,52 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   vm.runInContext("quizView = null; localStorage.removeItem('reviewer_quiz_view');", ctx);
   assert.strictEqual(vm.runInContext('viewMode()', ctx), 'list', 'a wide screen defaults to the list');
 
+  // 17. Stats panel: per-type accuracy, due and flagged counts.
+  const statsR = ctx.cleanReviewer({
+    title: 'Stats',
+    items: [
+      { id: 'm0', type: 'mc', q: 'Stat m0', options: ['A', 'B'], answer: 0, exp: '' },
+      { id: 'm1', type: 'mc', q: 'Stat m1', options: ['A', 'B'], answer: 0, exp: '' },
+      { id: 'i0', type: 'id', q: 'Stat i0', answer: 'one', exp: '' },
+      { id: 'i1', type: 'id', q: 'Stat i1', answer: 'two', exp: '' },
+      { id: 'e0', type: 'enum', q: 'Stat e0', items: ['a', 'b'], exp: '' },
+      { id: 'e1', type: 'enum', q: 'Stat e1', items: ['c', 'd'], exp: '' }
+    ],
+    flags: ['m1', 'i1'],
+    ans: {
+      m0: { val: 0, ok: true, exp: 'A' },
+      i0: { val: 'wrong', ok: false, exp: 'one' },
+      e0: { val: 'a', ok: false, exp: 'a, b', part: 0.5 }
+    },
+    plan: { exam: '', srs: { m1: { box: 4, due: ctx.todayNumber() + 16 }, i1: { box: 0, due: ctx.todayNumber() } } }
+  });
+  const st = ctx.reviewerStats(statsR);
+  const byType = {};
+  st.types.forEach(t => { byType[t.key] = t; });
+  assert.deepStrictEqual(plain(st.types.map(t => t.key)), ['mc', 'id', 'enum'], 'stats keep the question-type order');
+  assert.strictEqual(byType.mc.answered, 1, 'answered counts only graded items');
+  assert.strictEqual(byType.mc.accuracy, 100, 'a correct answer is 100%');
+  assert.strictEqual(byType.id.accuracy, 0, 'a missed answer is 0%');
+  assert.strictEqual(byType.enum.accuracy, 50, 'enumeration accuracy uses partial credit');
+  assert.strictEqual(byType.mc.due, 1, 'a future-scheduled item is not due');
+  assert.strictEqual(byType.id.due, 2, 'unscheduled and today-scheduled items are due');
+  assert.strictEqual(byType.enum.due, 2, 'unscheduled items are due now');
+  assert.strictEqual(byType.mc.flagged, 1);
+  assert.strictEqual(byType.id.flagged, 1);
+  assert.strictEqual(byType.enum.flagged, 0);
+  assert.strictEqual(st.all.accuracy, 50, 'the total uses all earned credit');
+  assert.strictEqual(st.all.due, 5, 'the total due count adds the types');
+  assert.strictEqual(st.all.flagged, 2, 'the total flag count adds the types');
+  const noStats = ctx.reviewerStats(ctx.cleanReviewer({ ...base }));
+  assert.strictEqual(noStats.all.accuracy, null, 'no answers means no invented accuracy');
+  assert.strictEqual(noStats.all.due, 3, 'unscheduled questions still count as due');
+  ctx.open(statsR);
+  assert.match(screenText(appEl), /Stats/);
+  assert.match(screenText(appEl), /Accuracy/);
+  assert.match(screenText(appEl), /100%/, 'the panel shows the correct percentage');
+  assert.match(screenText(appEl), /50%/, 'the panel shows the partial-credit percentage');
+  const tables = find(appEl, e => e.tagName === 'TABLE');
+  assert.strictEqual(tables.length, 1, 'the stats panel renders one table');
+
   console.log('app smoke checks passed');
 })().catch(e => { console.error(e); process.exit(1); });

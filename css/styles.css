@@ -207,6 +207,24 @@ p.k,.card>.k:not(h2),.err+.k{font:inherit;text-transform:none;letter-spacing:0}
 @media(forced-colors:active){.seg,.jump-btn{border:2px solid ButtonText}.seg-btn.on{background:Highlight;color:HighlightText}.jump-btn.now{outline-color:Highlight}}
 @media print{.quiz-nav,.seg,.one-meta{display:none}.item.one{border:0;box-shadow:none;padding:0}}
 
+/* Per-type stats at the end of a quiz. The table stays inside the card on a phone; the type and
+   answered count share a cell so the remaining three columns fit. */
+.stats{margin-top:16px}
+.stats-lede{margin:2px 0 8px}
+.stats-wrap{overflow-x:auto}
+.stats-table{width:100%;border-collapse:collapse;font-size:.92rem}
+.stats-table th,.stats-table td{padding:10px 6px;border-top:1px solid var(--line);vertical-align:top;text-align:left}
+.stats-table thead th{font:600 .78rem/1.2 ui-monospace,Menlo,monospace;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);border-top:0}
+.stats-table tbody th{width:55%;font-weight:600}
+.stats-table .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.stats-table .due,.stats-table .flag{color:var(--acc);font-weight:700}
+.stats-table tr.all th,.stats-table tr.all td{border-top:2px solid var(--edge);font-weight:700}
+.stats-sub{display:block;margin-top:2px;font-size:.78rem;font-weight:400;color:var(--mut)}
+.stats-note{margin:8px 0 0;color:var(--mut);font-size:.82rem}
+@media(max-width:520px){.stats-table{font-size:.86rem}.stats-table th,.stats-table td{padding:9px 4px}.stats-table tbody th{width:50%}.stats-table .num{font-size:.9rem}}
+@media(forced-colors:active){.stats-table th,.stats-table td{border-color:CanvasText}}
+@media print{.stats{display:none}}
+
 /* Saved reviewers: same box shape every time. Details on top, buttons share one row at the bottom. */
 .list{align-items:stretch!important}
 .card.saved{display:flex;flex-direction:column;gap:12px;margin:0 0 16px;overflow-wrap:anywhere}

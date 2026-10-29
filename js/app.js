@@ -1166,6 +1166,26 @@ const TABS = { mc: 'Multiple choice', id: 'Identification', enum: 'Enumeration',
 // A partial enumeration answer earns its fraction; every other type is all or nothing.
 const credit = a => (a && typeof a.part === 'number' ? a.part : a && a.ok ? 1 : 0);
 const scoreText = n => String(Math.round(n * 10) / 10);
+// Per-type progress for the quiz's Stats panel. Accuracy uses the same partial-credit score as the
+// quiz; due follows the same plan as Review due; flags only count items still in the reviewer.
+function reviewerStats(r) {
+  const due = new Set(dueIds(r)), flags = new Set(r.flags || []);
+  const row = (key, label, items) => {
+    const answered = items.filter(it => r.ans[it.id]);
+    const creditSum = answered.reduce((n, it) => n + credit(r.ans[it.id]), 0);
+    return {
+      key, label, total: items.length, answered: answered.length,
+      accuracy: answered.length ? Math.round(creditSum / answered.length * 100) : null,
+      due: items.filter(it => due.has(it.id)).length,
+      flagged: items.filter(it => flags.has(it.id)).length
+    };
+  };
+  const types = Object.keys(TABS).map(k => {
+    const items = r.items.filter(it => it.type === k);
+    return items.length ? row(k, TABS[k], items) : null;
+  }).filter(Boolean);
+  return { types, all: row('all', 'All questions', r.items) };
+}
 let lastUndo = null;
 // One-question mode: chosen explicitly (and remembered) or defaulted by width. A stored choice wins,
 // so a student who prefers the list on a phone keeps it after the first tap.
@@ -1498,6 +1518,28 @@ function answer(it, val) {
   const fb = document.getElementById('fb-' + it.id); if (fb) fb.focus({ preventScroll: true });
 }
 
+function statsPanel(r) {
+  const s = reviewerStats(r);
+  const cell = (value, cls) => h('td', { class: 'num' + (cls ? ' ' + cls : '') }, value);
+  const row = t => h('tr', { class: t.key === 'all' ? 'all' : null },
+    h('th', { scope: 'row' }, t.label, h('span', { class: 'stats-sub' }, t.answered + ' of ' + t.total + ' answered')),
+    cell(t.accuracy == null ? '—' : t.accuracy + '%'),
+    cell(t.due, t.due ? 'due' : null),
+    cell(t.flagged, t.flagged ? 'flag' : null));
+  return h('section', { class: 'card stats', id: 'stats', 'aria-labelledby': 'stats-title' },
+    h('h2', { class: 'k', id: 'stats-title' }, 'Stats'),
+    h('p', { class: 'k stats-lede' }, 'By question type'),
+    h('div', { class: 'stats-wrap' },
+      h('table', { class: 'stats-table' },
+        h('caption', { class: 'sr' }, 'Accuracy, due and flagged counts by question type'),
+        h('thead', null, h('tr', null,
+          h('th', { scope: 'col' }, 'Type'),
+          h('th', { scope: 'col', class: 'num' }, 'Accuracy'),
+          h('th', { scope: 'col', class: 'num' }, 'Due'),
+          h('th', { scope: 'col', class: 'num' }, 'Flagged'))),
+        h('tbody', null, s.types.map(row), s.types.length > 1 && row(s.all)))),
+    h('p', { class: 'stats-note' }, 'Accuracy uses partial enumeration credit. Due includes items scheduled for today or earlier; an item with no schedule is due now.'));
+}
 function quizItem(r, it, idx, one) {
   const a = r.ans[it.id], over = !!(timed && timed.over && timed.tab === tab), flagged = (r.flags || []).includes(it.id);
   return h('div', { class: 'item' + (one ? ' one' : '') },
@@ -1595,7 +1637,8 @@ function quiz() {
             h('button', { class: 'btn alt', disabled: quizIndex >= mine.length - 1 ? '' : null, onclick: nextQuiz }, 'Next →')))
       : h('div', { class: 'items' }, mine.map((it, idx) => quizItem(r, it, idx, false))),
     (done || over) && h('div', { class: 'card done', role: 'status' }, h('b', null, (over && !done ? 'Time is up. ' : '') + 'Part score: ' + scoreText(partGood) + ' of ' + mine.length + ' correct (' + Math.round(partGood / mine.length * 100) + '%)'),
-      h('p', null, partGood === mine.length ? 'Perfect. Try another part or the flashcards.' : 'Use "Retry missed" at the top to practice the ones you got wrong.')));
+      h('p', null, partGood === mine.length ? 'Perfect. Try another part or the flashcards.' : 'Use "Retry missed" at the top to practice the ones you got wrong.')),
+    statsPanel(r));
   flashing = false;
   draw(node, 'quiz');
 }

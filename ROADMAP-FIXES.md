@@ -7,9 +7,9 @@ diagram practice that is still a demo.
 `ROADMAP.md` already covers diagram reviewers in detail (R1.1–R3.2). This document covers
 everything else and adopts those items by reference instead of designing them twice.
 
-Status: **Phases 0–4 are committed.** Phase 6's one-question-at-a-time slice is implemented in
-the working tree, uncommitted. Phase 5 and the rest of Phase 6 remain planned. Nothing else is
-committed without the owner's approval.
+Status: **Phases 0–4 and the Phase 6 one-question quiz are committed (`9c857fc`).** The
+Phase 6 question-type stats panel is implemented in the working tree, uncommitted. Phase 5 and
+the rest of Phase 6 remain planned. Nothing else is committed without the owner's approval.
 
 ## What a user complained about, and where it is fixed
 
@@ -47,8 +47,13 @@ committed without the owner's approval.
 - **Phase 6 slice:** the quiz opens in One mode below 520 px, with a remembered One/List switch,
   a position bar, a sticky Previous / Jump / Next bar, and a colour-coded Jump grid. Items can be
   flagged; flags are validated on import, pruned with a removed item, and carried through Shuffle.
-- **Not started:** Phase 5 (diagram practice) and the rest of Phase 6 (stats, custom timer, one app
-  name, recitation controls, trash for deleted reviewers).
+- **Phase 6 stats slice:** an end-of-quiz panel shows accuracy, answered, due and flagged counts
+  for every question type, plus an all-questions total. Accuracy uses the partial-credit score;
+  due uses the same schedule as Review due. Section/page stats, weak-item lists, time per item and
+  trends are **not** done.
+- **Not started:** Phase 5 (diagram practice) and the rest of Phase 6 (section stats, weak-item
+  lists, time and trends, custom timer, one app name, recitation controls, trash for deleted
+  reviewers).
 
 ## Baseline (before Phase 0)
 
