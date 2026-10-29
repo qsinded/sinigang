@@ -683,6 +683,63 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   assert.match(screenText(appEl), /50%/, 'the panel shows the partial-credit percentage');
   const tables = find(appEl, e => e.tagName === 'TABLE');
   assert.strictEqual(tables.length, 1, 'the stats panel renders one table');
+  ctx.__stats = statsR;
+  vm.runInContext('R = [__stats];', ctx);
+  ctx.home();
+  assert.match(screenText(appEl), /6 items/);
+  assert.match(screenText(appEl), /3 answered · 50% accuracy/, 'the saved card shows answered and accuracy');
+  assert.match(screenText(appEl), /5 due/, 'the saved card shows due items');
+  assert.match(screenText(appEl), /2 flagged/, 'the saved card shows flagged items');
+  const homeCards = find(appEl, e => String(e.className).includes('card saved'));
+  assert.strictEqual(homeCards.length, 1, 'the saved reviewer card renders the compact summary');
+
+  // 18. Section accuracy follows the page/slide tags, and the home card names the weakest section.
+  const sectionR = ctx.cleanReviewer({
+    title: 'Sections',
+    src: ['The CPU runs instructions.', 'RAM holds running programs.', 'A router forwards data.'],
+    tags: ['page 1', 'page 1', 'page 2'],
+    items: [
+      { id: 'p0', type: 'id', q: 'Which part runs instructions?', answer: 'CPU', exp: '(page 1) The CPU runs instructions.' },
+      { id: 'p1', type: 'id', q: 'Which part holds running programs?', answer: 'RAM', exp: '(page 1) RAM holds running programs.' },
+      { id: 'p2', type: 'id', q: 'Which part forwards data?', answer: 'router', exp: '(page 2) A router forwards data.' }
+    ],
+    ans: {
+      p0: { val: 'CPU', ok: true, exp: '(page 1) The CPU runs instructions.' },
+      p1: { val: 'wrong', ok: false, exp: '(page 1) RAM holds running programs.' },
+      p2: { val: 'wrong', ok: false, exp: '(page 2) A router forwards data.' }
+    },
+    flags: ['p1'],
+    plan: { exam: '', srs: { p2: { box: 4, due: ctx.todayNumber() + 16 } } }
+  });
+  const sectionStats = ctx.reviewerSections(sectionR);
+  assert.deepStrictEqual(plain(sectionStats.map(s => s.label)), ['page 1', 'page 2'], 'sections keep source order');
+  assert.deepStrictEqual(plain(sectionStats.map(s => s.accuracy)), [50, 0], 'section accuracy uses answered items');
+  assert.strictEqual(sectionStats[0].due, 2, 'unscheduled page-one items are due');
+  assert.strictEqual(sectionStats[1].due, 0, 'a future page-two item is not due');
+  assert.strictEqual(sectionStats[0].flagged, 1);
+  assert.strictEqual(sectionStats[1].flagged, 0);
+  assert.deepStrictEqual(plain(ctx.reviewerSections(statsR).map(s => s.label)), ['No section'], 'items without a tag stay unsectioned');
+  const fallbackR = ctx.cleanReviewer({
+    title: 'Fallback',
+    src: ['A nucleus stores DNA.', 'A ribosome builds proteins.', 'A membrane controls entry.'],
+    tags: ['slide 4', 'slide 4', 'slide 4'],
+    items: [
+      { id: 'f0', type: 'id', q: 'Which part stores DNA?', answer: 'nucleus', exp: 'A nucleus stores DNA.' },
+      { id: 'f1', type: 'id', q: 'Which part builds proteins?', answer: 'ribosome', exp: 'A ribosome builds proteins.' },
+      { id: 'f2', type: 'id', q: 'Which part controls entry?', answer: 'membrane', exp: 'A membrane controls entry.' }
+    ]
+  });
+  assert.strictEqual(ctx.reviewerSections(fallbackR)[0].label, 'slide 4', 'an item without a tag uses its source line');
+  ctx.__section = sectionR;
+  vm.runInContext('R = [__section];', ctx);
+  ctx.open(sectionR);
+  assert.match(screenText(appEl), /By page or slide/);
+  assert.match(screenText(appEl), /page 1/);
+  assert.match(screenText(appEl), /page 2/);
+  const sectionTables = find(appEl, e => e.tagName === 'TABLE');
+  assert.strictEqual(sectionTables.length, 2, 'the panel shows type and section tables');
+  ctx.home();
+  assert.match(screenText(appEl), /Weakest page 2 · 0%/, 'the saved card names the weakest answered section');
 
   console.log('app smoke checks passed');
 })().catch(e => { console.error(e); process.exit(1); });

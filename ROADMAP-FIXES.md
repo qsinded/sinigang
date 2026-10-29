@@ -8,8 +8,8 @@ diagram practice that is still a demo.
 everything else and adopts those items by reference instead of designing them twice.
 
 Status: **Phases 0–4 and the Phase 6 one-question quiz are committed (`9c857fc`).** The
-Phase 6 question-type stats panel is implemented in the working tree, uncommitted. Phase 5 and
-the rest of Phase 6 remain planned. Nothing else is committed without the owner's approval.
+Phase 6 type-and-section stats panel is implemented in the working tree, uncommitted. Phase 5
+and the rest of Phase 6 remain planned. Nothing else is committed without the owner's approval.
 
 ## What a user complained about, and where it is fixed
 
@@ -48,12 +48,12 @@ the rest of Phase 6 remain planned. Nothing else is committed without the owner'
   a position bar, a sticky Previous / Jump / Next bar, and a colour-coded Jump grid. Items can be
   flagged; flags are validated on import, pruned with a removed item, and carried through Shuffle.
 - **Phase 6 stats slice:** an end-of-quiz panel shows accuracy, answered, due and flagged counts
-  for every question type, plus an all-questions total. Accuracy uses the partial-credit score;
-  due uses the same schedule as Review due. Section/page stats, weak-item lists, time per item and
-  trends are **not** done.
-- **Not started:** Phase 5 (diagram practice) and the rest of Phase 6 (section stats, weak-item
-  lists, time and trends, custom timer, one app name, recitation controls, trash for deleted
-  reviewers).
+  for every question type, plus an all-questions total and a second table by page or slide when the
+  source kept those tags. Each saved reviewer card on the home screen carries the compact summary
+  and names its weakest answered section. Accuracy uses the partial-credit score; due uses the same
+  schedule as Review due. Weak-item lists, time per item and trends are **not** done.
+- **Not started:** Phase 5 (diagram practice) and the rest of Phase 6 (weak-item lists, time and
+  trends, custom timer, one app name, recitation controls, trash for deleted reviewers).
 
 ## Baseline (before Phase 0)
 
