@@ -177,13 +177,13 @@ p.k,.card>.k:not(h2),.err+.k{font:inherit;text-transform:none;letter-spacing:0}
    colour-coded jump grid. The bar sits above the fixed focus timer, never over it. */
 .quiz-head{justify-content:space-between;margin:4px 0 2px}
 .seg{display:inline-flex;border:1.5px solid var(--edge);border-radius:10px;overflow:hidden;background:var(--card)}
-.seg-btn{min-height:40px;padding:6px 14px;border:0;background:none;color:var(--mut);font:600 .9rem/1 system-ui,sans-serif;cursor:pointer}
+.seg-btn{min-height:44px;padding:6px 14px;border:0;background:none;color:var(--mut);font:600 .9rem/1 system-ui,sans-serif;cursor:pointer}
 .seg-btn+.seg-btn{border-left:1px solid var(--line)}
 .seg-btn.on{background:var(--ink);color:var(--bg)}
 .one-meta{margin:6px 0 12px}
 .item.one{margin:10px 0 12px;padding:18px;border:1px solid var(--line);border-radius:14px;background:var(--card);box-shadow:0 1px 2px var(--shadow),0 8px 22px var(--shadow)}
 .item.one .q{font-size:1.1rem;line-height:1.45}
-.flag-btn{padding:6px 10px;min-height:38px;font-size:.85rem;white-space:nowrap}
+.flag-btn{padding:6px 10px;min-height:44px;font-size:.85rem;white-space:nowrap}
 .flag-btn[aria-pressed=true]{border-color:var(--acc);color:var(--acc);background:color-mix(in srgb,var(--acc) 10%,transparent)}
 .quiz-nav{position:sticky;bottom:calc(70px + env(safe-area-inset-bottom));z-index:5;display:flex;gap:8px;align-items:center;margin-top:8px;padding:10px 0;background:var(--bg);border-top:1px solid var(--line)}
 .quiz-nav .btn{min-height:46px}
@@ -232,3 +232,18 @@ p.k,.card>.k:not(h2),.err+.k{font:inherit;text-transform:none;letter-spacing:0}
 .card.saved .actions .btn{flex:0 0 auto;padding:6px 14px;font-size:.9rem}
 .list{grid-auto-rows:1fr}
 .card.saved{min-height:7.5rem}
+
+/* Phones: an idle timer is only a small corner button, so the question and the Previous/Next bar get the screen. */
+@media(max-width:520px){
+  .focusbar[data-phase=idle]{top:calc(10px + env(safe-area-inset-top));bottom:auto;left:auto;right:12px;padding:0;gap:6px;border:1px solid var(--line);border-radius:12px;background:var(--card);overflow:hidden;box-shadow:0 2px 8px var(--shadow)}
+  .focusbar[data-phase=idle] .focus-phase,.focusbar[data-phase=idle] .focus-count,.focusbar[data-phase=idle] .focus-progress{display:none}
+  .focusbar[data-phase=idle] .focus-time{min-width:0;padding-left:12px}
+  .focusbar[data-phase=idle] .btn{border-radius:0 10px 10px 0}
+  body:has(.focusbar[data-phase=idle]){padding-bottom:0}
+  body:has(.focusbar[data-phase=idle]) .quiz-nav{bottom:env(safe-area-inset-bottom)}
+}
+
+/* On-page confirm and text boxes (replace confirm() and prompt()) */
+.veil{position:fixed;inset:0;z-index:100;display:grid;place-items:center;padding:16px;background:color-mix(in srgb,var(--ink) 55%,transparent)}
+.modal{width:100%;max-width:26rem;display:grid;gap:12px;padding:20px;border:1px solid var(--line);border-radius:14px;background:var(--card);color:var(--ink);box-shadow:0 12px 40px var(--shadow)}
+.modal p{margin:0}

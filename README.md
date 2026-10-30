@@ -1,4 +1,4 @@
-# Reviewer Generator
+# SINEGENG
 
 Turns PDF, PowerPoint, Word and text notes into practice questions, flashcards and timed drills,
 and a labeled diagram image into identification questions. Everything runs in the browser: files

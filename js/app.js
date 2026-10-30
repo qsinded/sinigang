@@ -46,12 +46,44 @@ app.before(h('header', { class: 'site' }, h('a', { class: 'skip', href: '#app' }
 app.after(h('footer', { class: 'site' }, 'Works offline. Progress is saved on this device only. ',
   h('span', { class: 'keys' }, 'Keys: 1–4 pick an answer, Ctrl+Enter checks a list, ← → cards, Space flips or pauses, Esc stops the voice.')));
 // A new screen gets its own page title and focus on its heading, so screen readers hear the change. Redraws of the same screen keep focus alone.
+// The home heading is the app name, so the tab must not say it twice.
+const BRAND = 'SINEGENG';
+function pageTitle(h1) { return h1 && h1 !== BRAND ? h1 + ' · ' + BRAND : BRAND; }
 let lastScreen = '';
+// On-page replacement for confirm() and prompt(): phone viewers and webviews block those, so the button did nothing.
+function dialog(build) {
+  return new Promise(resolve => {
+    const back = document.activeElement, veil = h('div', { class: 'veil' });
+    const close = v => { veil.remove(); if (back && back.focus) back.focus(); resolve(v); };
+    const box = build(close);
+    veil.append(box); document.body.append(veil);
+    veil.onkeydown = e => {
+      if (e.key === 'Escape') { e.preventDefault(); close(null); }
+      if (e.key === 'Tab') { // keep keyboard focus inside the box
+        const f = [...box.querySelectorAll('input,button')], i = f.indexOf(document.activeElement);
+        if (e.shiftKey ? i <= 0 : i === f.length - 1) { e.preventDefault(); f[e.shiftKey ? f.length - 1 : 0].focus(); }
+      }
+    };
+    const first = box.querySelector('[data-first]'); if (first) first.focus();
+  });
+}
+function ask(message, ok = 'OK') {
+  return dialog(close => h('div', { class: 'modal', role: 'alertdialog', 'aria-modal': 'true', 'aria-label': message },
+  h('p', null, message),
+  h('div', { class: 'row' }, h('button', { class: 'btn', onclick: () => close(true) }, ok), h('button', { class: 'btn alt', 'data-first': '', onclick: () => close(false) }, 'Cancel')))).then(v => v === true);
+}
+function askText(message, value = '') {
+  return dialog(close => {
+  const input = h('input', { type: 'text', 'aria-label': message, value, 'data-first': '', onkeydown: e => { if (e.key === 'Enter') close(input.value); } });
+  return h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': message }, h('p', null, message), input,
+    h('div', { class: 'row' }, h('button', { class: 'btn', onclick: () => close(input.value) }, 'Save'), h('button', { class: 'btn alt', onclick: () => close(null) }, 'Cancel')));
+  });
+}
 function draw(node, screen) {
   const y = scrollY, first = !lastScreen; app.replaceChildren(node); scrollTo(0, y);
   if (!screen || screen === lastScreen) return;
   lastScreen = screen;
-  const t = node.querySelector('h1'); document.title = t && t.textContent !== 'SINEGENG' ? t.textContent + ' · SINEGENG' : 'SINEGENG';
+  const t = node.querySelector('h1'); document.title = pageTitle(t && t.textContent);
   if (t && !first) { t.tabIndex = -1; t.focus(); }
 }
 const bar = (pct, label) => h('div', { class: 'bar', role: 'progressbar', 'aria-label': label, 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': Math.round(pct) }, h('i', { style: 'width:' + pct + '%' }));
@@ -471,7 +503,7 @@ async function importFile(f) {
     for (const nr of reviewers) {
       const dup = R.find(r => sameReviewer(r, nr));
       // A duplicate is never created silently: replacing carries the old progress onto the new copy.
-      if (dup && confirm('A reviewer with the same title and questions already exists ("' + dup.title + '"). Replace it and keep its progress? Choose Cancel to keep both.')) {
+      if (dup && await ask('A reviewer with the same title and questions already exists ("' + dup.title + '"). Replace it and keep its progress? Cancel keeps both.', 'Replace')) {
         const kept = carryProgress(dup.items, nr.items, { ans: dup.ans, known: dup.flashKnown || [], learn: dup.flashLearn || [], srs: planOf(dup).srs || {}, flags: dup.flags || [] });
         nr.ans = kept.ans; nr.flashKnown = [...kept.known]; nr.flashLearn = [...kept.learn]; nr.flags = [...kept.flags];
         nr.plan = planOf(nr); nr.plan.srs = kept.srs;
@@ -641,11 +673,11 @@ function saveEditor() {
   editTarget = null; editDraft = null; editErr = '';
   t.back();
 }
-function deleteFromEditor() {
+async function deleteFromEditor() {
   const t = editTarget;
   if (!t) return;
   if (t.items.length <= 3) { editErr = 'Keep at least three questions.'; itemEditor(); return; }
-  if (!confirm('Delete this question?')) return;
+  if (!await ask('Delete this question?', 'Delete')) return;
   const it = t.items[t.index];
   if (t.reviewer) removeItem(t.reviewer, it);
   else {
@@ -1050,6 +1082,7 @@ function focusRender() {
   focusStopBtn.setAttribute('aria-label', phase === 'break' ? 'Skip the break' : 'Stop the focus block');
   focusStopBtn.hidden = phase === 'idle';
   focusBar.dataset.paused = focus.running ? '0' : '1';
+  focusBar.dataset.phase = phase; // lets the phone layout shrink an idle timer to a small corner button
   focusBar.setAttribute('aria-label', 'Focus timer, ' + (phase === 'idle' ? 'ready' : phase === 'break' ? 'break' : 'focus') + (phase !== 'idle' && !focus.running ? ', paused' : ''));
   focusRenderTick();
 }
@@ -1113,7 +1146,7 @@ function home() {
   const n = note; note = '';
   const t = document.getElementById('title'), tv = t ? t.value : '';
   const node = h('div', null,
-    h('h1', null, 'Reviewer Generator'),
+    h('h1', null, BRAND),
     h('p', { class: 'sub' }, 'Pick a PDF, PowerPoint (.pptx), Word (.docx) or text file. The reviewer is built on this device, no internet needed.'),
     warn(),
     R.length > 0 && planCard(),
@@ -1157,7 +1190,7 @@ function home() {
         dueCount(r) > 0 && h('button', { class: 'btn', onclick: () => { open(r); startFlash('due', optCap); } }, 'Review ' + dueCount(r)),
         h('button', { class: 'btn alt', onclick: () => open(r) }, 'Open'),
         h('button', { class: 'btn alt', onclick: () => exportAll(r) }, 'Save file'),
-        h('button', { class: 'btn alt', onclick: () => { if (confirm('Delete "' + r.title + '"?')) deleteReviewer(r); } }, 'Delete')));
+        h('button', { class: 'btn alt', onclick: async () => { if (await ask('Delete "' + r.title + '"?', 'Delete')) deleteReviewer(r); } }, 'Delete')));
   fill(); cur = null; draw(node, 'home'); if (n) say(n);
   const nt = document.getElementById('title'); if (nt) nt.value = tv;
 }
@@ -1465,8 +1498,8 @@ function recite() {
 let timed = null, tick = 0;
 const fmt = ms => { const s = Math.ceil(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 function stopTimer() { clearInterval(tick); timed = null; }
-function startTimed(list) {
-  if (list.some(i => cur.ans[i.id]) && !confirm('Timed practice clears your answers for this part. Continue?')) return;
+async function startTimed(list) {
+  if (list.some(i => cur.ans[i.id]) && !await ask('Timed practice clears your answers for this part. Continue?', 'Continue')) return;
   list.forEach(i => delete cur.ans[i.id]); wipe(); save(); stopTimer(); quizIndex = 0;
   timed = { tab, end: Date.now() + list.length * 30000, over: false };
   tick = setInterval(() => {
@@ -1576,7 +1609,7 @@ function quiz() {
   const missed = mine.filter(i => r.ans[i.id] && !r.ans[i.id].ok);
   const done = mine.length > 0 && mine.every(i => r.ans[i.id]), partGood = good(mine);
   const over = !!(timed && timed.over && timed.tab === tab), running = !!(timed && !timed.over && timed.tab === tab);
-  const rename = () => { const t = prompt('New title', r.title), v = t && t.trim().slice(0, 120); if (v) { r.title = v; save(); quiz(); } };
+  const rename = async () => { const t = await askText('New title', r.title), v = t && t.trim().slice(0, 120); if (v) { r.title = v; save(); quiz(); } };
   const clear = list => { list.forEach(i => delete r.ans[i.id]); quizIndex = 0; save(); quiz(); };
   const view = viewMode();
   quizIndex = Math.max(0, Math.min(quizIndex, Math.max(0, mine.length - 1)));
@@ -1588,18 +1621,8 @@ function quiz() {
         h('button', { class: 'seg-btn' + (view === 'one' ? ' on' : ''), 'aria-pressed': view === 'one' ? 'true' : 'false', onclick: () => setQuizView('one') }, 'One'),
         h('button', { class: 'seg-btn' + (view === 'list' ? ' on' : ''), 'aria-pressed': view === 'list' ? 'true' : 'false', onclick: () => setQuizView('list') }, 'List'))),
     h('h1', null, r.title),
-    h('p', { class: 'sub' }, 'Answer each item. You get the result and an explanation right away. Missed items stay marked so you can retry them.'),
+    view !== 'one' && h('p', { class: 'sub' }, 'Answer each item. You get the result and an explanation right away. Missed items stay marked so you can retry them.'),
     warn(),
-    h('div', { class: 'row plan' },
-      h('label', null, 'Exam date ', h('input', { type: 'date', 'aria-label': 'Exam date for this reviewer', value: (r.plan && r.plan.exam) || '', onchange: e => {
-        const v = e.target.value;
-        r.plan = planOf(r);
-        r.plan.exam = validExamDate(v) ? v : '';
-        if (v && !validExamDate(v)) e.target.value = '';
-        save(); quiz();
-      } })),
-      examDaysLeft(r.plan && r.plan.exam) !== null && h('span', { class: 'k' }, examText(r.plan.exam)),
-      h('button', { class: 'btn alt', disabled: dueCount(r) ? null : '', onclick: () => startFlash('due', optCap) }, 'Review due (' + dueCount(r) + ')')),
     view === 'one'
       ? h('div', { class: 'row one-meta' }, h('span', { class: 'mono big' }, 'Q ' + (quizIndex + 1) + ' of ' + mine.length),
           h('span', { class: 'k' }, scoreText(total) + '/' + n + ' correct'),
@@ -1611,13 +1634,23 @@ function quiz() {
       TABS[k] + ' ', h('span', { class: 'k' }, scoreText(good(r.items.filter(i => i.type === k))) + '/' + r.items.filter(i => i.type === k).length))),
       h('button', { class: 'tab', onclick: () => startFlash('all') }, '✦ Flipcards')),
     h('div', { class: 'row' },
-      h('button', { class: 'btn', disabled: missed.length ? null : '', onclick: () => clear(missed) }, 'Retry missed (' + missed.length + ')'),
-      h('button', { class: 'btn alt', onclick: () => clear(mine) }, 'Reset this part')),
+      h('button', { class: 'btn alt', disabled: dueCount(r) ? null : '', onclick: () => startFlash('due', optCap) }, 'Review due (' + dueCount(r) + ')'),
+      h('button', { class: 'btn', disabled: missed.length ? null : '', onclick: () => clear(missed) }, 'Retry missed (' + missed.length + ')')),
+    h('details', { class: 'more', open: running ? '' : null }, h('summary', null,
+      h('span', null, h('b', null, 'More options'), h('span', { class: 'more-hint' }, 'Exam date, recite, timed, shuffle, print'))),
+    h('div', { class: 'row plan' },
+      h('label', null, 'Exam date ', h('input', { type: 'date', 'aria-label': 'Exam date for this reviewer', value: (r.plan && r.plan.exam) || '', onchange: e => {
+        const v = e.target.value;
+        r.plan = planOf(r);
+        r.plan.exam = validExamDate(v) ? v : '';
+        if (v && !validExamDate(v)) e.target.value = '';
+        save(); quiz();
+      } })),
+      examDaysLeft(r.plan && r.plan.exam) !== null && h('span', { class: 'k' }, examText(r.plan.exam))),
     h('div', { class: 'row', style: 'margin-top:8px' },
+      h('button', { class: 'btn alt', onclick: () => clear(mine) }, 'Reset this part'),
       h('button', { class: 'btn alt', onclick: openRecite }, '🎧 Recite'),
       h('button', { class: 'btn alt', onclick: running ? () => { stopTimer(); quiz(); } : () => startTimed(mine) }, running ? 'Stop timer' : 'Timed practice (' + fmt(mine.length * 30000) + ')')),
-    h('details', { class: 'more', open: running ? '' : null }, h('summary', null,
-      h('span', null, h('b', null, 'More options'), h('span', { class: 'more-hint' }, 'Add, shuffle, rename, print'))),
       h('div', { class: 'row' },
         h('button', { class: 'btn alt', onclick: shuffleAll }, r.src ? 'Shuffle · new questions' : 'Shuffle'),
         h('button', { class: 'btn alt', onclick: rename }, 'Rename'),

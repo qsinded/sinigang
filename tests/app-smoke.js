@@ -116,6 +116,24 @@ ctx.home();
 assert.match(screenText(appEl), /1-day streak/, 'home shows the streak after studying');
 assert.doesNotMatch(screenText(appEl), /Study today/, 'no study button once nothing is due');
 
+// 1d. the tab title never repeats the app name, and the on-page confirm replaces confirm()/prompt()
+assert.strictEqual(ctx.pageTitle('SINEGENG'), 'SINEGENG');
+assert.strictEqual(ctx.pageTitle('notes'), 'notes · SINEGENG');
+assert.strictEqual(ctx.pageTitle(''), 'SINEGENG');
+const clickIn = (el, label) => { const f = n => n.onclick && (n.children || []).some(c => c.textContent === label) ? n : (n.children || []).map(f).find(Boolean); return f(el); };
+(async () => {
+  const yes = ctx.ask('Delete?', 'Delete'), box = document.body.children[document.body.children.length - 1];
+  assert.strictEqual(box.className, 'veil', 'the box is on the page');
+  clickIn(box, 'Delete').onclick();
+  assert.strictEqual(await yes, true, 'the confirm button answers yes');
+  const no = ctx.ask('Delete?', 'Delete'), box2 = document.body.children[document.body.children.length - 1];
+  clickIn(box2, 'Cancel').onclick();
+  assert.strictEqual(await no, false, 'Cancel answers no');
+  const text = ctx.askText('New title', 'Old'), box3 = document.body.children[document.body.children.length - 1];
+  clickIn(box3, 'Cancel').onclick();
+  assert.strictEqual(await text, null, 'Cancel gives no text');
+})().catch(e => { console.error(e); process.exit(1); });
+
 // 2. source text is capped before it is stored
 const bulky = Array.from({ length: 2000 }, (_, i) => 'line ' + i + ' ' + 'x'.repeat(90));
 const capped = ctx.capSrc(bulky);
@@ -586,7 +604,7 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   assert.strictEqual(ctx.sameReviewer(imp, ctx.cleanReviewer({ ...base, title: 'group notes' })), true, 'the same questions and title are the same reviewer');
   assert.strictEqual(ctx.sameReviewer(imp, sortA), false, 'a different title is a different reviewer');
   vm.runInContext('R = []', ctx);
-  sandbox.confirm = () => true;
+  const realAsk = ctx.ask; ctx.ask = async () => true; // the on-page box needs a tap; the replace-duplicate path is tested with it answered yes
   const backup = JSON.stringify({ version: 2, reviewers: [imp], images: {} });
   await ctx.importFile({ text: async () => backup });
   const imported = vm.runInContext('R[0]', ctx);
