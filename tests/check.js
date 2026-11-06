@@ -1,6 +1,19 @@
 // Run: node tests/check.js   (Node 18+, no packages). Checks the generator and the .pptx/.docx readers.
 const assert = require('assert'), zlib = require('zlib');
 const { generate, enumCheck, idOk, norm, itemKey, carryProgress, ITEM_CAP } = require('../js/reviewer-generator.js');
+
+// Professor logic: the learning objectives decide what matters; jumbled text is never asked.
+{
+  const mod = ['Learning Objectives', '- Explain what a kernel does', '- Describe how a scheduler works', '- Define a process',
+    'Kernel: the core of the OS that talks to the hardware.', 'Scheduler: the part of the OS that decides which process runs next.',
+    'Process: a program that is currently running.', 'Cache: a small fast memory placed close to the CPU.',
+    'Latency: the time a packet takes to travel from sender to receiver.', 'Pager: a thing that is ## @@ x y z q w e r t y ~~ !! stuff.'];
+  for (let k = 0; k < 100; k++) {
+    const top = generate(mod, mod.map(() => 'page 1'), { max: 3 });
+    assert.ok(top.length === 3 && top.every(x => /kernel|scheduler|process/i.test(x.exp)), 'the cap keeps the objective terms: ' + top.map(x => x.exp));
+    generate(mod, mod.map(() => 'page 1')).forEach(x => assert.ok(!/Pager|Enumerate: By the end|## @@/.test(x.q + x.exp), 'jumbled text or the objectives became a question: ' + x.q));
+  }
+}
 const { pptxLines, pptLines, docxLines } = require('../js/pptx-reader.js');
 
 // Minimal zip writer (deflate) so the readers are tested on real zip bytes.

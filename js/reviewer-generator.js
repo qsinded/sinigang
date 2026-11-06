@@ -116,6 +116,16 @@ function statementOk(text) {
 // Outline material (agenda, "Module 2 — ...", "Topics covered") lists what a course covers; it is not a fact to quiz on.
 const OUTLINE = /^(topics?( covered)?|agenda|outline|contents?|overview|objectives?|learning outcomes?|course (outline|map)|schedule|syllabus)$/i;
 const LABEL = /^(module|unit|chapter|lesson|week|day|topic|part|section|session|lecture|step)\s*[\dIVX]+$/i;
+// What a professor tests is stated in the learning objectives ("Explain what a kernel does"). Their lines start with
+// a Bloom verb right under an "Objectives" heading or "...you will be able to:".
+const OBJ_HEAD = /^(?:learning )?(?:objectives?|outcomes?)\b|\bable to\s*:?$/i;
+const BLOOM = /^(?:explain|describe|define|identify|differentiate|distinguish|compare|contrast|apply|list|discuss|understand|analy[sz]e|evaluate|demonstrate|state|recognize|solve|compute|calculate|summari[sz]e|classify|illustrate|outline|relate|use|name)\b/i;
+// Jumbled text (broken PDF columns, symbols, number runs) must not become a question.
+function garbled(s) {
+  const w = s.match(/\S+/g) || [];
+  return !w.length || w.filter(x => /^[A-Za-z]$/.test(x) && !/^[aAI]$/.test(x)).length / w.length > 0.15
+    || s.replace(/[A-Za-z0-9\s.,;:'"()\-\/%]/g, '').length / s.length > 0.15 || /(?:\b\d+(?:\.\d+)?\s+){3,}/.test(s + ' ');
+}
 const STOP = new Set(['AND', 'OR', 'THE', 'IF', 'IN', 'IS', 'IT', 'TO', 'OF', 'NOT', 'FOR', 'ON', 'AS', 'AT', 'BY']);
 // Visible caps, so the interface can say what "All" means instead of silently truncating.
 const ITEM_CAP = { mc: 30, id: 20, tf: 8, enum: 10 };
@@ -128,6 +138,22 @@ function generate(rawLines, tags = [], o = {}) {
   lines.forEach(l => { cnt[l.t] = (cnt[l.t] || 0) + 1; });
   // drop page numbers and running headers/footers
   lines = lines.filter(l => !/^(page\s*)?\d+$/i.test(l.t) && !/^(module|unit|chapter|lesson|week|day|topic|session|lecture)\s*[\dIVX]+\s*[—–:-]/i.test(l.t) && !(cnt[l.t] >= 3 && l.t.length < 60));
+  const objSet = new Set(), objWords = new Set();
+  lines.forEach((l, i) => {
+    if (!OBJ_HEAD.test(l.t)) return;
+    for (let j = i + 1; j < lines.length && BLOOM.test(lines[j].t.replace(BUL, '')); j++) {
+      const t = lines[j].t.replace(BUL, ''); objSet.add(t);
+      (t.toLowerCase().match(/[a-z0-9]{2,}/g) || []).forEach(x => objWords.add(x));
+    }
+  });
+  // How much a professor would care about a term: named in the objectives, repeated through the notes, or a heading.
+  const flat = lines.map(l => l.t).join('\n').toLowerCase();
+  const heads = lines.filter(l => l.t.length < 50 && !/[.!?:,;]$/.test(l.t)).map(l => l.t.toLowerCase());
+  const score = term => {
+    const t = String(term).toLowerCase(), esc = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const times = (flat.match(new RegExp('\\b' + esc + '\\b', 'g')) || []).length;
+    return ((t.match(/[a-z0-9]{2,}/g) || []).some(w => objWords.has(w)) ? 3 : 0) + Math.max(0, Math.min(times - 1, 3)) + (heads.some(h => new RegExp('\\b' + esc + '\\b').test(h)) ? 2 : 0);
+  };
   const tagOf = new Map(), ctxOf = new Map();
   let sect = ''; // nearest heading above the line, shown as context in the question
   const note = (s, g) => { if (g && !tagOf.has(s)) tagOf.set(s, g); if (!ctxOf.has(s)) ctxOf.set(s, sect); return s; };
@@ -135,7 +161,7 @@ function generate(rawLines, tags = [], o = {}) {
 
   const sents = [], enums = [];
   let para = '', paraTag = '', hdr = null, hdrTag = '', items = [];
-  const flushList = () => { if (hdr && items.length >= 3 && !OUTLINE.test(hdr.trim()) && !LOW.test(hdr.trim())) enums.push({ hdr, items: items.map(clean).filter(Boolean), src: note(hdr + ': ' + items.join(', '), hdrTag) }); hdr = null; items = []; };
+  const flushList = () => { if (hdr && items.length >= 3 && !OUTLINE.test(hdr.trim()) && !LOW.test(hdr.trim()) && !OBJ_HEAD.test(hdr.trim())) enums.push({ hdr, items: items.map(clean).filter(Boolean), src: note(hdr + ': ' + items.join(', '), hdrTag) }); hdr = null; items = []; };
   const flushPara = () => { if (para) para.split(/(?<=[.!?])\s+(?=[A-Z".])/).forEach(s => sents.push(note(s.trim(), paraTag))); para = ''; };
 
   for (const { t: l, g } of lines) {
@@ -163,6 +189,7 @@ function generate(rawLines, tags = [], o = {}) {
   const defs = [], seen = new Set(), seenBody = new Set(), used = new Set(), seenEnum = new Set();
   for (const s of sents) {
     if (used.has(s) || s.length < 25 || s.length > 260 || OUTLINE.test((ctxOf.get(s) || '').trim())) continue;
+    if (objSet.has(s) || garbled(s)) continue;
     if (instruction(s)) continue; // "II. Write TRUE if the statement is correct…" is a rubric, not a fact
     // inline list: "Registers: AX, BX, CX and DX."
     const m = s.match(/^(.{6,80}?):\s*(.+)$/);
@@ -181,7 +208,7 @@ function generate(rawLines, tags = [], o = {}) {
         const mask = body.replace(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), '_____');
         // "The CPU is the CPU of the computer" leaves "The _____ of the computer": nothing to answer from.
         if ((mask.replace(/_____/g, ' ').match(/[A-Za-z]{4,}/g) || []).length < 2) continue;
-        defs.push({ kind: 'def', term, body: cap1(body), q: 'Which term is described? ' + cap1(mask), src: s, ctx: ctxOf.get(s) || '' });
+        defs.push({ kind: 'def', w: score(term), term, body: cap1(body), q: 'Which term is described? ' + cap1(mask), src: s, ctx: ctxOf.get(s) || '' });
         used.add(s);
       }
     }
@@ -190,18 +217,19 @@ function generate(rawLines, tags = [], o = {}) {
   const clozes = [], ctoks = new Set();
   for (const s of sents) {
     if (used.has(s) || s.length < 40 || s.length > 220 || OUTLINE.test((ctxOf.get(s) || '').trim())) continue;
-    if (!statementOk(s)) continue; // a blank needs a sentence too
+    if (objSet.has(s) || garbled(s) || !statementOk(s)) continue; // a blank needs a sentence too
     if (instruction(s)) continue;
     // Dates are trivia, and "EAX, EBX, ECX" is a list cut out of its heading, not a sentence to blank.
     if (/\b(?:1\d|20)\d\d(?!\d)/.test(s) || /(?:^|\s)[A-Z][A-Z0-9]+\s*,\s*[A-Z][A-Z0-9]+\b/.test(s)) continue;
     const mm = [...s.matchAll(/(?:^|[\s(])(\.?[A-Z][A-Z0-9_]{1,})\b/g)].map(x => x[1]).find(t => !STOP.has(t) && !ctoks.has(t));
     if (!mm) continue;
+    if (objWords.size && !score(mm)) continue; // with objectives, a loose sentence must tie to one or be repeated
     ctoks.add(mm);
-    clozes.push({ kind: 'cloze', term: mm, q: 'Fill in the blank: ' + clean(s).replace(mm, '_____'), src: s, ctx: ctxOf.get(s) || '' });
+    clozes.push({ kind: 'cloze', w: score(mm), term: mm, q: 'Fill in the blank: ' + clean(s).replace(mm, '_____'), src: s, ctx: ctxOf.get(s) || '' });
   }
 
   const pool = { def: defs, cloze: clozes };
-  const all = shuffle([...defs, ...clozes]);
+  const all = shuffle([...defs, ...clozes]).sort((a, b) => b.w - a.w); // best first, so the caps keep what matters
   const ctxByText = new Map([...defs.map(d => [d.term, d.ctx]), ...defs.map(d => [d.body, d.ctx]), ...clozes.map(c => [c.term, c.ctx])]);
   // Wrong options must not be arguable: not stated in the same sentence, not a variant of the answer, not saying the same thing.
   const fits = (it, o) => o !== it && !variant(o.term, it.term) && !norm(it.src).includes(norm(o.term)) && !(it.kind === 'def' && overlap(it.body, o.body) >= 0.4);
@@ -269,7 +297,7 @@ function generate(rawLines, tags = [], o = {}) {
       const q = tfText(it, t);
       // When this item cannot make an honest claim, fall through to a normal question instead.
       if (q) {
-        out.push({ type: 'mc', q, options: ['True', 'False'], answer: t ? 0 : 1, exp: ex(it.src) });
+        out.push({ w: it.w, type: 'mc', q, options: ['True', 'False'], answer: t ? 0 : 1, exp: ex(it.src) });
         nTF++; if (t) nTTrue++; else { nTFalse++; falseSrc.add(it.src); }
         continue;
       }
@@ -279,25 +307,25 @@ function generate(rawLines, tags = [], o = {}) {
       const bodies = defs.filter(d => fits(it, { ...d, term: d.body }) && !norm(d.body).includes(norm(it.term))).map(d => d.body);
       const opts = shuffle([it.body, ...near(it.body, bodies, x => (ctxByText.get(x) === it.ctx ? 30 : 0))]);
       if (opts.length === 4 && keyOk(opts, it.body)) {
-        out.push({ type: 'mc', q: 'Which statement describes "' + it.term + '"?', options: opts, answer: opts.indexOf(it.body), exp: ex(it.src) });
+        out.push({ w: it.w, type: 'mc', q: 'Which statement describes "' + it.term + '"?', options: opts, answer: opts.indexOf(it.body), exp: ex(it.src) });
         nMC++; continue;
       }
     }
     const opts = shuffle([it.term, ...dist]);
     if (dist.length === 3 && nMC < ITEM_CAP.mc && (nMC <= nID * 1.5 || nID >= ITEM_CAP.id) && keyOk(opts, it.term)) {
-      out.push({ type: 'mc', q: it.q, options: opts, answer: opts.indexOf(it.term), exp: ex(it.src) });
+      out.push({ w: it.w, type: 'mc', q: it.q, options: opts, answer: opts.indexOf(it.term), exp: ex(it.src) });
       nMC++;
     } else if (nID < ITEM_CAP.id) {
-      out.push({ type: 'id', q: it.q, answer: it.term, exp: ex(it.src) });
+      out.push({ w: it.w, type: 'id', q: it.q, answer: it.term, exp: ex(it.src) });
       nID++;
     }
   }
-  shuffle(enums).filter(e => !seenEnum.has(norm(e.hdr)) && seenEnum.add(norm(e.hdr))).slice(0, ITEM_CAP.enum).forEach(e =>
-    out.push({ type: 'enum', q: 'Enumerate: ' + e.hdr, items: e.items, exp: ex(e.src) }));
+  shuffle(enums).sort((a, b) => score(b.hdr) - score(a.hdr)).filter(e => !seenEnum.has(norm(e.hdr)) && seenEnum.add(norm(e.hdr))).slice(0, ITEM_CAP.enum).forEach(e =>
+    out.push({ w: score(e.hdr), type: 'enum', q: 'Enumerate: ' + e.hdr, items: e.items, exp: ex(e.src) }));
   let res = o.mcOnly ? out.filter(x => x.type === 'mc') : out;
   if (o.noTF) res = res.filter(x => !/^True or false: /.test(x.q));
   if (o.noEnum) res = res.filter(x => x.type !== 'enum');
-  if (o.max > 0) res = shuffle(res).slice(0, o.max);
+  if (o.max > 0) res = shuffle(res).sort((a, b) => b.w - a.w).slice(0, o.max); // the most important ones
   res.forEach((x, i) => { x.id = x.type + i; });
   return res;
 }
