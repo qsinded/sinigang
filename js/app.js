@@ -293,14 +293,22 @@ function planCard() {
 }
 
 // "Show me why": find the sentence an answer came from and show it in its paragraph.
+const isTF = it => /^True or false: /.test(it.q);
 const untag = s => String(s || '').replace(/^\([^)]*\)\s*/, '').trim();
 function sourceLine(r, it) {
   const lines = r.src || [];
   if (!lines.length) return null;
   const plain = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
-  const want = plain(untag(it.exp)), needle = norm(flashAnswer(it) || '');
+  // "True"/"False" is not something to look up: it would land on an exam's "Write TRUE if..." direction.
+  const want = plain(untag(it.exp)), needle = isTF(it) ? '' : norm(flashAnswer(it) || '');
   let at = want ? lines.findIndex(l => plain(l) === want) : -1;
   if (at < 0 && want) at = lines.findIndex(l => plain(l).includes(want.slice(0, Math.min(want.length, 60))));
+  if (at < 0 && want) { // a sentence cut across lines: take the line that shares most of its words
+    const ws = x => new Set(plain(x).match(/[a-z0-9]{3,}/g) || []), w = ws(want);
+    let best = 0;
+    lines.forEach((l, i) => { const lw = ws(l); let n = 0; w.forEach(x => { if (lw.has(x)) n++; }); if (n / (w.size || 1) > best) { best = n / (w.size || 1); at = i; } });
+    if (best < 0.4) at = -1;
+  }
   if (at < 0 && needle.length >= 3) at = lines.findIndex(l => norm(l).includes(needle));
   if (at < 0) return null;
   return { at, text: lines[at], tag: (r.tags && r.tags[at]) || '' };
@@ -323,7 +331,7 @@ function sourcePanel(r, it) {
     wrap.append(h('p', { class: 'k' }, (found.tag ? '(' + found.tag + ') ' : '') + 'From your notes'));
     const from = Math.max(0, found.at - 2), to = Math.min(r.src.length, found.at + 3);
     for (let i = from; i < to; i++) {
-      wrap.append(h('p', { class: i === found.at ? 'hit' : null }, ...(i === found.at ? markLine(r.src[i], flashAnswer(it)) : [r.src[i]])));
+      wrap.append(h('p', { class: i === found.at ? 'hit' : null }, ...(i === found.at && !isTF(it) ? markLine(r.src[i], flashAnswer(it)) : [r.src[i]])));
     }
   };
   const toggle = btn => {

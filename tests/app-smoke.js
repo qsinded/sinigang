@@ -177,6 +177,11 @@ const hit = ctx.sourceLine(srcReviewer, srcItem);
 assert.strictEqual(hit.at, 1, 'source line is located by its saved sentence');
 assert.strictEqual(hit.tag, 'page 2');
 assert.strictEqual(ctx.sourceLine({ src: [], tags: [] }, srcItem), null, 'a reviewer without saved source is handled');
+// A true/false answer must never be looked up as text: "TRUE" sits in the exam's "Write TRUE if..." direction.
+const examSrc = { src: ['C. Data Bus', 'II. Write TRUE if the statement is correct and FALSE if it is incorrect.', 'You cannot POP directly into an', 'immediate value (constants) in this machine.'], tags: [] };
+const tfItem = { type: 'mc', q: 'True or false: You cannot POP directly into an immediate value (constants) in this machine.', options: ['True', 'False'], answer: 0, exp: 'You cannot POP directly into an immediate value (constants) in this machine.' };
+assert.ok(ctx.sourceLine(examSrc, tfItem).at >= 2, 'a true/false item finds its own sentence, not the direction');
+assert.strictEqual(ctx.sourceLine({ src: examSrc.src.slice(0, 2), tags: [] }, tfItem), null, 'no match is better than the exam direction');
 const marked = ctx.markLine(hit.text, 'CPU');
 assert.strictEqual(marked.length, 3);
 assert.strictEqual(marked[1].tagName, 'MARK');
