@@ -5,7 +5,7 @@
 const fs = require('fs'), path = require('path');
 const { generate, norm } = require('../js/reviewer-generator.js');
 
-const BASELINE = { leak: 0, dupOptions: 0, badKey: 0, outlineOption: 0, tooShort: 0, ungrounded: 0, dupQuestion: 0, falseTrueMismatch: 0, filler: 0, ambiguous: 0, variant: 0, tfFragment: 0, tfMeta: 0, instruction: 0, emptyBlank: 0, labelEnum: 0, articleAdded: 0, blankTrivia: 0 };
+const BASELINE = { leak: 0, dupOptions: 0, badKey: 0, outlineOption: 0, tooShort: 0, ungrounded: 0, dupQuestion: 0, falseTrueMismatch: 0, filler: 0, ambiguous: 0, variant: 0, tfFragment: 0, tfMeta: 0, instruction: 0, emptyBlank: 0, labelEnum: 0, articleAdded: 0, blankTrivia: 0, fromQuestion: 0 };
 const RUNS = 25;
 
 function seeded(seed) { // mulberry32
@@ -45,6 +45,8 @@ function check(q, bad) {
   if (q.type === 'enum' && /^Enumerate: (?:note|notes|example|examples|tips?|hints?|remember|summary|recap|review|questions?)$/i.test(q.q)) bad.labelEnum++;
   if (q.answer === 0 && /^True or false: An? /.test(q.q) && !/^An? /i.test(rawSrc(q))) bad.articleAdded++;
   if (/^Fill in the blank:/.test(q.q) && (/\b(?:1\d|20)\d\d(?!\d)/.test(rawSrc(q)) || /(?:^|\s)[A-Z][A-Z0-9]+\s*,\s*[A-Z][A-Z0-9]+\b/.test(rawSrc(q)))) bad.blankTrivia++;
+  // A question line from an exam ("Why is RAM volatile? (2 pts)"), or a leftover points mark, is not a fact.
+  if (q.type !== 'enum' && (/\?/.test(rawSrc(q)) || /\(\s*\d+\s*(?:pts?|points?|marks?)\.?\s*\)/i.test(q.q + ' ' + (q.options || []).join(' ') + ' ' + q.answer))) bad.fromQuestion++;
   if (q.type === 'mc') {
     if (new Set(q.options.map(norm)).size !== q.options.length) bad.dupOptions++;
     if (!Number.isInteger(q.answer) || q.answer < 0 || q.answer >= q.options.length) bad.badKey++;
@@ -92,7 +94,8 @@ function check(q, bad) {
   check({ type: 'enum', q: 'Enumerate: Example', items: ['Windows'], exp: '(page 1) Example: Windows' }, b);
   check({ type: 'mc', q: 'True or false: A Photosynthesis is the process plants use.', options: ['True', 'False'], answer: 0, exp: '(page 1) Photosynthesis is the process plants use.' }, b);
   check({ type: 'id', q: 'Fill in the blank: The _____ was first developed in the 1950s at IBM.', answer: 'OS', exp: '(page 1) The OS was first developed in the 1950s at IBM.' }, b);
-  for (const k of ['emptyBlank', 'labelEnum', 'articleAdded', 'blankTrivia', 'ambiguous', 'variant', 'filler', 'leak', 'dupOptions', 'badKey', 'outlineOption', 'tooShort', 'ungrounded', 'falseTrueMismatch', 'tfFragment', 'tfMeta', 'instruction']) if (!b[k]) throw new Error('quality check "' + k + '" no longer catches a bad question');
+  check({ type: 'mc', q: 'Which statement describes "Why"?', options: ['RAM considered volatile memory? (2 pts)', 'a', 'b', 'c'], answer: 0, exp: '(page 13) 3. Why is RAM considered volatile memory? (2 pts)' }, b);
+  for (const k of ['fromQuestion', 'emptyBlank', 'labelEnum', 'articleAdded', 'blankTrivia', 'ambiguous', 'variant', 'filler', 'leak', 'dupOptions', 'badKey', 'outlineOption', 'tooShort', 'ungrounded', 'falseTrueMismatch', 'tfFragment', 'tfMeta', 'instruction']) if (!b[k]) throw new Error('quality check "' + k + '" no longer catches a bad question');
 })();
 
 const dir = path.join(__dirname, 'corpus'), bad = Object.fromEntries(Object.keys(BASELINE).map(k => [k, 0]));

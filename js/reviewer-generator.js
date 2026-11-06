@@ -67,7 +67,7 @@ function verifiedSwap(it, list, srcOf, termOf, textOf, fitsGrammar = () => true)
 const shape = t => /^[A-Z][A-Z0-9_.\-]+$/.test(t) ? 'acronym' : /\d/.test(t) ? 'number' : /\s/.test(t) ? 'phrase' : 'word';
 const variant = (a, b) => { const x = norm(a), y = norm(b); return x === y || (x.length >= 3 && y.length >= 3 && (x.includes(y) || y.includes(x))); };
 const BUL = /^(?:[•●▪◦\-*–]|\d+[.)]|[a-z][.)])\s+/;
-const NOT_TERM = /^(this|that|these|those|it|they|there|here|which|what|when|where|if|in|on|for|each|some|all|one|we|you)\b/i;
+const NOT_TERM = /^(this|that|these|those|it|they|there|here|which|what|when|where|if|in|on|for|each|some|all|one|we|you|why|how|who|whom|whose)\b/i;
 const DEF = /^(?:(?:The|A|An)\s+)?([A-Za-z0-9.][\w .\/\-]{0,38}?)\s+(?:is defined as|is used to|refers to|stands for|means|is|are)\s+(.{15,})$/;
 const COLON = /^([A-Za-z.][\w .\/\-]{0,38}?)\s*(?::|\s[–—-]\s)\s*(.{20,})$/;
 const LOW = /^(note|notes|example|examples|figure|table|chapter|slide|page|summary|objectives?|introduction|references?|agenda|tips?|hints?|remember|reminders?|recap|review|q&a|questions?)$/i; // headings, not terms
@@ -84,10 +84,13 @@ const instruction = t => {
   return IMPERATIVE.test(x) || RUBRIC.test(x) || PREBLANK.test(x);
 };
 // Filler that adds no meaning to a study question: hedges, "see Figure 2", citations, trailing "etc.".
+// An exam question in the notes ("3. Why is RAM volatile? (2 pts)") asks something; it is not a statement to quiz on.
+const QUESTION = /\?/;
+const POINTS = /\s*\(\s*\d+\s*(?:pts?|points?|marks?)\.?\s*\)/gi;
 const FILL = /\b(?:basically|essentially|simply|actually|really|very|quite|just|in fact|please note that|note that|it is important to (?:note|remember) that)\b[,\s]*/gi;
 const LEAD = /^(?:also|however|therefore|thus|moreover|furthermore|in addition|additionally|hence|so|then)\b,?\s+/i;
 function clean(s) {
-  return s.replace(/\s*\((?:see|refer to|cf\.?|fig\.?|figure|table)[^)]*\)/gi, '').replace(/\s*\[\d+(?:[,–-]\d+)*\]/g, '')
+  return s.replace(POINTS, '').replace(/\s*\((?:see|refer to|cf\.?|fig\.?|figure|table)[^)]*\)/gi, '').replace(/\s*\[\d+(?:[,–-]\d+)*\]/g, '')
     .replace(LEAD, '').replace(FILL, '').replace(/[,;]?\s+(?:etc|and so on|and so forth)\.?$/i, '')
     .replace(/\s{2,}/g, ' ').replace(/\s+([,.;])/g, '$1').trim();
 }
@@ -189,7 +192,7 @@ function generate(rawLines, tags = [], o = {}) {
   const defs = [], seen = new Set(), seenBody = new Set(), used = new Set(), seenEnum = new Set();
   for (const s of sents) {
     if (used.has(s) || s.length < 25 || s.length > 260 || OUTLINE.test((ctxOf.get(s) || '').trim())) continue;
-    if (objSet.has(s) || garbled(s)) continue;
+    if (objSet.has(s) || garbled(s) || QUESTION.test(s)) continue;
     if (instruction(s)) continue; // "II. Write TRUE if the statement is correct…" is a rubric, not a fact
     // inline list: "Registers: AX, BX, CX and DX."
     const m = s.match(/^(.{6,80}?):\s*(.+)$/);
@@ -217,7 +220,7 @@ function generate(rawLines, tags = [], o = {}) {
   const clozes = [], ctoks = new Set();
   for (const s of sents) {
     if (used.has(s) || s.length < 40 || s.length > 220 || OUTLINE.test((ctxOf.get(s) || '').trim())) continue;
-    if (objSet.has(s) || garbled(s) || !statementOk(s)) continue; // a blank needs a sentence too
+    if (objSet.has(s) || garbled(s) || QUESTION.test(s) || !statementOk(s)) continue; // a blank needs a sentence too
     if (instruction(s)) continue;
     // Dates are trivia, and "EAX, EBX, ECX" is a list cut out of its heading, not a sentence to blank.
     if (/\b(?:1\d|20)\d\d(?!\d)/.test(s) || /(?:^|\s)[A-Z][A-Z0-9]+\s*,\s*[A-Z][A-Z0-9]+\b/.test(s)) continue;

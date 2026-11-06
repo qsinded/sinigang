@@ -19,3 +19,8 @@ Note: the exam will be on Friday.
 The CPU is the CPU of the computer.
 Photosynthesis is the process by which plants turn light, water and carbon dioxide into sugar and oxygen.
 The registers EAX, EBX, ECX, EDX are the four common general-purpose registers to recognize first.
+Quiz
+1. Explain the difference between computer architecture and computer organization. (3 pts)
+2. Describe the role of the Control Unit during program execution. (2 pts)
+3. Why is RAM considered volatile memory? (2 pts)
+4. How is data routed between two networks? (1 pt)
