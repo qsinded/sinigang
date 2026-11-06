@@ -1,0 +1,21 @@
+Introduction to Operating Systems
+Prof. Reyes, Department of Computer Science
+Learning Objectives
+By the end of this lesson, you will be able to:
+- Explain what an OS does
+- Describe process states
+What is an OS?
+An operating system is software that manages hardware and software resources.
+The OS was first developed in the 1950s at IBM.
+Today we will discuss processes.
+A process is a program that is currently running.
+A thread is the smallest unit of execution within a process.
+Scheduler: the part of the OS that decides which process runs next.
+Kernel: the core of the OS that talks to the hardware.
+Example: Windows, Linux and macOS are operating systems.
+Tip: Windows, Linux and macOS are common examples.
+Thank you for listening. Questions?
+Note: the exam will be on Friday.
+The CPU is the CPU of the computer.
+Photosynthesis is the process by which plants turn light, water and carbon dioxide into sugar and oxygen.
+The registers EAX, EBX, ECX, EDX are the four common general-purpose registers to recognize first.

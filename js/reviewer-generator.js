@@ -70,7 +70,7 @@ const BUL = /^(?:[•●▪◦\-*–]|\d+[.)]|[a-z][.)])\s+/;
 const NOT_TERM = /^(this|that|these|those|it|they|there|here|which|what|when|where|if|in|on|for|each|some|all|one|we|you)\b/i;
 const DEF = /^(?:(?:The|A|An)\s+)?([A-Za-z0-9.][\w .\/\-]{0,38}?)\s+(?:is defined as|is used to|refers to|stands for|means|is|are)\s+(.{15,})$/;
 const COLON = /^([A-Za-z.][\w .\/\-]{0,38}?)\s*(?::|\s[–—-]\s)\s*(.{20,})$/;
-const LOW = /^(note|notes|example|examples|figure|table|chapter|slide|page|summary|objectives?|introduction|references?|agenda)$/i; // headings, not terms
+const LOW = /^(note|notes|example|examples|figure|table|chapter|slide|page|summary|objectives?|introduction|references?|agenda|tips?|hints?|remember|reminders?|recap|review|q&a|questions?)$/i; // headings, not terms
 // Exam-paper furniture: instructions, rubrics and answer keys describe the test, not the subject. A definition
 // split out of one of them ("Write TRUE if the statement" + "is") is nonsense, and so is a question built from it.
 // Also skipped: lines that already contain blanks, because the app cannot answer its own exam paper.
@@ -135,7 +135,7 @@ function generate(rawLines, tags = [], o = {}) {
 
   const sents = [], enums = [];
   let para = '', paraTag = '', hdr = null, hdrTag = '', items = [];
-  const flushList = () => { if (hdr && items.length >= 3 && !OUTLINE.test(hdr.trim())) enums.push({ hdr, items: items.map(clean).filter(Boolean), src: note(hdr + ': ' + items.join(', '), hdrTag) }); hdr = null; items = []; };
+  const flushList = () => { if (hdr && items.length >= 3 && !OUTLINE.test(hdr.trim()) && !LOW.test(hdr.trim())) enums.push({ hdr, items: items.map(clean).filter(Boolean), src: note(hdr + ': ' + items.join(', '), hdrTag) }); hdr = null; items = []; };
   const flushPara = () => { if (para) para.split(/(?<=[.!?])\s+(?=[A-Z".])/).forEach(s => sents.push(note(s.trim(), paraTag))); para = ''; };
 
   for (const { t: l, g } of lines) {
@@ -168,7 +168,7 @@ function generate(rawLines, tags = [], o = {}) {
     const m = s.match(/^(.{6,80}?):\s*(.+)$/);
     if (m) {
       const its = m[2].replace(/\.$/, '').split(/,\s*(?:and\s+|or\s+)?|;\s*|\s+and\s+/).map(x => x.trim()).filter(Boolean);
-      if (its.length >= 3 && its.every(x => x.split(' ').length <= 6)) { enums.push({ hdr: m[1], items: its.map(clean).filter(Boolean), src: s }); used.add(s); continue; }
+      if (its.length >= 3 && its.every(x => x.split(' ').length <= 6) && !LOW.test(m[1].trim())) { enums.push({ hdr: m[1], items: its.map(clean).filter(Boolean), src: s }); used.add(s); continue; }
     }
     const d = s.match(DEF) || s.match(COLON);
     if (d) {
@@ -179,6 +179,8 @@ function generate(rawLines, tags = [], o = {}) {
         && !instruction(term) && !/\b(?:is|are|was|were|be|do|does|did|will|can)\b/i.test(term)) { // "Write TRUE if the statement" is a clause, not a term
         seen.add(term.toLowerCase()); seenBody.add(norm(body));
         const mask = body.replace(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), '_____');
+        // "The CPU is the CPU of the computer" leaves "The _____ of the computer": nothing to answer from.
+        if ((mask.replace(/_____/g, ' ').match(/[A-Za-z]{4,}/g) || []).length < 2) continue;
         defs.push({ kind: 'def', term, body: cap1(body), q: 'Which term is described? ' + cap1(mask), src: s, ctx: ctxOf.get(s) || '' });
         used.add(s);
       }
@@ -190,6 +192,8 @@ function generate(rawLines, tags = [], o = {}) {
     if (used.has(s) || s.length < 40 || s.length > 220 || OUTLINE.test((ctxOf.get(s) || '').trim())) continue;
     if (!statementOk(s)) continue; // a blank needs a sentence too
     if (instruction(s)) continue;
+    // Dates are trivia, and "EAX, EBX, ECX" is a list cut out of its heading, not a sentence to blank.
+    if (/\b(?:1\d|20)\d\d(?!\d)/.test(s) || /(?:^|\s)[A-Z][A-Z0-9]+\s*,\s*[A-Z][A-Z0-9]+\b/.test(s)) continue;
     const mm = [...s.matchAll(/(?:^|[\s(])(\.?[A-Z][A-Z0-9_]{1,})\b/g)].map(x => x[1]).find(t => !STOP.has(t) && !ctoks.has(t));
     if (!mm) continue;
     ctoks.add(mm);
@@ -249,7 +253,7 @@ function generate(rawLines, tags = [], o = {}) {
       : verifiedSwap(it, clozes, x => x.src, x => x.term, x => x.src, o => plural(o.term) === subjectPlural(it));
     // No candidate with the right number: skip this true/false rather than print "Chloroplasts is ...".
     if (!t && (!swap || plural(swap) !== subjectPlural(it))) return '';
-    const st = replaceTerm(clean(it.src), it.term, t ? it.term : swap).replace(/\.$/, '');
+    const st = (t ? clean(it.src) : replaceTerm(clean(it.src), it.term, swap)).replace(/\.$/, ''); // a true claim is the note's own sentence
     return statementOk(st) ? 'True or false: ' + cap1(st) + '.' : '';
   };
   const out = [];
