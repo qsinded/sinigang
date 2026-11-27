@@ -8,6 +8,8 @@ const LANGS = {
   en: {
     articles: ['The', 'A', 'An'],                     // before the term that starts a definition
     copulas: ['is defined as', 'is used to', 'refers to', 'stands for', 'means', 'is', 'are', 'was', 'were'], // "X is Y"
+    be: ['is', 'are', 'was', 'were'],
+    called: ['called', 'known as', 'termed', 'referred to as', 'named'], // "… is called Y": Y is the term
     answerArticles: ['the', 'a', 'an'],               // ignored at the start of a typed answer
     notTerm: ['this', 'that', 'these', 'those', 'it', 'they', 'there', 'here', 'which', 'what', 'when', 'where', 'if', 'in', 'on',
       'for', 'each', 'some', 'all', 'one', 'we', 'you', 'why', 'how', 'who', 'whom', 'whose', // a sentence opener, never a term
@@ -24,6 +26,8 @@ const LANGS = {
   fil: {
     articles: ['Ang mga', 'Ang', 'Sina', 'Si'],       // "Ang Katipunan ay …", "Si Rizal ay …"
     copulas: ['ay'],
+    be: ['ay'],
+    called: ['tinatawag na', 'kilala bilang'],
     answerArticles: ['ang mga', 'ang', 'sina', 'si', 'mga'],
     notTerm: ['ito', 'iyan', 'iyon', 'dito', 'doon', 'sila', 'siya', 'tayo', 'kami', 'kayo', 'ako', 'ikaw'],
     termVerbs: ['ay'],
@@ -162,6 +166,9 @@ const BUL = /^(?:[•●▪◦\-*–]|\d+[.)]|[a-z][.)])\s+/;
 const NOT_TERM = new RegExp('^(?:' + anyOf('notTerm') + ')\\b', 'i');
 // "[The] X is Y" / "[Ang] X ay Y": an optional article, a short term, a linking verb from LANGS, then the description.
 const DEF = new RegExp('^(?:(?:' + anyOf('articles') + ')\\s+)?([A-Za-z0-9.][\\w .\\/\\-]{0,38}?)\\s+(?:' + anyOf('copulas') + ')\\s+(.{15,})$');
+// "The process by which plants make food is called photosynthesis." / "… ay tinatawag na mitosis.": the description
+// comes first and the name last, after a "be" word and a naming phrase from LANGS.
+const CALLED = new RegExp('^(.{10,160}?)\\s+(?:' + anyOf('be') + ')\\s+(?:also\\s+)?(?:' + anyOf('called') + ')\\s+(?:(?:the|a|an)\\s+)?([A-Za-z][\\w \\-]{1,40}?)[.;]?$');
 // Filipino also puts a person first with "ang": "Si Andres Bonifacio ang tinaguriang Ama ng Katipunan."
 const SI_ANG = /^(?:Si|Sina)\s+([A-Z][\w .\-]{0,38}?)\s+ang\s+(.{15,})$/;
 // A person is asked with "Who is described?". The evidence must be strong: a "Si/Sina" sentence, or a name with no
@@ -369,7 +376,10 @@ function generate(rawLines, tags = [], o = {}) {
       const its = m[2].replace(/\.$/, '').split(/,\s*(?:and\s+|or\s+)?|;\s*|\s+and\s+/).map(x => x.trim()).filter(Boolean);
       if (its.length >= 3 && its.every(x => x.split(' ').length <= 6) && !LOW.test(m[1].trim())) { enums.push({ hdr: m[1], items: its.map(clean).filter(Boolean), src: s }); used.add(s); continue; }
     }
-    const d = s.match(DEF) || s.match(SI_ANG) || s.match(COLON);
+    // "X is called Y" names Y, so its groups are swapped into [term, description] like the others. Only when X is a
+    // description: "Jose Rizal is known as the national hero" and "Si Mabini ay tinatawag na …" keep the name as answer.
+    const nm = s.match(CALLED), rev = nm && !termFine(nm[1]);
+    const d = rev ? [s, nm[2], nm[1]] : s.match(DEF) || s.match(SI_ANG) || s.match(COLON);
     if (d) {
       const term = d[1].trim();
       const body = clean(d[2].replace(/[.;]$/, ''));

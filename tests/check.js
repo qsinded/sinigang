@@ -287,6 +287,24 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
       used.forEach((n, o) => assert(n <= 2, f + ': the wrong option "' + o + '" appears ' + n + ' times in one set'));
     }
   }
+  // "X is called Y" names Y after its description ("The process by which plants make food … is called photosynthesis."),
+  // in Filipino too ("… ay tinatawag na mitosis"). The description is asked, the name is the answer.
+  const called = ['The process by which plants make food from sunlight is called photosynthesis.',
+    'The movement of water across a membrane is known as osmosis.', 'Animals that eat only plants are called herbivores.',
+    'Ang paghahati ng isang selula sa dalawang magkaparehong selula ay tinatawag na mitosis.',
+    'Ribosomes build proteins from amino acids.', 'The nucleus controls the activities and growth of the cell.',
+    'Jose Rizal is known as the national hero of the Philippines.'];
+  const calledQ = new Map();
+  for (let i = 0; i < 30; i++) generate(called, [], { noTF: true }).forEach(q => {
+    const a = q.type === 'mc' ? q.options[q.answer] : q.answer;
+    // A term answer never carries the linking words; a description option ("Known as the national hero…") may.
+    if (!/^Which statement describes/.test(q.q)) assert(!/\b(?:called|known as|tinatawag)\b/i.test(a), 'the linking words are never part of a term: ' + q.q + ' => ' + a);
+    if (/^Which term is described\?/.test(q.q)) calledQ.set(a, q.q);
+  });
+  for (const [a, desc] of [['photosynthesis', 'The process by which plants make food from sunlight'], ['osmosis', 'The movement of water across a membrane'],
+    ['herbivores', 'Animals that eat only plants'], ['mitosis', 'Ang paghahati ng isang selula']])
+    assert((calledQ.get(a) || '').includes(desc), '"' + a + '" is asked from its description; got: ' + calledQ.get(a));
+  assert(!calledQ.has('national hero of the Philippines'), 'a name before "is known as" stays the answer, not its nickname');
   // A fact that made a question but was cut by the limit, or by a type the student turned off, says so.
   const capped = generate(skipNotes, [], { max: 1 });
   assert(capped.skipped.some(s => s.reason === 'limit'), 'items cut by the limit are reported');
