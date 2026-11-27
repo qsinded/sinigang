@@ -54,6 +54,11 @@ device. Every phase adds tests to `tests/check.js`, never raises a `tests/qualit
 2. **More ways English notes state a fact.** "X states that Y", "X is called Y" / "Y is known as
    X", "X consists of Y", "X happens when Y", "X occurs when Y". Each needs a question form
    ("Which law states that…?") and a quality-corpus line.
+   **Done 2026-11-27, more generally:** any plain subject-verb sentence asks for its subject as a blank in
+   the note's own sentence ("The _____ states that when price rises…" → law of demand; "A _____ happens
+   when…" → shortage). Coverage: biology 67→100%, economics 54→85%, computer architecture 47→74%, exam paper
+   54→69%, networking 88→94%. Not done: "is called" / "is known as" reversals, and wrong options that agree
+   with the verb's number ("register" can appear for "_____ move").
 3. **Skipped-line report.** Backend done 2026-11-27: `generate()` returns `.skipped` with a reason code per
    line, and `SKIP_REASONS` words each one for a student with a fix ("Try writing it as *X is …*").
    Still to do (UI, paused): show it when a file yields few questions, instead of the dead-end error.

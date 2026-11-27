@@ -7,7 +7,8 @@ no account and no build step.
 
 ## Features
 
-- **Question generation** from definitions, inline lists and capitalised terms: multiple choice,
+- **Question generation** from definitions, inline lists, capitalised terms, years and plain subject-verb
+  sentences ("Ribosomes build proteins…" asks "_____ build proteins…"): multiple choice,
   true/false, identification and enumeration, with distractors chosen to look plausible. A true/false
   item is the note's own sentence ("True or false: A cache is a small fast memory placed close to the
   CPU."), never a rearranged fragment: slide lead-ins like "The control unit is to:" and option lines

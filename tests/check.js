@@ -159,7 +159,7 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
   // Skip reasons: every note line that yields no question says why, so the notes (or the generator) can be fixed.
   const skipNotes = ['Cell Biology Review', '12', 'Mitosis is the division of a nucleus into two identical nuclei.',
     'Meiosis is a cell division that produces four haploid gametes.', 'Interphase is the stage where the cell grows and copies its DNA.',
-    'Ribosomes build proteins from amino acids.', 'Why is the cell membrane important to the cell?', 'Write TRUE if the statement is correct.',
+    'Long chains of amino acids folded into shapes form the proteins of a cell.', 'Why is the cell membrane important to the cell?', 'Write TRUE if the statement is correct.',
     'Dutch lens makers built the first microscopes in the 1590s.', 'Parts of a cell:', '- Nucleus', '- Ribosome',
     'Organelles:', '- Mitochondria', '- Golgi body', '- Vacuole'];
   const reasonFor = (out, text) => (out.skipped.find(s => s.text === text) || {}).reason;
@@ -168,7 +168,7 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
     assert(Array.isArray(out.skipped), 'generate() reports what it skipped');
     assert.strictEqual(reasonFor(out, 'Cell Biology Review'), 'heading');
     assert.strictEqual(reasonFor(out, '12'), 'furniture');
-    assert.strictEqual(reasonFor(out, 'Ribosomes build proteins from amino acids.'), 'no-pattern');
+    assert.strictEqual(reasonFor(out, 'Long chains of amino acids folded into shapes form the proteins of a cell.'), 'no-pattern');
     assert.strictEqual(reasonFor(out, 'Why is the cell membrane important to the cell?'), 'question');
     assert.strictEqual(reasonFor(out, 'Write TRUE if the statement is correct.'), 'instruction');
     assert.strictEqual(reasonFor(out, 'Dutch lens makers built the first microscopes in the 1590s.'), 'decade');
@@ -202,6 +202,31 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
   assert.strictEqual((si.skipped.find(s => /Mining Si/.test(s.text)) || {}).reason, 'heading', 'a capitalised "Si" in English is not a Filipino marker');
   assert.strictEqual(idOk('Katipunan', 'ang katipunan'), true, 'a leading "ang" is ignored');
   assert.strictEqual(idOk('Jose Rizal', 'si Jose Rizal'), true, 'a leading "si" is ignored');
+  // Plain subject-verb facts ("Ribosomes build proteins…", "The law of demand states that…") ask for their subject
+  // as a blank in the note's own sentence. A quantifier or pronoun ("Many cells", "It") is never the answer.
+  const svo = ['Ribosomes build proteins from amino acids.', 'The cell membrane controls what enters and leaves the cell.',
+    'The law of demand states that when price rises, quantity demanded falls.', 'The law of supply states that when price rises, quantity supplied rises.',
+    'A shortage happens when quantity demanded is greater than quantity supplied.', 'A surplus happens when quantity supplied is greater than quantity demanded.',
+    'Segmentation divides memory into variable-size logical sections for each program.', 'The control unit fetches and decodes instructions from memory.',
+    'Many cells divide every day to replace old and damaged ones.', 'It moves the data from one register to another register.'];
+  const svoAns = new Set();
+  for (let i = 0; i < 25; i++) generate(svo).filter(q => /^Fill in the blank: /.test(q.q)).forEach(q => {
+    const a = q.type === 'mc' ? q.options[q.answer] : q.answer;
+    svoAns.add(a);
+    assert(!/^(?:Many|It)\b/i.test(a), 'a quantifier or pronoun is not a term: ' + a);
+    // The blank sits where the answer stands in the note's own sentence.
+    assert.strictEqual(q.q.replace('Fill in the blank: ', '').replace('_____', a).toLowerCase(), q.exp.toLowerCase(), 'the blank is the subject of: ' + q.exp);
+  });
+  for (const a of ['Ribosomes', 'cell membrane', 'law of demand', 'shortage', 'Segmentation', 'control unit'])
+    assert(svoAns.has(a), 'subject-verb fact asks for "' + a + '"; got: ' + [...svoAns].join(' / '));
+  // "Instructions:" heads an exam section, but "instruction pointer" is a term; and the subject-verb stage's own reason
+  // replaces the vaguer "no-pattern" when it rejects a sentence.
+  const ip = generate(['The instruction pointer holds the address of the next instruction to run.', 'Instructions: Answer all the questions below carefully.',
+    'A register is a small storage location inside the processor.', 'The cache is a small fast memory placed close to the CPU.',
+    'Many cells divide every day to replace old and damaged ones.'], [], { noTF: true });
+  assert(ip.some(q => (q.type === 'mc' ? q.options[q.answer] : q.answer) === 'instruction pointer'), '"instruction pointer" is a term, not an exam instruction');
+  assert.strictEqual(reasonFor(ip, 'Instructions: Answer all the questions below carefully.'), 'instruction');
+  assert.strictEqual(reasonFor(ip, 'Many cells divide every day to replace old and damaged ones.'), 'bad-term', 'the subject-verb reason replaces "no-pattern"');
   // A fact that made a question but was cut by the limit, or by a type the student turned off, says so.
   const capped = generate(skipNotes, [], { max: 1 });
   assert(capped.skipped.some(s => s.reason === 'limit'), 'items cut by the limit are reported');
@@ -284,8 +309,10 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
   let paperTF = 0, paperItems = 0;
   for (let k = 0; k < 200; k++) generate(paper, paper.map(() => 'page 18')).forEach(x => {
     paperItems++;
-    // The "True or false: " prefix is the app's own wording, not note text.
-    each(x, s => assert(!RUBRIC_TEXT.test(String(s).replace(/^True or false: /, '')), 'no question is built from a rubric, an instruction or a blank line: ' + s));
+    // "True or false: " and "Fill in the blank: … _____" are the app's own wording, not note text; the source sentence
+    // (exp) is still checked, so a pre-blanked exam line ("1. ________ DB defines…") is still caught.
+    each(x, s => assert(!RUBRIC_TEXT.test(String(s).replace(/^True or false: /, '').replace(/^Fill in the blank: (.*)_____/, '$1')), 'no question is built from a rubric, an instruction or a blank line: ' + s));
+    assert(!RUBRIC_TEXT.test(String(x.exp).replace(/^\([^)]*\)\s*/, '')), 'no question cites a rubric or a pre-blanked line: ' + x.exp);
     if (!/^True or false: /.test(x.q)) return;
     paperTF++;
     const st = x.q.slice('True or false: '.length);

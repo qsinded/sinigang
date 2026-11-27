@@ -10,7 +10,7 @@ const RUNS = 25;
 // Coverage per corpus, in percent of its substantial lines that some question cites. The counts above only see bad
 // questions; a rule that silently stops reading a kind of sentence shows up here. It may only go up: raise the number
 // in the same commit as an improvement. A new corpus file needs an entry. `npm run quality -- --missed` lists unused lines.
-const COVERAGE = { 'biology.txt': 67, 'computer-architecture.txt': 47, 'economics.txt': 54, 'exam-paper.txt': 54, 'filipino.txt': 90, 'history.txt': 81, 'lecture.txt': 33, 'networking.txt': 88 };
+const COVERAGE = { 'biology.txt': 100, 'computer-architecture.txt': 74, 'economics.txt': 85, 'exam-paper.txt': 69, 'filipino.txt': 90, 'history.txt': 81, 'lecture.txt': 33, 'networking.txt': 94 };
 
 function seeded(seed) { // mulberry32
   return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
@@ -23,7 +23,8 @@ let sameSection = 0, termDistractors = 0;
 const OUTLINE_OPT = /^(module|unit|chapter|lesson|week|topic)\s*\d/i;
 // Exam-paper furniture: rubrics, instructions and pre-blanked lines are not study material.
 const RUBRIC_TEXT = /\bif the statement is\b|\bwrite (?:true|false)\b|\bchoose the (?:best|correct)\b|\bfill in the blanks?\b|_{3,}/i;
-const IMPERATIVE = /^(?:instructions?|directions?|write|answer|choose|select|fill|complete|identify|enumerate|match|true or false|multiple choice|matching|essay)\b/i;
+// "Instructions:" heads an exam section; "instruction pointer" is a term (same rule as the generator).
+const IMPERATIVE = /^(?:(?:instructions?|directions?)\s*(?::|$)|(?:write|answer|choose|select|fill|complete|identify|enumerate|match|true or false|multiple choice|matching|essay)\b)/i;
 const answerText = q => q.type === 'mc' ? q.options[q.answer] : q.type === 'id' ? q.answer : (q.items || []).join(' ');
 // Share of the text's words that appear in the source sentence. Cleaning removes filler words, so exact matching would flag good questions.
 const covered = (text, src) => { const w = String(text).toLowerCase().match(/[a-z0-9]{3,}/g) || [], s = new Set(String(src).toLowerCase().match(/[a-z0-9]{3,}/g) || []); return w.length ? w.filter(x => s.has(x)).length / w.length : 1; };

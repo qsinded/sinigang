@@ -10,7 +10,8 @@ const LANGS = {
     copulas: ['is defined as', 'is used to', 'refers to', 'stands for', 'means', 'is', 'are', 'was', 'were'], // "X is Y"
     answerArticles: ['the', 'a', 'an'],               // ignored at the start of a typed answer
     notTerm: ['this', 'that', 'these', 'those', 'it', 'they', 'there', 'here', 'which', 'what', 'when', 'where', 'if', 'in', 'on',
-      'for', 'each', 'some', 'all', 'one', 'we', 'you', 'why', 'how', 'who', 'whom', 'whose'], // a sentence opener, never a term
+      'for', 'each', 'some', 'all', 'one', 'we', 'you', 'why', 'how', 'who', 'whom', 'whose', // a sentence opener, never a term
+      'most', 'many', 'every', 'several', 'both', 'few', 'no', 'another', 'other', 'such', 'its', 'their', 'his', 'her', 'our', 'your', 'my'],
     termVerbs: ['is', 'are', 'was', 'were', 'be', 'do', 'does', 'did', 'will', 'can'], // a term containing one is a clause
     clauseWords: ['when', 'whenever', 'where', 'while', 'if', 'because', 'since', 'that', 'which', 'who', 'whom', 'whose', 'than', 'until', 'unless'],
   },
@@ -102,13 +103,16 @@ const DEF = new RegExp('^(?:(?:' + anyOf('articles') + ')\\s+)?([A-Za-z0-9.][\\w
 // Filipino also puts a person first with "ang": "Si Andres Bonifacio ang tinaguriang Ama ng Katipunan."
 const SI_ANG = /^(?:Si|Sina)\s+([A-Z][\w .\-]{0,38}?)\s+ang\s+(.{15,})$/;
 const TERM_VERB = new RegExp('\\b(?:' + anyOf('termVerbs') + ')\\b', 'i'), CLAUSE = new RegExp('\\b(?:' + anyOf('clauseWords') + ')\\b', 'i');
+// A term is a short name, not a sentence opener ("This", "Many cells"), a heading word, an instruction or a clause.
+const termFine = t => t.split(' ').length <= 5 && !NOT_TERM.test(t) && !LOW.test(t) && !LABEL.test(t) && !instruction(t) && !TERM_VERB.test(t) && !CLAUSE.test(t);
 const COLON = /^([A-Za-z.][\w .\/\-]{0,38}?)\s*(?::|\s[–—-]\s)\s*(.{20,})$/;
 const LOW = /^(note|notes|example|examples|figure|table|chapter|slide|page|summary|objectives?|introduction|references?|agenda|tips?|hints?|remember|reminders?|recap|review|q&a|questions?)$/i; // headings, not terms
 // Exam-paper furniture: instructions, rubrics and answer keys describe the test, not the subject. A definition
 // split out of one of them ("Write TRUE if the statement" + "is") is nonsense, and so is a question built from it.
 // Also skipped: lines that already contain blanks, because the app cannot answer its own exam paper.
 const NUM_PREFIX = /^(?:\d+|[IVXLC]+|[A-Za-z])[.)]\s+/; // "6. ", "II. ", "A. "
-const IMPERATIVE = /^(?:instructions?|directions?|write|answer|choose|select|fill|complete|read|study|review|identify|enumerate|match|list|give|state|define|explain|describe|compute|solve|calculate|circle|encircle|underline|label|draw|name|provide|show|compare|discuss|mention|true or false|multiple choice|matching|essay|test|quiz|exam|score|points?)\b/i;
+// "Instructions:" heads an exam section; "instruction pointer" is a term, so those two words need a colon or nothing after.
+const IMPERATIVE = /^(?:(?:instructions?|directions?)\s*(?::|$)|(?:write|answer|choose|select|fill|complete|read|study|review|identify|enumerate|match|list|give|state|define|explain|describe|compute|solve|calculate|circle|encircle|underline|label|draw|name|provide|show|compare|discuss|mention|true or false|multiple choice|matching|essay|test|quiz|exam|score|points?)\b)/i;
 const RUBRIC = /\bif the statement is\b|\bwrite (?:true|false|t|f)\b|\btrue or false\b|\btell whether\b|\bidentify whether\b|\bindicate whether\b|\bchoose the (?:best|correct|right)\b|\bfill in the blanks?\b|\banswer key\b|\bmatch(?:ing)? (?:type|the (?:items|column))\b/i;
 const PREBLANK = /_{3,}/;
 // The numbering is stripped first, so "6. Write TRUE if…" and "II. Write TRUE if…" are both recognised.
@@ -136,16 +140,22 @@ const DEAD_END = /\b(?:is|are|was|were|be|to|of|the|a|an|and|or|by|for|with|from
 // so words are reduced to a stem and checked against base forms; irregulars are listed separately.
 const VERB_IRREGULAR = new Set(('is are was were be been being has have had do does did can cannot could will would shall should may might must'
   + ' began became fought won led wrote made took gave held tore sent built found left lost met rose fell broke chose drew ran sold bought brought taught came went').split(' ')); // past tense, for history notes
-const VERB_BASE = new Set(('move store hold keep run convert allow provide contain include carry execute fetch decode direct control manage take need send receive connect measure calculate read write give make perform process represent describe combine divide split sort filter forward translate compile interpret allocate return accept require support enable prevent detect reduce increase overlap schedule load save link join separate count compare match replace remove add set act work become remain appear occur mean refer use call create produce generate store transfer change define convert consist depend belong follow precede happen exist live grow die feed protect regulate maintain balance break build destroy absorb release emit reflect transmit receive deliver route determine choose select apply assign attach bind connect update delete insert modify handle operate drive enable disable start stop begin end finish continue spread flow pass enter leave reach touch point refer apply test show tell say see look find get put bring hold cause affect allow permit require include involve relate correspond equate differ vary range total equal exceed reach strive').split(' '));
-const stem = w => w.replace(/(?:ing|ed|es|s)$/i, '');
+const VERB_BASE = new Set(('move store hold keep run convert allow provide contain include carry execute fetch decode direct control manage take need send receive connect measure calculate read write give make perform process represent describe combine divide split sort filter forward translate compile interpret allocate return accept require support enable prevent detect reduce increase overlap schedule load save link join separate count compare match replace remove add set act work become remain appear occur mean refer use call create produce generate store transfer change define convert consist depend belong follow precede happen exist live grow die feed protect regulate maintain balance break build destroy absorb release emit reflect transmit receive deliver route determine choose select apply assign attach bind connect update delete insert modify handle operate drive enable disable start stop begin end finish continue spread flow pass enter leave reach touch point refer apply test show tell say see look find get put bring hold cause affect allow permit require include involve relate correspond equate differ vary range total equal exceed reach strive'
+  + ' state rise fall form push pull speed').split(' '));
+// One word is a verb form: "build", "builds", "divides", "carries", "moved", "moving", "declared". Every ending is tried,
+// because one stem rule missed "divides" ("divid") and "moved" ("mov").
+const isVerb = w => {
+  const x = w.toLowerCase();
+  return VERB_IRREGULAR.has(x) || /^[a-z]{3,}ed$/.test(w) || [x, x.replace(/s$/, ''), x.replace(/es$/, ''), x.replace(/ies$/, 'y'),
+    x.replace(/d$/, ''), x.replace(/ed$/, ''), x.replace(/ing$/, ''), x.replace(/ing$/, 'e')].some(v => VERB_BASE.has(v));
+};
 // A lower-case "-ed" word is a past tense ("declared", "arrived"): no list can name every verb a history note uses.
 // A Filipino claim links with "ay" ("Ang Katipunan ay …"), or opens with an affixed verb and names its subject with
 // ang/si/ni/ng ("Itinatag ni Bonifacio ang Katipunan …", "Binaril si Rizal …"). English never has those markers.
 // Markers are lower case mid-sentence, so "Mining Si wafers…" (silicon) is not taken for Filipino.
 const FIL_VERB_FIRST = /^(?:[a-z]{0,3}(?:in|um)|nag|mag|pinag|ipinag|ipina|pina|na|ma|i)[a-z]{3,}\b/i, FIL_MARKER = /\s(?:ang|si|sina|ni|ng)\s/;
 const filClaim = t => /\say\s/.test(t) || (FIL_VERB_FIRST.test(t) && FIL_MARKER.test(t));
-const verbIn = text => filClaim(String(text)) || (String(text).match(/[A-Za-z]+/g) || []).some(w =>
-  VERB_IRREGULAR.has(w.toLowerCase()) || VERB_BASE.has(w.toLowerCase()) || VERB_BASE.has(stem(w).toLowerCase()) || /^[a-z]{3,}ed$/.test(w));
+const verbIn = text => filClaim(String(text)) || (String(text).match(/[A-Za-z]+/g) || []).some(isVerb);
 function statementOk(text) {
   const t = String(text || '').trim();
   if (t.length < 25 || t.length > 240) return false;
@@ -186,13 +196,13 @@ const SKIP_REASONS = {
   garbled: 'Looks jumbled, often broken PDF text.',
   question: 'A question, not a statement of fact.',
   instruction: 'An exam instruction, or a line that already has blanks.',
-  'bad-term': 'The part before "is" is not a term (a clause, a heading or more than 5 words).',
+  'bad-term': 'What the sentence is about is not a term (a clause, a heading, a word like "Many" or "It", or more than 5 words). Start with the term.',
   repeated: 'Repeats a term or definition that is already asked.',
   'empty-blank': 'Hiding the term would leave nothing to answer from.',
   'no-claim': 'Not a complete statement with a verb.',
   'cut-list': 'A list cut away from its heading.',
   decade: 'Gives only a decade ("the 1950s"), too vague to ask.',
-  'no-pattern': 'Not written as "X is Y", and has no year or ACRONYM to ask about. Try writing it as "X is …".',
+  'no-pattern': 'No term found: it does not start with what it is about, and has no year or ACRONYM to ask. Try "X is …" or "X does …".',
   'same-term': 'Its key term is already asked from another sentence.',
   'off-objectives': 'Not tied to the learning objectives.',
   limit: 'Made a question, but it was cut by the question limit.',
@@ -297,9 +307,7 @@ function generate(rawLines, tags = [], o = {}) {
       const body = clean(d[2].replace(/[.;]$/, ''));
       // skip headings posing as terms ("Write TRUE if the statement", "surplus happens when quantity supplied" are
       // clauses) and repeated definitions
-      const termOk = body.length >= 15 && term.split(' ').length <= 5 && !NOT_TERM.test(term) && !LOW.test(term) && !LABEL.test(term)
-        && !instruction(term) && !TERM_VERB.test(term) && !CLAUSE.test(term);
-      if (!termOk) skip(s, 'bad-term');
+      if (body.length < 15 || !termFine(term)) skip(s, 'bad-term');
       else if (seen.has(term.toLowerCase()) || seenBody.has(norm(body))) skip(s, 'repeated');
       else {
         seen.add(term.toLowerCase()); seenBody.add(norm(body));
@@ -331,9 +339,32 @@ function generate(rawLines, tags = [], o = {}) {
     clozes.push({ kind: 'cloze', w: score(mm), term: mm, q: 'Fill in the blank: ' + clean(s).replace(mm, '_____'), src: s, ctx: ctxOf.get(s) || '' });
   }
 
-  const pool = { def: defs, cloze: clozes };
-  const all = shuffle([...defs, ...clozes]).sort((a, b) => b.w - a.w); // best first, so the caps keep what matters
-  const ctxByText = new Map([...defs.map(d => [d.term, d.ctx]), ...defs.map(d => [d.body, d.ctx]), ...clozes.map(c => [c.term, c.ctx])]);
+  // A plain subject-verb fact ("Ribosomes build proteins…", "The law of demand states that…") asks for its subject.
+  // The blank sits in the note's own sentence, so no grammar is made up. It runs after the clozes, so a year or an
+  // acronym in the sentence is still what gets asked.
+  const clozed = new Set(clozes.map(c => c.src)), facts = [], factTerms = new Set();
+  // This stage is the last chance for a sentence, so its own reason is more specific than the cloze stage's "no-pattern".
+  const refine = (s, r) => { if (!why.has(s) || why.get(s) === 'no-pattern') why.set(s, r); };
+  for (const s of sents) {
+    // A dated sentence belongs to the year rule above (the year is asked; a decade is too vague), never to this one.
+    if (used.has(s) || clozed.has(s) || /\b(?:1\d|20)\d\d/.test(s) || unfit(s, 25, 220) || !statementOk(s)) continue;
+    const c = clean(s), art = (c.match(/^(?:The|A|An)\s+/) || [''])[0], words = c.slice(art.length).split(' ');
+    // The subject ends at the first verb (1–4 words in); a verb is lower case mid-sentence. "is"/"are" belong to DEF.
+    const k = words.findIndex((w, i) => i >= 1 && /^[a-z]/.test(w) && isVerb(w.replace(/[,;:.]$/, '')));
+    if (k < 1 || k > 4 || /^(?:is|are|was|were|be|been|being)$/.test(words[k])) continue;
+    const term = words.slice(0, k).join(' '), rest = words.slice(k).join(' ');
+    if (!termFine(term) || /[^\w\s\-]/.test(term)) { refine(s, 'bad-term'); continue; }
+    if ((rest.match(/[A-Za-z]{4,}/g) || []).length < 2) { refine(s, 'empty-blank'); continue; }
+    if (seen.has(term.toLowerCase()) || factTerms.has(term.toLowerCase())) { refine(s, 'same-term'); continue; }
+    if (objWords.size && !score(term)) { refine(s, 'off-objectives'); continue; } // same rule as the clozes
+    factTerms.add(term.toLowerCase());
+    facts.push({ kind: 'fact', w: score(term), term, q: 'Fill in the blank: ' + art + '_____ ' + rest, src: s, ctx: ctxOf.get(s) || '' });
+  }
+
+  // A fact's wrong options are other subjects and defined terms: the same kind of thing as its answer.
+  const pool = { def: defs, cloze: clozes, fact: [...facts, ...defs] };
+  const all = shuffle([...defs, ...clozes, ...facts]).sort((a, b) => b.w - a.w); // best first, so the caps keep what matters
+  const ctxByText = new Map([...defs.map(d => [d.term, d.ctx]), ...defs.map(d => [d.body, d.ctx]), ...clozes.map(c => [c.term, c.ctx]), ...facts.map(f => [f.term, f.ctx])]);
   // Wrong options must not be arguable: not stated in the same sentence, not a variant of the answer, not saying the same thing.
   const fits = (it, o) => o !== it && !variant(o.term, it.term) && !norm(it.src).includes(norm(o.term)) && !(it.kind === 'def' && overlap(it.body, o.body) >= 0.4);
   const prefer = it => x => (ctxByText.get(x) === it.ctx ? 30 : 0) + (shape(x) === shape(it.term) ? 10 : 0);
@@ -381,6 +412,7 @@ function generate(rawLines, tags = [], o = {}) {
   // "Si" names a person: a swap never puts a thing after it, or a person after "Ang".
   const person = x => /^(?:Si|Sina)\s/.test(x.src);
   const tfText = (it, t) => {
+    if (it.kind === 'fact' && !t) return ''; // swapping a subject needs verb agreement ("Ribosomes builds"); facts only make true claims
     const swap = it.kind === 'def'
       ? verifiedSwap(it, defs, x => x.src, x => x.term, x => x.body, o => plural(o.term) === subjectPlural(it) && person(o) === person(it))
       : verifiedSwap(it, clozes, x => x.src, x => x.term, x => x.src, o => plural(o.term) === subjectPlural(it) && person(o) === person(it));
@@ -436,7 +468,7 @@ function generate(rawLines, tags = [], o = {}) {
   res.forEach((x, i) => { x.id = x.type + i; });
   // A fact that made a question but is not in the result was cut by a cap or the limit, or by a type turned off.
   const exps = list => new Set(list.map(x => x.exp)), inOut = exps(out), inTyped = exps(typed), inRes = exps(res);
-  for (const c of [...defs, ...clozes, ...enums]) {
+  for (const c of [...defs, ...clozes, ...facts, ...enums]) {
     const e = ex(c.src);
     if (inRes.has(e)) why.delete(c.src);
     else if (inOut.has(e)) why.set(c.src, inTyped.has(e) ? 'limit' : 'type-off');
