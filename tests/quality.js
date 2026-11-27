@@ -35,7 +35,7 @@ function check(q, bad) {
       if (i === q.answer) return;
       // a wrong option that is also stated in the source, or says nearly the same thing, could be argued correct
       if ((norm(o).length >= 3 && srcOf(q).includes(norm(o))) || (wset(o).size >= 4 && overlap(o, ans) >= 0.4)) bad.ambiguous++;
-      if (norm(o).length >= 3 && (norm(ans).includes(norm(o)) || norm(o).includes(norm(ans)))) bad.variant++;
+      if (norm(o).length >= 3 && norm(ans).length >= 3 && (norm(ans).includes(norm(o)) || norm(o).includes(norm(ans)))) bad.variant++;
     });
   }
   // Not worth asking: a blank with nothing left to answer from, a label posing as a list, a made-up "A" before a

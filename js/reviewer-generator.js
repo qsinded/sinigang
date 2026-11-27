@@ -21,8 +21,11 @@ function idOk(ans, val) {
   if (!v || !a) return false;
   if (a === v) return true;
   if (isAcr(A) !== isAcr(V) && abbreviates(isAcr(A) ? A : V, isAcr(A) ? V : A)) return true;
-  return v.length >= 4 && a.length >= 4 && ((a.includes(v) && v.length >= a.length * 0.6) || v.includes(a));
+  // Extra or missing words count only while the shorter side is most of the longer one, so typing every
+  // candidate ("prophase metaphase anaphase interphase") is not graded correct for "Interphase".
+  return contains(a, v) && Math.min(a.length, v.length) >= Math.max(a.length, v.length) * 0.6;
 }
+const contains = (a, v) => v.length >= 4 && a.length >= 4 && (a.includes(v) || v.includes(a));
 
 // Answer separators for enumeration items: new lines, commas, semicolons, "and"/"&".
 const LIST_SPLIT = /[,\n;]+|\s+(?:and|&)\s+|&/i;
@@ -31,7 +34,8 @@ function enumCheck(items, val) {
   const raw = String(val);
   const vals = raw.split(LIST_SPLIT).map(s => s.replace(BULLET, '').trim()).filter(Boolean);
   // The whole answer is tried as well, so an item whose own name contains "and" still matches.
-  const hit = it => idOk(it, raw) || vals.some(v => idOk(it, v));
+  // Listing everything is the task here, so the whole answer only has to contain the item.
+  const hit = it => contains(bare(it), bare(raw)) || vals.some(v => idOk(it, v));
   const got = items.filter(hit);
   return { ok: got.length === items.length, got, missing: items.filter(i => !got.includes(i)) };
 }
@@ -56,7 +60,7 @@ const overlap = (a, b) => { const x = words(a), y = words(b); let n = 0; x.forEa
 // Pick another item's term to put in place of this one's, only when the swap cannot be true: the other term is not
 // mentioned in this sentence, is not a variant of this term, and its own source says something different.
 function verifiedSwap(it, list, srcOf, termOf, textOf, fitsGrammar = () => true) {
-  const ok = list.filter(o => o !== it && norm(termOf(o)) !== norm(termOf(it))
+  const ok = list.filter(o => o !== it && !variant(termOf(o), termOf(it)) && norm(termOf(o)) !== norm(termOf(it))
     && !norm(termOf(o)).includes(norm(termOf(it))) && !norm(termOf(it)).includes(norm(termOf(o)))
     && !norm(srcOf(it)).includes(norm(termOf(o))) && overlap(textOf(it), textOf(o)) < 0.4);
   // A plural term dropped into a singular sentence reads as a typo ("Chloroplasts is the process...").
@@ -65,10 +69,11 @@ function verifiedSwap(it, list, srcOf, termOf, textOf, fitsGrammar = () => true)
 }
 // Kind of term: acronym (EAX), has a digit (IA-32), several words, or a plain word. Distractors of the same kind look as plausible.
 const shape = t => /^[A-Z][A-Z0-9_.\-]+$/.test(t) ? 'acronym' : /\d/.test(t) ? 'number' : /\s/.test(t) ? 'phrase' : 'word';
-const variant = (a, b) => { const x = norm(a), y = norm(b); return x === y || (x.length >= 3 && y.length >= 3 && (x.includes(y) || y.includes(x))); };
+const variant = (a, b) => { const x = norm(a), y = norm(b); return x === y || (x.length >= 3 && y.length >= 3 && (x.includes(y) || y.includes(x)))
+  || (isAcr(a) !== isAcr(b) && abbreviates(isAcr(a) ? a : b, isAcr(a) ? b : a)); }; // "OS" is "operating system"
 const BUL = /^(?:[•●▪◦\-*–]|\d+[.)]|[a-z][.)])\s+/;
 const NOT_TERM = /^(this|that|these|those|it|they|there|here|which|what|when|where|if|in|on|for|each|some|all|one|we|you|why|how|who|whom|whose)\b/i;
-const DEF = /^(?:(?:The|A|An)\s+)?([A-Za-z0-9.][\w .\/\-]{0,38}?)\s+(?:is defined as|is used to|refers to|stands for|means|is|are)\s+(.{15,})$/;
+const DEF = /^(?:(?:The|A|An)\s+)?([A-Za-z0-9.][\w .\/\-]{0,38}?)\s+(?:is defined as|is used to|refers to|stands for|means|is|are|was|were)\s+(.{15,})$/; // was/were: history notes are past tense
 const COLON = /^([A-Za-z.][\w .\/\-]{0,38}?)\s*(?::|\s[–—-]\s)\s*(.{20,})$/;
 const LOW = /^(note|notes|example|examples|figure|table|chapter|slide|page|summary|objectives?|introduction|references?|agenda|tips?|hints?|remember|reminders?|recap|review|q&a|questions?)$/i; // headings, not terms
 // Exam-paper furniture: instructions, rubrics and answer keys describe the test, not the subject. A definition

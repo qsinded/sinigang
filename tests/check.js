@@ -111,6 +111,20 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
   assert.strictEqual(idOk('CPU', 'RAM'), false, 'two different acronyms never match');
   assert.strictEqual(idOk('heap', 'stack'), false, 'different short words never match');
   assert.strictEqual(idOk('cache', ''), false, 'an empty answer is wrong');
+  assert.strictEqual(idOk('Interphase', 'prophase metaphase anaphase interphase telophase'), false, 'typing every candidate is not correct');
+  assert.strictEqual(idOk('Interphase', 'interphase stage'), true, 'a small extra word is still accepted');
+  assert.strictEqual(idOk('centromere', 'the centromere'), true, 'a leading article is ignored');
+  // History notes are past tense: "X was Y" is a definition too.
+  const hist = ['The Katipunan was a secret society founded by Andres Bonifacio in 1892.', 'The Malolos Constitution was the first republican constitution in Asia.',
+    'La Liga Filipina was a civic organization founded by Rizal to unite Filipinos.', 'The Treaty of Paris was the agreement that ended the Spanish-American War.'];
+  assert(generate(hist).length >= 3, 'past-tense notes produce questions');
+  // An acronym and its spelled-out form are the same answer, so one is never a wrong option for the other.
+  const osNotes = ['An operating system is software that manages hardware and software resources.', 'The OS was first developed in the 1950s at IBM.',
+    'A process is a program that is currently running in memory.', 'The kernel is the core of the system that talks to the hardware.', 'A thread is the smallest unit of work the scheduler runs.'];
+  for (let i = 0; i < 30; i++) generate(osNotes).filter(q => q.type === 'mc').forEach(q => {
+    const lo = q.options.map(o => o.toLowerCase()), key = lo[q.answer];
+    if (key === 'os' || key === 'operating system') assert(!(lo.includes('os') && lo.includes('operating system')), 'both correct options offered: ' + q.q);
+  });
   // Phase 2: outline lines are skipped, filler is stripped, and a "false" statement is only made when it cannot be true
   const course = [
     'Topics covered', '• Module 1 — Computer organization, functional units, instruction cycle, number systems', '• Module 2 — IA-32 processor architecture, registers, memory management, protection and multitasking',
