@@ -148,6 +148,14 @@ close.
 | 5 | B1–B4 question wording | polish once the volume is there |
 | 6 | Phases 5–6 of `ROADMAP-FIXES.md` | diagrams and insight |
 
+## Student features (2026-11-27)
+
+Built after two student sessions on a phone: Matching type and Modified true or false (Philippine exam formats),
+Periodical exam (one paper from several reviewers), My mistakes, Cram mode, Share by link, Quiz Bee, Blurt, and
+sample notes on a first visit. Sessions across reviewers use copies whose answers and schedule are written back
+to the reviewer each question came from. Not built, waiting on a decision: reading a photo of notes (OCR), which
+needs a 2–10 MB library and breaks the no-dependency rule.
+
 ## Out of scope
 
 Same as the other roadmaps: AI-generated questions, a hosted service, accounts or sync, and

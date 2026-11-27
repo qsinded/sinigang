@@ -21,6 +21,24 @@ no account and no build step.
   people as options; a subject blank only offers terms that agree with its verb ("_____ build" never offers
   "nucleus"); an acronym or year gets its own kind; and no wrong option appears more than twice in one set.
   When the notes are too small for that, the item is asked by typing instead.
+- **Filipino exam formats**: Matching type (sets of 4–5 descriptions, each with a term picker and credit per pair)
+  and Modified true or false (the note's sentence with a [bracketed] term: write TRUE, or the word that belongs
+  there). Tabs follow an exam paper: Multiple choice, Modified true or false, Matching type, Identification,
+  Enumeration.
+- **Periodical exam**: pick the reviewers an exam covers; their questions become one paper, "Test I. Multiple
+  choice", "Test II. …", and each answer also counts in its own reviewer.
+- **My mistakes**: every question answered wrong, in every reviewer, asked again in one session; a right answer
+  is written back to the reviewer it came from.
+- **Cram mode**: when a reviewer's exam is today or tomorrow, every card not yet known, missed ones first, no
+  daily limit.
+- **Share in the group chat**: "Share" packs a reviewer into a link (compressed, no server) with its questions and
+  notes but never the sharer's answers or schedule; opening the link asks, then imports it like a backup file.
+  Too big for a link, or with diagram images: use "Save file".
+- **Quiz Bee**: 2–4 players pass one phone, with a "Pass the phone to …" screen before each turn, a countdown and
+  a scoreboard. It never changes the owner's progress.
+- **Blurt**: write everything you remember, then see the key terms recalled and missed (each with its note) and
+  study the missed ones as flashcards.
+- **Sample notes** on a first visit (General Biology, or Araling Panlipunan in Filipino) build a reviewer in one tap.
 - **Skip report**: the check screen lists the note lines that made no question, grouped by why, with how to
   reword them (try *X is …* or *X does …*). When a file makes fewer than 3 questions, the same report opens
   under the error, so the student can fix the notes instead of hitting a dead end. Headings, objectives and
