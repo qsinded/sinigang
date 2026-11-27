@@ -475,7 +475,7 @@ function sourcePanel(r, it) {
 // Labels printed on a diagram image cannot be erased, so the author boxes them out instead. A cover
 // is a normalized rectangle on the reviewer, drawn over the image in practice, flashcards,
 // recitation and printouts, but only faintly outlined while it is being placed or removed.
-const COVER_MAX = 24, COVER_MIN = 0.01;
+const COVER_MAX = 60, COVER_MIN = 0.01; // 60: a busy diagram found by OCR can have more labels than anyone draws by hand
 const unit = n => Math.min(1, Math.max(0, n));
 function cleanMasks(v) {
   if (!Array.isArray(v)) return [];
@@ -504,6 +504,29 @@ function moveBox(m, dx, dy) {
 }
 function resizeBox(m, dw, dh) {
   return { x: m.x, y: m.y, w: Math.min(1 - m.x, Math.max(COVER_MIN, m.w + dw)), h: Math.min(1 - m.y, Math.max(COVER_MIN, m.h + dh)) };
+}
+// Text found on a diagram (Tesseract line boxes, in pixels) becomes covers. A line counts when the reader
+// is fairly sure (confidence 60+) and it has 2+ letters or digits; that drops specks and diagram strokes
+// read as "|" or "—". Boxes are padded a little, touching ones merge into one cover, and a label that
+// an existing cover already hides (half its area or more) is skipped, so searching twice adds nothing.
+const LABEL_PAD = 0.005, LABEL_MIN_CONFIDENCE = 60;
+function labelCovers(lines, width, height, existing) {
+  if (!width || !height) return [];
+  const area = b => b.w * b.h;
+  const overlap = (a, b) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+  const touches = (a, b) => a.x <= b.x + b.w && b.x <= a.x + a.w && a.y <= b.y + b.h && b.y <= a.y + a.h;
+  const union = (a, b) => { const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y); return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y }; };
+  let boxes = (lines || []).filter(l => l && l.bbox && l.confidence >= LABEL_MIN_CONFIDENCE && (String(l.text).match(/[\p{L}\p{N}]/gu) || []).length >= 2).map(l => {
+    const x = unit(l.bbox.x0 / width - LABEL_PAD), y = unit(l.bbox.y0 / height - LABEL_PAD);
+    return { x, y, w: unit(l.bbox.x1 / width + LABEL_PAD) - x, h: unit(l.bbox.y1 / height + LABEL_PAD) - y };
+  });
+  for (let merged = true; merged;) { // merge until no two boxes touch
+    merged = false;
+    for (let i = 0; i < boxes.length && !merged; i++) for (let j = i + 1; j < boxes.length; j++) {
+      if (touches(boxes[i], boxes[j])) { boxes[i] = union(boxes[i], boxes[j]); boxes.splice(j, 1); merged = true; break; }
+    }
+  }
+  return boxes.filter(b => b.w >= COVER_MIN && b.h >= COVER_MIN && !(existing || []).some(m => overlap(b, m) >= area(b) / 2));
 }
 function coverSpans(masks, quiet) {
   return (masks || []).map(m => h('span', { class: 'cover', 'aria-hidden': quiet ? 'true' : null, style: coverStyle(m) }));

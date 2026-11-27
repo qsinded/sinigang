@@ -274,6 +274,18 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   // Covers are normalized boxes: a pointer and a drag must mean the same thing at any display size.
   assert.deepStrictEqual(plain(ctx.pointInRect(50, 25, { left: 0, top: 0, width: 100, height: 100 })), { x: 0.5, y: 0.25 }, 'a pointer becomes a fraction of the image');
   assert.strictEqual(ctx.pointInRect(0, 0, { left: 0, top: 0, width: 0, height: 10 }), null, 'no point without a rendered image');
+  // Found text becomes covers: Tesseract line boxes in pixels -> padded fractions of the picture.
+  const L = (text, confidence, x0, y0, x1, y1) => ({ text, confidence, bbox: { x0, y0, x1, y1 } });
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+  const lineCovers = plain(ctx.labelCovers([L('Aorta', 91, 100, 50, 200, 70), L('|', 95, 10, 10, 12, 60), L('Left atrium', 59, 300, 300, 400, 320), L('—', 80, 0, 0, 50, 2)], 1000, 500, []));
+  assert.strictEqual(lineCovers.length, 1, 'only a confident line with letters becomes a cover');
+  assert.ok(near(lineCovers[0].x, 0.095) && near(lineCovers[0].y, 0.095) && near(lineCovers[0].w, 0.11) && near(lineCovers[0].h, 0.05), 'the box is a padded fraction of the picture');
+  assert.strictEqual(ctx.labelCovers([L('RA', 60, 100, 100, 130, 120)], 1000, 500, []).length, 1, 'a two-letter label at the threshold counts');
+  const edge = plain(ctx.labelCovers([L('Top', 90, 0, 0, 100, 20)], 1000, 500, []))[0];
+  assert.ok(edge.x === 0 && edge.y === 0, 'a box at the edge is clamped to the picture');
+  assert.strictEqual(ctx.labelCovers([L('Left', 90, 100, 100, 160, 120), L('ventricle', 90, 158, 100, 260, 120)], 1000, 500, []).length, 1, 'touching boxes merge into one cover');
+  assert.strictEqual(ctx.labelCovers([L('Aorta', 91, 100, 50, 200, 70)], 1000, 500, lineCovers).length, 0, 'a label already covered is not covered twice');
+  assert.strictEqual(ctx.cleanMasks(Array.from({ length: 61 }, (_, i) => ({ x: 0, y: i / 100, w: 0.1, h: 0.01 }))).length, 60, 'a reviewer keeps up to 60 covers');
   assert.deepStrictEqual(plain(ctx.boxFromPoints({ x: 0.75, y: 0.75 }, { x: 0.25, y: 0.25 })), { x: 0.25, y: 0.25, w: 0.5, h: 0.5 }, 'a drag becomes a box in any direction');
   assert.strictEqual(ctx.boxFromPoints({ x: 0.5, y: 0.5 }, { x: 0.505, y: 0.5 }), null, 'a stray tap does not leave a sliver');
   assert.deepStrictEqual(plain(ctx.moveBox({ x: 0.7, y: 0.7, w: 0.2, h: 0.2 }, 0.5, 0)), { x: 0.8, y: 0.7, w: 0.2, h: 0.2 }, 'moving a cover keeps it inside the image');
