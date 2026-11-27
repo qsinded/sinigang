@@ -393,7 +393,12 @@ function generate(rawLines, tags = [], o = {}) {
         // "The CPU is the CPU of the computer" leaves "The _____ of the computer": nothing to answer from.
         if ((mask.replace(/_____/g, ' ').match(/[A-Za-z]{4,}/g) || []).length < 2) { skip(s, 'empty-blank'); continue; }
         const who = isPerson(term, body, s);
-        defs.push({ kind: 'def', w: score(term), term, body: cap1(body), who, q: (who ? 'Who is described? ' : 'Which term is described? ') + cap1(mask), src: s, ctx: ctxOf.get(s) || '' });
+        // "Telophase is when two new nuclei form…": a description opening with "when"/"where"/"if"… is not a statement,
+        // so the term is blanked in the note's own sentence, and the clause is never offered as a statement option.
+        const clause = /^(?:when|whenever|where|if|because|how|why|what)\b/i.test(body), c = clean(s), at = c.toLowerCase().indexOf(term.toLowerCase());
+        const q = clause && at >= 0 ? 'Fill in the blank: ' + c.slice(0, at) + '_____' + c.slice(at + term.length)
+          : (who ? 'Who is described? ' : 'Which term is described? ') + cap1(mask);
+        defs.push({ kind: 'def', w: score(term), term, body: cap1(body), who, clause, q, src: s, ctx: ctxOf.get(s) || '' });
         used.add(s);
       }
     }
@@ -527,8 +532,8 @@ function generate(rawLines, tags = [], o = {}) {
       }
     }
     // Half the time ask a definition the other way round, so a rebuilt set is not the same questions.
-    if (it.kind === 'def' && dist.length === 3 && nMC < ITEM_CAP.mc && Math.random() < 0.5) {
-      const bodies = fresh(defs.filter(d => fits(it, { ...d, term: d.body }) && !norm(d.body).includes(norm(it.term)) && sameKind(it, d)).map(d => d.body));
+    if (it.kind === 'def' && !it.clause && dist.length === 3 && nMC < ITEM_CAP.mc && Math.random() < 0.5) {
+      const bodies = fresh(defs.filter(d => fits(it, { ...d, term: d.body }) && !norm(d.body).includes(norm(it.term)) && sameKind(it, d) && !d.clause).map(d => d.body));
       const opts = shuffle([it.body, ...near(it.body, bodies, x => (ctxByText.get(x) === it.ctx ? 30 : 0))]);
       if (opts.length === 4 && keyOk(opts, it.body)) {
         out.push({ w: it.w, type: 'mc', q: 'Which statement describes "' + it.term + '"?', options: opts, answer: opts.indexOf(it.body), exp: ex(it.src) });

@@ -305,6 +305,18 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
     ['herbivores', 'Animals that eat only plants'], ['mitosis', 'Ang paghahati ng isang selula']])
     assert((calledQ.get(a) || '').includes(desc), '"' + a + '" is asked from its description; got: ' + calledQ.get(a));
   assert(!calledQ.has('national hero of the Philippines'), 'a name before "is known as" stays the answer, not its nickname');
+  // "Telophase is when two new nuclei form…": a description that opens with "when"/"where"/"if"… is not a statement,
+  // so the term is blanked in the note's own sentence and that clause is never offered as a statement option.
+  const whenNotes = ['Telophase is when two new nuclei form around the separated chromosomes.', 'Anaphase is when sister chromatids are pulled to opposite poles.',
+    'Mitosis is the division of a nucleus into two identical nuclei.', 'Meiosis is a cell division that produces four haploid gametes.',
+    'Interphase is the stage where the cell grows and copies its DNA.', 'Cytokinesis is the division of the cytoplasm after mitosis.'];
+  let sawWhen = 0;
+  for (let i = 0; i < 30; i++) generate(whenNotes, [], { noTF: true }).forEach(q => {
+    assert(!/^Which term is described\? (?:When|Where|If)\b/.test(q.q), 'a clause is not asked as a description: ' + q.q);
+    (q.options || []).forEach(o => assert(!/^(?:When|Where|If)\b/.test(o), 'a clause is not a statement option: ' + q.options.join(' | ')));
+    if (q.q === 'Fill in the blank: _____ is when two new nuclei form around the separated chromosomes.') sawWhen++;
+  });
+  assert(sawWhen > 0, 'the term is blanked in its own "is when" sentence');
   // A fact that made a question but was cut by the limit, or by a type the student turned off, says so.
   const capped = generate(skipNotes, [], { max: 1 });
   assert(capped.skipped.some(s => s.reason === 'limit'), 'items cut by the limit are reported');
