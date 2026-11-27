@@ -886,5 +886,25 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   const order = vm.runInContext('flashOrder.map(i => cur.items[i].id)', ctx);
   assert.deepStrictEqual(plain(order), ['id0', 'id2'], 'cram: the missed card first, the known card left out');
 
+  // Share in a group chat: the link itself carries the questions and notes (compressed), never the sharer's answers or
+  // schedule; opening it asks, then imports through the same validation as a backup file. Real browser APIs for this part.
+  const stubs = { Blob: sandbox.Blob, ask: ctx.ask };
+  Object.assign(sandbox, { Blob, Response, CompressionStream, DecompressionStream, TextEncoder, TextDecoder, btoa, atob,
+    location: { href: 'https://example.test/app/', pathname: '/app/', search: '', hash: '' } });
+  const link = await ctx.shareLink(vm.runInContext('R[0]', ctx));
+  assert.match(link, /^https:\/\/example\.test\/app\/#share=[A-Za-z0-9_-]+$/, 'a link with the reviewer packed in');
+  assert.ok(link.length <= 8000, 'short enough for a chat app');
+  const packed = await ctx.unpack(link.split('#share=')[1]);
+  assert.deepStrictEqual(plain(packed.reviewers[0].ans), {}, 'the sharer\'s answers are not shared');
+  assert.strictEqual(packed.reviewers[0].plan.exam, '', 'nor the exam date');
+  vm.runInContext('R = []', ctx); ctx.ask = async () => true;
+  await ctx.openShared(link.split('#share=')[1]);
+  assert.strictEqual(vm.runInContext('R.length + " " + R[0].title', ctx), '1 Bio', 'opening the link adds the reviewer');
+  await ctx.openShared('this-is-not-a-reviewer');
+  assert.match(screenText(appEl), /share link is broken/, 'a broken link is refused politely');
+  const huge = ctx.cleanReviewer({ ...base, title: 'Huge', items: Array.from({ length: 400 }, (_, i) => ({ id: 'id' + i, type: 'id', q: 'Question ' + i + ' ' + Math.random().toString(36).repeat(4), answer: 'a' + Math.random().toString(36), exp: '' })) });
+  assert.strictEqual(await ctx.shareLink(huge), null, 'a reviewer too big for a link is not shared by link');
+  Object.assign(sandbox, stubs); ctx.ask = stubs.ask;
+
   console.log('app smoke checks passed');
 })().catch(e => { console.error(e); process.exit(1); });

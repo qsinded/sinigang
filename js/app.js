@@ -559,6 +559,47 @@ async function exportAll(only) {
   note = 'Saved ' + list.length + ' reviewer(s)' + (nImg ? ' with ' + nImg + ' diagram image(s)' : '') + ' to reviewers.json. Check your Downloads.';
   home();
 }
+// Share a reviewer in a group chat with no server: the reviewer (questions and notes, never the sharer's answers,
+// schedule, flags or exam date) is compressed into the link itself. Opening the link asks, then imports it through
+// the same validation as a backup file.
+const SHARE_MAX = 8000; // characters: longer links get cut or refused by some chat apps
+const toB64url = bytes => { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
+async function pack(obj) {
+  const z = new Response(new Blob([new TextEncoder().encode(JSON.stringify(obj))]).stream().pipeThrough(new CompressionStream('deflate-raw')));
+  return toB64url(new Uint8Array(await z.arrayBuffer()));
+}
+async function unpack(text) {
+  if (!/^[A-Za-z0-9_-]+$/.test(text) || text.length > SHARE_MAX * 2) throw new Error('not a share link');
+  const bin = atob(text.replace(/-/g, '+').replace(/_/g, '/')), bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+  return JSON.parse(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text());
+}
+async function shareLink(r) {
+  if (r.items.some(it => it.type === 'img')) return null; // diagram images do not fit in a link; "Save file" carries them
+  const bare = { title: r.title, items: r.items, opts: r.opts, hidden: r.hidden || [], removed: [], ans: {}, plan: { exam: '', srs: {} }, flags: [] };
+  const base = location.href.split('#')[0] + '#share=';
+  for (const withNotes of [true, false]) { // the notes make "Show in my notes" and Shuffle work; without them it may still fit
+    const link = base + await pack({ version: 2, reviewers: [withNotes ? { ...bare, src: r.src || [], tags: r.tags || [] } : bare], images: {} });
+    if (link.length <= SHARE_MAX) return link;
+  }
+  return null;
+}
+async function shareReviewer(r) {
+  const link = await shareLink(r);
+  if (!link) { note = '"' + r.title + '" is too big for a link' + (r.items.some(it => it.type === 'img') ? ' (it has diagram images)' : '') + '. Use "Save file" and send the file instead.'; home(); return; }
+  try { if (navigator.share) { await navigator.share({ title: r.title, text: 'Reviewer: ' + r.title, url: link }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
+  try { await navigator.clipboard.writeText(link); note = 'Link copied. Paste it in your group chat; it opens "' + r.title + '" for your classmates.'; }
+  catch (e) { note = 'Copy this link and send it: ' + link; }
+  home();
+}
+async function openShared(text) {
+  if (typeof history !== 'undefined' && history.replaceState) history.replaceState(null, '', location.pathname + location.search); // a reload does not import again
+  try {
+    const payload = await unpack(text), first = cleanBackup(payload).reviewers[0];
+    if (!first) throw new Error('no reviewer');
+    if (!(await ask('Add the shared reviewer "' + first.title + '" (' + first.items.length + ' questions)?', 'Add'))) { home(); return; }
+    await importFile({ text: async () => JSON.stringify(payload) });
+  } catch (e) { note = 'This share link is broken or incomplete. Ask for it again, or for the reviewer file.'; home(); }
+}
 async function importFile(f) {
   try {
     const { reviewers, images } = cleanBackup(JSON.parse(await f.text()));
@@ -1299,6 +1340,7 @@ function home() {
       h('div', { class: 'row actions' },
         dueCount(r) > 0 && h('button', { class: 'btn', onclick: () => { open(r); startFlash('due', optCap); } }, 'Review ' + dueCount(r)),
         h('button', { class: 'btn alt', onclick: () => open(r) }, 'Open'),
+        h('button', { class: 'btn alt', onclick: () => shareReviewer(r) }, 'Share'),
         h('button', { class: 'btn alt', onclick: () => exportAll(r) }, 'Save file'),
         h('button', { class: 'btn alt', onclick: async () => { if (await ask('Delete "' + r.title + '"?', 'Delete')) deleteReviewer(r); } }, 'Delete')));
   fill(); cur = null; draw(node, 'home'); if (n) say(n);
@@ -1870,4 +1912,5 @@ if (typeof matchMedia === 'function') {
   const resize = () => { if (!quizView && cur && lastScreen === 'quiz') quiz(); };
   if (mq.addEventListener) mq.addEventListener('change', resize); else if (mq.addListener) mq.addListener(resize);
 }
-home();
+// A shared reviewer arrives in the link (#share=...); otherwise the app starts at home.
+if (typeof location !== 'undefined' && /^#share=/.test(location.hash || '')) openShared(location.hash.slice(7)); else home();
