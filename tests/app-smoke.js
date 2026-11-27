@@ -383,6 +383,8 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   vm.runInContext("diagURL = 'blob:x'; diagBlob = new Blob();", ctx);
   ctx.diagramSetup();
   const state = js => plain(vm.runInContext(js, ctx));
+  const imageCard = find(appEl, e => e.className === 'card' && find(e, x => x.tagName === 'IMG').length)[0];
+  assert.ok(imageCard && find(imageCard, x => x.attrs && x.attrs.id === 'part-name').length === 1, 'the part name box is in the same card as the picture, so naming a part does not scroll away from it');
   const pinBtns = () => find(appEl, e => e.tagName === 'BUTTON' && String(e.className).split(' ').includes('pin'));
   const pendingPin = () => pinBtns().find(e => e.className.includes('pending'));
   const press = (el, key, shiftKey = false) => el.onkeydown({ key, shiftKey, preventDefault() {} });
@@ -715,6 +717,8 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   ctx.clearDiagram();
   vm.runInContext("R = R.filter(r => r.title !== 'cell' && r.title !== 'gone')", ctx);
   ctx.open(imgReviewer); // the cover editor is opened from the reviewer on screen
+  const strayZero = find(appEl, e => String(e.className).split(' ').includes('row') && e.children.some(c => c.nodeType === 3 && c.textContent === '0'));
+  assert.strictEqual(strayZero.length, 0, 'no stray "0" in a button row when nothing was removed'); 
   ctx.openCovers(imgReviewer);
   assert.match(screenText(appEl), /Hide printed labels/, 'the label-cover editor renders');
   const editing = find(appEl, e => String(e.className).includes('cover editing'));
@@ -1076,13 +1080,20 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   assert.match(screenText(appEl), /Q 1 of 3/, 'one mode shows the position');
   assert.strictEqual(screenText(appEl).includes('q1'), false, 'only the current card is rendered');
   assert.strictEqual(screenText(appEl).includes('q2'), false, 'the rest of the part is not rendered yet');
+  let movedTo = null;
+  El.prototype.focus = function () { movedTo = this; };
   ctx.nextQuiz();
   assert.match(screenText(appEl), /Q 2 of 3/, 'Next moves one card');
+  assert.ok(movedTo && movedTo.attrs.id === 'q-' + oneR.items[1].id, 'Next puts focus on the new question, not the top of the page');
   assert.match(screenText(appEl), /q1/);
   assert.strictEqual(screenText(appEl).includes('q2'), false, 'the next card is still hidden');
   ctx.prevQuiz();
+  assert.ok(movedTo && movedTo.attrs.id === 'q-' + oneR.items[0].id, 'Previous does the same');
   ctx.nextQuiz();
   ctx.answer(oneR.items[1], oneR.items[1].answer);
+  // 4: the tab row scrolls sideways to the active tab (centred, never before the start).
+  assert.strictEqual(ctx.tabScrollLeft(400, 120, 360), 280, 'a tab past the right edge is brought to the middle');
+  assert.strictEqual(ctx.tabScrollLeft(10, 120, 360), 0, 'a tab near the start needs no scroll');
   assert.match(screenText(appEl), /Correct\./);
   assert.match(screenText(appEl), /Next question →/, 'feedback offers the next card');
   const flagId = oneR.items[1].id;

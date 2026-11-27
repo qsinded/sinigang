@@ -1465,6 +1465,13 @@ function diagramSetup() {
       diagURL
         ? h('span', { class: 'diagram' }, img, pins)
         : h('p', { class: 'k' }, diagBusy ? 'Preparing the image…' : 'No image chosen yet. PNG, JPEG or WebP.'),
+      // Naming sits right under the picture: tap a part, type its name, tap the next part, with no scrolling.
+      diagURL && h('div', { class: 'row', style: 'margin-top:4px' },
+        h('input', { type: 'text', id: 'part-name', style: 'flex:1;min-width:0', 'aria-label': 'Name of the marked part', placeholder: diagPending ? 'Name the marked part' : 'Tap the image first', value: diagNameText, oninput: e => {
+          diagNameText = e.target.value;
+          const btn = document.getElementById('add-part'); if (btn) btn.disabled = !diagNameText.trim();
+        }, onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); addPart(); } } }),
+        h('button', { class: 'btn', id: 'add-part', style: 'flex:0 0 auto', disabled: !diagPending || !diagNameText.trim() ? '' : null, onclick: addPart }, 'Add part')),
       diagURL && h('p', null, h('button', { class: 'btn alt', onclick: placeMarker }, 'Place a marker at the centre')),
       diagURL && !editing && labelFinderNote(),
       diagURL && h('p', { class: 'k' }, 'Tap the image to place a marker, then drag it or use the arrow keys to fine-tune. ' + (editing ? 'Nothing changes until you save; images' : 'Choosing another image starts over; images') + ' are resized to 1600 px and stay on this device.')),
@@ -1476,13 +1483,7 @@ function diagramSetup() {
             h('input', { type: 'text', style: 'flex:1;min-width:0', 'aria-label': 'Name of part ' + (i + 1), value: p.name, oninput: e => { p.name = e.target.value; } }),
             h('button', { class: 'btn alt', style: 'flex:0 0 auto', 'aria-label': 'Remove part ' + (i + 1) + ': ' + p.name, onclick: () => { diagParts.splice(i, 1); diagramSetup(); say(p.name + ' removed.'); } }, 'Remove'))))
         : h('p', { class: 'k' }, 'No parts labeled yet.'),
-      h('div', { class: 'row' },
-        h('input', { type: 'text', id: 'part-name', 'aria-label': 'Name of the marked part', placeholder: diagPending ? 'Name the marked part' : 'Tap the image first', value: diagNameText, oninput: e => {
-          diagNameText = e.target.value;
-          const btn = document.getElementById('add-part'); if (btn) btn.disabled = !diagNameText.trim();
-        }, onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); addPart(); } } }),
-        h('button', { class: 'btn', id: 'add-part', disabled: !diagPending || !diagNameText.trim() ? '' : null, onclick: addPart }, 'Add part')),
-      h('p', { class: 'k' }, 'Label at least 3 parts.')),
+      h('p', { class: 'k' }, 'Label at least 3 parts. Fix a name here; tap Remove to drop a part.')),
     diagURL && h('div', { class: 'card' },
       h('h2', { class: 'k' }, '3 · Name and practice'),
       h('input', { type: 'text', 'aria-label': 'Reviewer title', placeholder: 'Reviewer title (for example: Parts of the heart)', value: diagTitleText, oninput: e => { diagTitleText = e.target.value; } }),
@@ -1913,12 +1914,14 @@ function nextQuiz() {
   if (!cur) return;
   const n = cur.items.filter(i => i.type === tab).length;
   quizIndex = Math.min(quizIndex + 1, Math.max(0, n - 1));
-  quiz(); scrollTo(0, 0);
+  oneQEl = null; quiz(); scrollTo(0, 0);
+  if (oneQEl) oneQEl.focus({ preventScroll: true });
 }
 function prevQuiz() {
   if (!cur) return;
   quizIndex = Math.max(0, quizIndex - 1);
-  quiz(); scrollTo(0, 0);
+  oneQEl = null; quiz(); scrollTo(0, 0);
+  if (oneQEl) oneQEl.focus({ preventScroll: true });
 }
 function toggleFlag(r, it) {
   const set = new Set(r.flags || []);
@@ -2300,13 +2303,15 @@ function statsPanel(r) {
         h('tbody', null, s.types.map(row), s.types.length > 1 && row(s.all)))),
     h('p', { class: 'stats-note' }, 'Accuracy uses partial enumeration credit. Due includes items scheduled for today or earlier; an item with no schedule is due now.'));
 }
+// One-question view: the question shown, so Next and Previous can put focus on it (not the top of the page).
+let oneQEl = null;
 function quizItem(r, it, idx, one) {
   const a = r.ans[it.id], over = !!(timed && timed.over && timed.tab === tab), flagged = (r.flags || []).includes(it.id);
   return h('div', { class: 'item' + (one ? ' one' : '') },
     h('div', { class: 'k' }, 'Q' + (idx + 1) + (a ? ' · ' : ''), a && h('span', { class: a.ok ? 'good' : 'miss' }, a.ok ? 'correct' : 'missed'),
       h('button', { class: 'btn alt flag-btn', 'aria-pressed': flagged ? 'true' : 'false', onclick: () => toggleFlag(r, it) }, flagged ? '⚑ Flagged' : '⚑ Flag'),
       !['match', 'mtf'].includes(it.type) && !r.virtual && h('button', { class: 'btn alt', onclick: () => openItemEditor({ items: r.items, hidden: r.hidden || (r.hidden = []), reviewer: r, index: r.items.indexOf(it), back: quiz }) }, 'Edit')),
-    h('div', { class: 'q', id: 'q-' + it.id }, shownQ(it)),
+    (one ? (oneQEl = h('div', { class: 'q', id: 'q-' + it.id, tabindex: '-1' }, shownQ(it))) : h('div', { class: 'q', id: 'q-' + it.id }, shownQ(it))),
     it.type === 'mc'
       ? h('div', { role: 'group', 'aria-labelledby': 'q-' + it.id }, it.options.map((o, oi) => h('button', { class: 'opt' + (a ? (oi === it.answer ? ' ok' : oi === a.val ? ' bad' : '') : ''), disabled: a || over ? '' : null, onclick: () => answer(it, oi) }, h('b', null, 'ABCD'[oi]), capFirst(o), a && oi === it.answer && h('span', { class: 'mark' }, '✓ Correct answer'), a && oi === a.val && oi !== it.answer && h('span', { class: 'mark' }, '✗ Your answer'))))
       : it.type === 'img' && choiceMode(r)
@@ -2383,7 +2388,7 @@ function quiz() {
           !r.virtual && h('button', { class: 'btn alt', onclick: shuffleAll }, r.src ? 'Shuffle · new questions' : 'Shuffle'),
           !r.virtual && h('button', { class: 'btn alt', onclick: rename }, 'Rename'),
           !r.virtual && h('button', { class: 'btn alt', onclick: () => openItemEditor({ items: r.items, hidden: r.hidden || (r.hidden = []), reviewer: r, index: -1, back: quiz }) }, 'Add a question'),
-          (r.removed && r.removed.length) && h('button', { class: 'btn alt', onclick: () => removedScreen(r) }, 'Removed questions (' + r.removed.length + ')'),
+          r.removed && r.removed.length > 0 && h('button', { class: 'btn alt', onclick: () => removedScreen(r) }, 'Removed questions (' + r.removed.length + ')'),
           !r.virtual && ts.includes('img') && h('button', { class: 'btn alt', onclick: () => openCovers(r) }, r.masks && r.masks.length ? 'Edit label covers' : 'Hide printed labels'),
           !r.virtual && ts.includes('img') && h('button', { class: 'btn alt', onclick: () => editDiagram(r) }, 'Edit parts'),
           h('button', { class: 'btn alt', onclick: printPart }, 'Print this part')),
@@ -2437,7 +2442,11 @@ function quiz() {
     statsPanel(r));
   flashing = false;
   draw(node, 'quiz');
+  // The tab row scrolls sideways on a phone; bring the active tab into view without moving the page.
+  const onTab = [...tabs.children].find(c => String(c.className).split(' ').includes('on'));
+  if (onTab && tabs.scrollWidth > tabs.clientWidth) tabs.scrollLeft = tabScrollLeft(onTab.offsetLeft, onTab.offsetWidth, tabs.clientWidth);
 }
+function tabScrollLeft(left, width, strip) { return Math.max(0, Math.round(left - (strip - width) / 2)); }
 
 // Keys for laptops. Typing fields keep their own keys; Enter on a text answer is wired on the field itself.
 document.addEventListener('keydown', e => {

@@ -1,6 +1,6 @@
-:root{--bg:#eef0f4;--ink:#14213d;--mut:#566070;--acc:#c28f00;--ok:#166b3a;--okbg:#e3f2e8;--bad:#c0392b;--on-bad:#fff;--on-acc:#14213d;--badbg:#fbe9e7;--card:#fff;--line:#d5d9e0;--edge:#6f7a8c;--shadow:#00000012;--cover:#fff}
-@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#10141c;--ink:#e8ebf2;--mut:#98a1b3;--acc:#e0aa1a;--ok:#4cc17f;--okbg:#14301f;--bad:#ff7b6b;--on-bad:#14213d;--on-acc:#14213d;--badbg:#3a1a17;--card:#1a2030;--line:#2c3446;--edge:#7c869b;--shadow:#00000040;--cover:#eef1f7}}
-:root[data-theme=dark]{--bg:#10141c;--ink:#e8ebf2;--mut:#98a1b3;--acc:#e0aa1a;--ok:#4cc17f;--okbg:#14301f;--bad:#ff7b6b;--on-bad:#14213d;--on-acc:#14213d;--badbg:#3a1a17;--card:#1a2030;--line:#2c3446;--edge:#7c869b;--shadow:#00000040;--cover:#eef1f7}
+:root{--bg:#eef0f4;--ink:#14213d;--mut:#566070;--acc:#c28f00;--ok:#166b3a;--okbg:#e3f2e8;--bad:#c0392b;--on-bad:#fff;--on-acc:#14213d;--acc-text:#805c00;--badbg:#fbe9e7;--card:#fff;--line:#d5d9e0;--edge:#6f7a8c;--shadow:#00000012;--cover:#fff}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#10141c;--ink:#e8ebf2;--mut:#98a1b3;--acc:#e0aa1a;--acc-text:#e0aa1a;--ok:#4cc17f;--okbg:#14301f;--bad:#ff7b6b;--on-bad:#14213d;--on-acc:#14213d;--badbg:#3a1a17;--card:#1a2030;--line:#2c3446;--edge:#7c869b;--shadow:#00000040;--cover:#eef1f7}}
+:root[data-theme=dark]{--bg:#10141c;--ink:#e8ebf2;--mut:#98a1b3;--acc:#e0aa1a;--acc-text:#e0aa1a;--ok:#4cc17f;--okbg:#14301f;--bad:#ff7b6b;--on-bad:#14213d;--on-acc:#14213d;--badbg:#3a1a17;--card:#1a2030;--line:#2c3446;--edge:#7c869b;--shadow:#00000040;--cover:#eef1f7}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:1rem/1.5 system-ui,sans-serif}
 main,.site{max-width:1100px;margin:0 auto;padding:20px 16px 60px}
@@ -32,7 +32,7 @@ input[type=file]::file-selector-button{min-height:44px;font:inherit;padding:0 14
 input[type=text],textarea{min-height:44px;width:100%;font:inherit;padding:10px;border:1.5px solid var(--edge);border-radius:6px;background:var(--card);color:var(--ink)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;margin:12px 0}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.tabs{display:flex;gap:18px;border-bottom:1px solid var(--line);margin:16px 0;overflow-x:auto}
+.tabs{position:relative;display:flex;gap:18px;border-bottom:1px solid var(--line);margin:16px 0;overflow-x:auto}
 .tab{background:none;border:0;border-bottom:3px solid transparent;padding:8px 0;min-height:44px;color:var(--mut);white-space:nowrap}
 .tab.on{color:var(--ink);font-weight:700;border-color:var(--acc)}
 .bar{height:6px;background:var(--line);border-radius:3px;flex:1;min-width:80px}
@@ -60,7 +60,7 @@ input[type=text],textarea{min-height:44px;width:100%;font:inherit;padding:10px;b
 mark{background:var(--okbg);color:var(--ink);padding:0 2px;border-radius:2px}
 .plan label{color:var(--mut)}
 input[type=date]{font:inherit;min-height:44px;padding:0 10px;border:1.5px solid var(--edge);border-radius:6px;background:var(--card);color:var(--ink)}
-a.l{color:var(--acc);cursor:pointer;text-decoration:underline;background:none;border:0;padding:0}
+a.l{color:var(--acc-text);cursor:pointer;text-decoration:underline;background:none;border:0;padding:0}
 
 /* Flipcards */
 .flip-progress-row{display:flex;align-items:center;gap:12px;margin:18px 0 12px}
@@ -198,7 +198,7 @@ p.k,.card>.k:not(h2),.err+.k{font:inherit;text-transform:none;letter-spacing:0}
 .item.one{margin:10px 0 12px;padding:18px;border:1px solid var(--line);border-radius:14px;background:var(--card);box-shadow:0 1px 2px var(--shadow),0 8px 22px var(--shadow)}
 .item.one .q{font-size:1.1rem;line-height:1.45}
 .flag-btn{padding:6px 10px;min-height:44px;font-size:.85rem;white-space:nowrap}
-.flag-btn[aria-pressed=true]{border-color:var(--acc);color:var(--acc);background:color-mix(in srgb,var(--acc) 10%,transparent)}
+.flag-btn[aria-pressed=true]{border-color:var(--acc);color:var(--acc-text);background:color-mix(in srgb,var(--acc) 10%,transparent)}
 .quiz-nav{position:sticky;bottom:calc(70px + env(safe-area-inset-bottom));z-index:5;display:flex;gap:8px;align-items:center;margin-top:8px;padding:10px 0;background:var(--bg);border-top:1px solid var(--line)}
 .quiz-nav .btn{min-height:46px}
 .quiz-nav .jump{flex:1;font-size:.92rem;white-space:nowrap}
@@ -231,7 +231,7 @@ p.k,.card>.k:not(h2),.err+.k{font:inherit;text-transform:none;letter-spacing:0}
 .stats-table thead th{font:600 .78rem/1.2 ui-monospace,Menlo,monospace;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);border-top:0}
 .stats-table tbody th{width:55%;font-weight:600}
 .stats-table .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-.stats-table .due,.stats-table .flag{color:var(--acc);font-weight:700}
+.stats-table .due,.stats-table .flag{color:var(--acc-text);font-weight:700}
 .stats-table tr.all th,.stats-table tr.all td{border-top:2px solid var(--edge);font-weight:700}
 .stats-sub{display:block;margin-top:2px;font-size:.78rem;font-weight:400;color:var(--mut)}
 .stats-note{margin:8px 0 0;color:var(--mut);font-size:.82rem}
@@ -249,11 +249,12 @@ p.k,.card>.k:not(h2),.err+.k{font:inherit;text-transform:none;letter-spacing:0}
 
 /* Phones: an idle timer is only a small corner button, so the question and the Previous/Next bar get the screen. */
 @media(max-width:520px){
-  .focusbar[data-phase=idle]{top:calc(10px + env(safe-area-inset-top));bottom:auto;left:auto;right:12px;padding:0;gap:6px;border:1px solid var(--line);border-radius:12px;background:var(--card);overflow:hidden;box-shadow:0 2px 8px var(--shadow)}
+  .focusbar[data-phase=idle]{position:absolute;top:calc(10px + env(safe-area-inset-top));bottom:auto;left:auto;right:12px;padding:0;gap:6px;border:1px solid var(--line);border-radius:12px;background:var(--card);overflow:hidden;box-shadow:0 2px 8px var(--shadow)}
   .focusbar[data-phase=idle] .focus-phase,.focusbar[data-phase=idle] .focus-count,.focusbar[data-phase=idle] .focus-progress{display:none}
   .focusbar[data-phase=idle] .focus-time{min-width:0;padding-left:12px}
   .focusbar[data-phase=idle] .btn{border-radius:0 10px 10px 0}
   body:has(.focusbar[data-phase=idle]){padding-bottom:0}
+  body:has(.focusbar[data-phase=idle]) header.site nav{padding-right:136px} /* room for the timer beside Home */
   body:has(.focusbar[data-phase=idle]) .quiz-nav{bottom:env(safe-area-inset-bottom)}
 }
 

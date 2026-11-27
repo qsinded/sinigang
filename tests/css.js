@@ -22,6 +22,23 @@ for (const [, body] of css.matchAll(/\{([^{}]*--(?:acc|bad):[^{}]*)\}/g)) {
   }
 }
 assert.ok(blocks >= 6, 'light, system-dark and dark themes all checked');
+// Gold as TEXT needs its own darker token: --acc on a white card is about 2.9:1. Borders and fills may keep --acc.
+let textBlocks = 0;
+for (const [, body] of css.matchAll(/\{([^{}]*--acc:[^{}]*)\}/g)) {
+  const v = name => (new RegExp('--' + name + ':(#[0-9a-fA-F]{3,6})\\b').exec(body) || [])[1];
+  textBlocks++;
+  assert.ok(v('acc-text'), 'a theme sets --acc without --acc-text: ' + body.slice(0, 60));
+  for (const bg of ['card', 'bg']) {
+    const c = ratio(v('acc-text'), v(bg));
+    assert.ok(c >= 4.5, '--acc-text on --' + bg + ' is ' + c.toFixed(2) + ':1 in ' + body.slice(0, 60));
+  }
+}
+assert.ok(textBlocks >= 3, 'every theme has a gold for text');
+const goldText = [...css.matchAll(/[{;]color:var\(--acc\)/g)].length;
+assert.strictEqual(goldText, 0, 'text uses var(--acc-text), never var(--acc)');
+// On phones the idle timer sits in the page, so it scrolls away instead of covering buttons and answers.
+const idle = /\.focusbar\[data-phase=idle\]\{([^}]*)\}/.exec(css);
+assert.ok(idle && /position:absolute/.test(idle[1]), 'the idle phone timer is not fixed over the content');
 for (const [rule] of css.matchAll(/\.pin[^{}]*\{[^{}]*\}/g)) assert.ok(!/#[0-9a-fA-F]{3}|rgb\(/.test(rule), 'diagram pins use colour tokens, not literals: ' + rule);
 assert.ok(/\.pin\.big\{/.test(css), 'the flashcard answer pin (.pin.big) has its own size');
 console.log('css checks passed');
