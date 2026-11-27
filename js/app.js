@@ -1108,18 +1108,57 @@ async function createDiagram() {
     diagramSetup();
   }
 }
+// Markers are buttons, so a keyboard user can place, nudge and delete them; a pointer can drag them.
+// The marker that had focus before a redraw gets it back (diagFocus: part index, or -1 for the new one).
+function nudgeHotspot(p, dx, dy) { return { x: unit(p.x + dx), y: unit(p.y + dy) }; }
+let diagFocus = null, diagDrag = null, diagSayT = 0;
+const where = p => Math.round(p.x * 100) + '% across, ' + Math.round(p.y * 100) + '% down';
+function sayLater(msg) { clearTimeout(diagSayT); diagSayT = setTimeout(() => say(msg), 500); } // arrow repeats would flood a screen reader
+function placeMarker() {
+  diagPending = { x: 0.5, y: 0.5 }; diagErr = ''; diagFocus = -1; diagramSetup();
+  say('Marker placed at the centre. Arrow keys move it; Enter to name it.');
+}
+function markerKey(e, i) {
+  const p = i < 0 ? diagPending : diagParts[i]; if (!p) return;
+  const d = e.shiftKey ? 0.02 : 0.005;
+  const dx = e.key === 'ArrowLeft' ? -d : e.key === 'ArrowRight' ? d : 0, dy = e.key === 'ArrowUp' ? -d : e.key === 'ArrowDown' ? d : 0;
+  if (dx || dy) { Object.assign(p, nudgeHotspot(p, dx, dy)); sayLater('Marker at ' + where(p) + '.'); }
+  else if (i < 0 && e.key === 'Enter') { e.preventDefault(); const input = document.getElementById('part-name'); if (input) input.focus(); return; }
+  else if (i < 0 && e.key === 'Escape') { e.preventDefault(); diagPending = null; diagFocus = null; diagramSetup(); say('Marker removed.'); return; }
+  else if (i >= 0 && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); const [gone] = diagParts.splice(i, 1); diagFocus = null; diagramSetup(); say(gone.name + ' removed.'); return; }
+  else return;
+  e.preventDefault(); diagFocus = i; diagramSetup();
+}
+function marker(p, i, img) {
+  const name = i < 0 ? 'New marker' : 'Marker ' + (i + 1) + ', ' + p.name;
+  const help = i < 0 ? 'Arrow keys move it, Shift for bigger steps, Enter to name it, Escape removes it.' : 'Arrow keys move it, Shift for bigger steps, Delete removes the part.';
+  const el = h('button', { type: 'button', class: 'pin' + (i < 0 ? ' pending' : ''), 'aria-label': name + ', ' + where(p) + '. ' + help,
+    onkeydown: e => markerKey(e, i),
+    onpointerdown: e => { if (e.button) return; e.preventDefault(); if (e.currentTarget.setPointerCapture) e.currentTarget.setPointerCapture(e.pointerId); diagDrag = i; },
+    onpointermove: e => {
+      if (diagDrag !== i) return;
+      const pt = pointInRect(e.clientX, e.clientY, img.getBoundingClientRect()); if (!pt) return;
+      Object.assign(p, pt); e.currentTarget.style.left = (p.x * 100) + '%'; e.currentTarget.style.top = (p.y * 100) + '%';
+    },
+    onpointerup: () => { if (diagDrag !== i) return; diagDrag = null; diagFocus = i; diagramSetup(); say(name + ' moved to ' + where(p) + '.'); },
+    onpointercancel: () => { if (diagDrag === i) { diagDrag = null; diagramSetup(); } } }, // a scroll gesture took over
+    h('b', { 'aria-hidden': 'true' }, i < 0 ? '?' : i + 1));
+  el.style.left = (p.x * 100) + '%'; el.style.top = (p.y * 100) + '%';
+  if (diagFocus === i) setTimeout(() => el.focus()); // after draw(), which focuses the heading on a new screen
+  return el;
+}
 function diagramSetup() {
   const canCreate = !!diagBlob && diagParts.length >= 3 && !diagBusy;
-  const pins = diagParts.map((p, i) => {
-    const el = h('span', { class: 'pin', 'aria-hidden': 'true' }, h('b', null, i + 1));
-    el.style.left = (p.x * 100) + '%'; el.style.top = (p.y * 100) + '%';
-    return el;
-  });
-  if (diagPending) {
-    const el = h('span', { class: 'pin pending', 'aria-hidden': 'true' }, h('b', null, '?'));
-    el.style.left = (diagPending.x * 100) + '%'; el.style.top = (diagPending.y * 100) + '%';
-    pins.push(el);
-  }
+  const img = diagURL && h('img', { src: diagURL, alt: 'Diagram to label. Tap a part to place a marker, or use the Place a marker button.', onclick: e => {
+    const pt = pointInRect(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect());
+    if (!pt) return;
+    diagPending = pt; diagErr = ''; diagFocus = null; diagramSetup();
+    const input = document.getElementById('part-name'); if (input) input.focus();
+    say('Point placed. Type the name of that part.');
+  } });
+  const pins = diagParts.map((p, i) => marker(p, i, img));
+  if (diagPending) pins.push(marker(diagPending, -1, img));
+  diagFocus = null;
   draw(h('div', null,
     h('button', { class: 'btn alt', onclick: () => { clearDiagram(); home(); } }, '← Cancel'),
     h('h1', null, 'Diagram reviewer'),
@@ -1129,17 +1168,10 @@ function diagramSetup() {
       h('h2', { class: 'k' }, '1 · Image'),
       h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp', 'aria-label': 'Choose a diagram image', onchange: e => pickDiagram(e.target.files[0]) }),
       diagURL
-        ? h('span', { class: 'diagram' },
-            h('img', { src: diagURL, alt: 'Diagram to label. Tap a part to place a marker.', onclick: e => {
-              const r = e.currentTarget.getBoundingClientRect();
-              if (!r.width || !r.height) return;
-              diagPending = { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) };
-              diagErr = ''; diagramSetup();
-              const input = document.getElementById('part-name'); if (input) input.focus();
-              say('Point placed. Type the name of that part.');
-            } }), pins)
+        ? h('span', { class: 'diagram' }, img, pins)
         : h('p', { class: 'k' }, diagBusy ? 'Preparing the image…' : 'No image chosen yet. PNG, JPEG or WebP.'),
-      diagURL && h('p', { class: 'k' }, 'Tap the image to place a marker. Choosing another image starts over; images are resized to 1600 px and stay on this device.')),
+      diagURL && h('p', null, h('button', { class: 'btn alt', onclick: placeMarker }, 'Place a marker at the centre')),
+      diagURL && h('p', { class: 'k' }, 'Tap the image to place a marker, then drag it or use the arrow keys to fine-tune. Choosing another image starts over; images are resized to 1600 px and stay on this device.')),
     diagURL && h('div', { class: 'card' },
       h('h2', { class: 'k' }, '2 · Parts'),
       diagParts.length
@@ -1631,6 +1663,10 @@ function open(r) {
   cur = r; moreOpen = false; srcOpen.clear(); const ts = Object.keys(TABS).filter(k => r.items.some(i => i.type === k)); tab = ts[0]; quizIndex = 0;
   r.flashKnown ||= []; flashIndex = 0; flashRevealed = false; r.flashLearn ||= []; r.flags ||= [];
   r.plan = planOf(r); r.plan.srs ||= {};
+  // Diagram parts come in a new order each session, or the pin's place becomes the answer. Answers,
+  // cards and the plan are keyed by id, and quiz, flashcards and recitation all walk r.items, so they agree.
+  const at = r.items.flatMap((it, i) => (it.type === 'img' ? [i] : []));
+  shuffle(at.map(i => r.items[i])).forEach((it, k) => { r.items[at[k]] = it; });
   quiz();
 }
 

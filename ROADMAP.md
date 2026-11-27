@@ -4,7 +4,13 @@ Seven reports about diagram reviewers, ordered into three releases. Each item na
 current behaviour, the cause in the code, the smallest change that fixes it, how to test it,
 and what would count as done.
 
-Status: planning only. Nothing in this document has been implemented yet.
+Status: Release 1 (R1.1–R1.3) shipped in sw.js v30. Releases 2 and 3 are still planned.
+
+Release 1 as built: the session order is a shuffle of the `img` items inside `r.items` in `open()`
+(not a separate `diagOrder`), so quiz, flashcards and recitation agree with no extra state. The
+visual dot stays 26 px with a 50 px hit area; the editor markers are `<button class="pin">`.
+Not done in R1.3: dragging or nudging pins of a saved reviewer (needs R2.1's editor), and a manual
+pass with a screen reader and forced-colors mode.
 
 Assumptions: one developer who knows `js/app.js`, estimates include tests and docs but not
 review or deployment. Total: roughly 9–13 working days.

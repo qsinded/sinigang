@@ -307,6 +307,58 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   const coverEls = find(appEl, e => String(e.className).split(' ')[0] === 'cover');
   assert.strictEqual(coverEls.length, imgReviewer.items.length * imgReviewer.masks.length, 'every saved cover is drawn over every diagram question');
   assert.strictEqual(coverEls[0].textContent, '', 'a cover hides text without adding any');
+  // Every session asks the parts in a new order, so the pin's position is not what gets memorised.
+  const six = ctx.cleanReviewer({ title: 'Cell', items: ['A', 'B', 'C', 'D', 'E', 'F'].map((n, i) => imgItem(i, n)) });
+  six.ans = { img2: { ok: true, val: 'C', exp: 'C' } };
+  const firsts = new Set();
+  for (let k = 0; k < 30; k++) { ctx.open(six); firsts.add(six.items[0].id); }
+  assert.ok(firsts.size > 1, 'opening a diagram reviewer changes which part comes first');
+  assert.deepStrictEqual(six.items.map(i => i.id).sort(), ['img0', 'img1', 'img2', 'img3', 'img4', 'img5'], 'the new order holds the same parts');
+  assert.ok(six.ans.img2 && six.ans.img2.ok, 'answers are keyed by id, so the new order keeps them');
+  // Markers: a button you can place, nudge, drag and delete without a pointer.
+  assert.deepStrictEqual(plain(ctx.nudgeHotspot({ x: 0.995, y: 0.01 }, 0.02, -0.02)), { x: 1, y: 0 }, 'a nudge stays inside the image');
+  ctx.clearDiagram();
+  vm.runInContext("diagURL = 'blob:x'; diagBlob = new Blob();", ctx);
+  ctx.diagramSetup();
+  const state = js => plain(vm.runInContext(js, ctx));
+  const pinBtns = () => find(appEl, e => e.tagName === 'BUTTON' && String(e.className).split(' ').includes('pin'));
+  const pendingPin = () => pinBtns().find(e => e.className.includes('pending'));
+  const press = (el, key, shiftKey = false) => el.onkeydown({ key, shiftKey, preventDefault() {} });
+  const placeBtn = () => find(appEl, e => e.tagName === 'BUTTON' && /Place a marker/.test(screenText(e)))[0];
+  assert.ok(placeBtn(), 'a keyboard user can place a marker without tapping the image');
+  placeBtn().onclick();
+  assert.deepStrictEqual(state('diagPending'), { x: 0.5, y: 0.5 }, 'the marker starts at the centre');
+  assert.match(pendingPin().attrs['aria-label'], /Arrow keys move it/, 'the new marker is a labelled button');
+  press(pendingPin(), 'ArrowRight', true);
+  press(pendingPin(), 'ArrowDown');
+  assert.ok(Math.abs(state('diagPending.x') - 0.52) < 1e-9 && Math.abs(state('diagPending.y') - 0.505) < 1e-9, 'arrows nudge the marker, Shift for bigger steps');
+  press(pendingPin(), 'Escape');
+  assert.strictEqual(state('diagPending'), null, 'Escape takes the new marker away');
+  for (const name of ['Nucleus', 'Ribosome', 'Vacuole']) {
+    placeBtn().onclick();
+    press(pendingPin(), 'ArrowLeft');
+    find(appEl, e => e.attrs && e.attrs.id === 'part-name')[0].oninput({ target: { value: name } });
+    ctx.addPart();
+  }
+  assert.deepStrictEqual(state('diagParts.map(p => p.name)'), ['Nucleus', 'Ribosome', 'Vacuole'], 'three parts labeled with the keyboard only');
+  const createBtn = find(appEl, e => e.tagName === 'BUTTON' && /Create diagram reviewer/.test(screenText(e)))[0];
+  assert.strictEqual(createBtn.attrs.disabled, undefined, 'the keyboard-made parts are enough to create the reviewer');
+  const placed = () => pinBtns().filter(e => !e.className.includes('pending'));
+  assert.strictEqual(placed().length, 3, 'every labeled part has a marker button');
+  const y0 = state('diagParts[0].y');
+  press(placed()[0], 'ArrowUp');
+  assert.ok(state('diagParts[0].y') < y0 && state('diagParts[1].y') === 0.5, 'arrows move only the focused part');
+  const editorImg = find(appEl, e => e.tagName === 'IMG')[0];
+  editorImg.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 100 });
+  const drag = (x, y) => ({ button: 0, pointerId: 1, clientX: x, clientY: y, currentTarget: placed()[1], preventDefault() {} });
+  const dragged = placed()[1];
+  dragged.onpointerdown(drag(100, 50)); dragged.onpointermove(drag(160, 20)); dragged.onpointerup(drag(160, 20));
+  assert.deepStrictEqual(state('diagParts[1]'), { x: 0.8, y: 0.2, name: 'Ribosome' }, 'dragging a marker moves its part');
+  assert.strictEqual(state('diagPending'), null, 'a drag does not place a second marker');
+  press(placed()[2], 'Delete');
+  assert.deepStrictEqual(state('diagParts.map(p => p.name)'), ['Nucleus', 'Ribosome'], 'Delete removes the focused part');
+  ctx.clearDiagram();
+  ctx.open(imgReviewer); // the cover editor is opened from the reviewer on screen
   ctx.openCovers(imgReviewer);
   assert.match(screenText(appEl), /Hide printed labels/, 'the label-cover editor renders');
   const editing = find(appEl, e => String(e.className).includes('cover editing'));

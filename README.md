@@ -103,6 +103,7 @@ no account and no build step.
 - `tests/check.js` — generator, grading and file-reader checks
 - `tests/app-smoke.js` — page boot, storage cap, study plan, diagrams, label covers, source lookup, one-question quiz and PDF.js checks
 - `tests/offline.js` — service worker behaviour against fake cache/network objects
+- `tests/css.js` — every theme keeps diagram pin numbers readable (4.5:1) and pins use colour tokens
 
 ## Running the tests
 
@@ -113,6 +114,7 @@ npm run quality -- --missed # also list the note lines no question uses, each wi
 node tests/check.js
 node tests/app-smoke.js
 node tests/offline.js
+node tests/css.js
 npm run icons              # redraw icons/ (only after changing a colour in css/styles.css)
 ```
 
@@ -143,8 +145,12 @@ deep link still opens. Reviewer data and images are untouched by the worker: the
 ## Diagram reviewers
 
 1. On the home screen choose **Make a diagram reviewer** and pick a PNG, JPEG or WebP image.
-2. Tap a part on the image, type its name and choose **Add part**. Repeat for at least 3 parts.
+2. Tap a part on the image (or choose **Place a marker at the centre**), type its name and choose
+   **Add part**. Repeat for at least 3 parts. Drag a marker, or focus it and use the arrow keys (Shift
+   for bigger steps), to fine-tune it; Escape drops a new marker and Delete removes a labeled part.
 3. Name the reviewer and choose **Create diagram reviewer**, then practice naming the marked part.
+   The parts come in a new order every time you open the reviewer, so the answer is the part, not the
+   pin's place in the list.
 4. If the image already has its labels printed on it, choose **Hide printed labels** on the practice
    screen and drag a box over each block of text. Covers show while you practise, in flashcards and
    on printouts, but not while you label parts. Drag on the image to add one, or choose **Add cover**
