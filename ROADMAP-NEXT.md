@@ -52,8 +52,9 @@ device. Every phase adds tests to `tests/check.js`, never raises a `tests/qualit
 3. **Skipped-line report.** Already planned in `ROADMAP-FIXES.md` Phase 3 but not built. When a
    file yields few questions, list the skipped lines with the reason and a rewrite hint ("write it
    as *Mitosis is …*"). The zero-question error becomes this report instead of a dead end.
-4. **Corpus files for every subject tested here** (history, economics, Filipino), each with a
-   baseline, so later changes cannot quietly break them again.
+4. **Done 2026-11-27:** `tests/corpus/` has history, economics and Filipino notes, and `npm run quality`
+   now gates *coverage* (share of note lines some question uses) per file, so a rule that stops reading a
+   kind of sentence fails the run. Baselines: Filipino 0%, economics 54%, lecture 33%, biology 67%.
 
 *Size:* about 4–6 days. *Risk:* a looser sentence rule lets junk through; the quality corpus is
 the guard, so A4 lands with A1.

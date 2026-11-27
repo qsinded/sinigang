@@ -75,7 +75,8 @@ no account and no build step.
 
 ```sh
 npm test                    # all suites (Node 18+)
-npm run quality            # question-quality report on tests/corpus/ (fails if a count gets worse)
+npm run quality            # question-quality report on tests/corpus/ (fails if a bad-question count rises or coverage drops)
+npm run quality -- --missed # also list the note lines no question uses
 node tests/check.js
 node tests/app-smoke.js
 node tests/offline.js

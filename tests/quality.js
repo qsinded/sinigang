@@ -7,6 +7,10 @@ const { generate, norm } = require('../js/reviewer-generator.js');
 
 const BASELINE = { leak: 0, dupOptions: 0, badKey: 0, outlineOption: 0, tooShort: 0, ungrounded: 0, dupQuestion: 0, falseTrueMismatch: 0, filler: 0, ambiguous: 0, variant: 0, tfFragment: 0, tfMeta: 0, instruction: 0, emptyBlank: 0, labelEnum: 0, articleAdded: 0, blankTrivia: 0, fromQuestion: 0 };
 const RUNS = 25;
+// Coverage per corpus, in percent of its substantial lines that some question cites. The counts above only see bad
+// questions; a rule that silently stops reading a kind of sentence shows up here. It may only go up: raise the number
+// in the same commit as an improvement. A new corpus file needs an entry. `npm run quality -- --missed` lists unused lines.
+const COVERAGE = { 'biology.txt': 67, 'computer-architecture.txt': 47, 'economics.txt': 54, 'exam-paper.txt': 54, 'filipino.txt': 0, 'history.txt': 81, 'lecture.txt': 33, 'networking.txt': 88 };
 
 function seeded(seed) { // mulberry32
   return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
@@ -25,6 +29,8 @@ const answerText = q => q.type === 'mc' ? q.options[q.answer] : q.type === 'id' 
 const covered = (text, src) => { const w = String(text).toLowerCase().match(/[a-z0-9]{3,}/g) || [], s = new Set(String(src).toLowerCase().match(/[a-z0-9]{3,}/g) || []); return w.length ? w.filter(x => s.has(x)).length / w.length : 1; };
 const rawSrc = q => String(q.exp).replace(/^\([^)]*\)\s*/, '');
 const srcOf = q => norm(String(q.exp).replace(/^\([^)]*\)\s*/, ''));
+// Coverage: a line is used when some question cites it whole, or cites one of its sentences.
+const usedLine = (line, cited) => { const l = norm(line); return [...cited].some(c => c.includes(l) || (c.length >= 20 && l.includes(c))); };
 
 function check(q, bad) {
   const ans = answerText(q), qn = norm(q.q);
@@ -96,12 +102,18 @@ function check(q, bad) {
   check({ type: 'mc', q: 'True or false: A Photosynthesis is the process plants use.', options: ['True', 'False'], answer: 0, exp: '(page 1) Photosynthesis is the process plants use.' }, b);
   check({ type: 'id', q: 'Fill in the blank: The _____ was first developed in the 1950s at IBM.', answer: 'OS', exp: '(page 1) The OS was first developed in the 1950s at IBM.' }, b);
   check({ type: 'mc', q: 'Which statement describes "Why"?', options: ['RAM considered volatile memory? (2 pts)', 'a', 'b', 'c'], answer: 0, exp: '(page 13) 3. Why is RAM considered volatile memory? (2 pts)' }, b);
+  // Coverage must count a line as used when a question cites it, or cites one sentence of it, and not otherwise.
+  const cited = new Set([norm('The CPU runs code.'), norm('RAM holds running programs.')]);
+  if (!usedLine('The CPU runs code.', cited)) throw new Error('coverage misses a cited line');
+  if (!usedLine('A cache is small and fast. RAM holds running programs.', cited)) throw new Error('coverage misses a line with one cited sentence');
+  if (usedLine('A router forwards packets between networks.', cited)) throw new Error('coverage counts a line no question cites');
   for (const k of ['fromQuestion', 'emptyBlank', 'labelEnum', 'articleAdded', 'blankTrivia', 'ambiguous', 'variant', 'filler', 'leak', 'dupOptions', 'badKey', 'outlineOption', 'tooShort', 'ungrounded', 'falseTrueMismatch', 'tfFragment', 'tfMeta', 'instruction']) if (!b[k]) throw new Error('quality check "' + k + '" no longer catches a bad question');
 })();
 
 const dir = path.join(__dirname, 'corpus'), bad = Object.fromEntries(Object.keys(BASELINE).map(k => [k, 0]));
 const examples = {};
 let total = 0;
+const coverage = [];
 for (const f of fs.readdirSync(dir).filter(f => f.endsWith('.txt'))) {
   const lines = fs.readFileSync(path.join(dir, f), 'utf8').split(/\r?\n/);
   const types = {}, cited = new Set();
@@ -115,11 +127,18 @@ for (const f of fs.readdirSync(dir).filter(f => f.endsWith('.txt'))) {
       for (const k in bad) if (bad[k] > before[k] && !examples[k]) examples[k] = f + ': ' + q.q + (q.options ? ' | ' + q.options.join(' / ') : '');
     });
   }
-  const facts = lines.filter(l => l.length > 30 && /[a-z]/.test(l)).length;
-  console.log(f.padEnd(28), JSON.stringify(types), 'distinct sources used:', cited.size + '/' + facts + ' substantial lines');
+  const facts = lines.filter(l => l.length > 30 && /[a-z]/.test(l)), missed = facts.filter(l => !usedLine(l, cited));
+  const pct = facts.length ? Math.round(100 * (facts.length - missed.length) / facts.length) : 100;
+  coverage.push({ f, pct, low: !(f in COVERAGE) || pct < COVERAGE[f] });
+  console.log(f.padEnd(28), JSON.stringify(types), 'coverage:', (facts.length - missed.length) + '/' + facts.length + ' substantial lines = ' + pct + '%');
+  if (process.argv.includes('--missed')) missed.forEach(l => console.log('       missed: ' + l));
 }
 console.log('\nquestions checked:', total);
 let fail = false;
+for (const c of coverage) {
+  fail ||= c.low;
+  console.log((c.low ? 'FAIL ' : 'ok   ') + ('coverage ' + c.f).padEnd(36), String(c.pct).padStart(3) + '%', c.f in COVERAGE ? '(baseline ' + COVERAGE[c.f] + '%)' : '(no baseline: add it to COVERAGE)');
+}
 for (const k in BASELINE) {
   const over = bad[k] > BASELINE[k]; fail ||= over;
   console.log((over ? 'FAIL ' : 'ok   ') + k.padEnd(20), String(bad[k]).padStart(5), '(baseline ' + BASELINE[k] + ')' + (bad[k] && examples[k] ? '\n       e.g. ' + examples[k].slice(0, 200) : ''));
