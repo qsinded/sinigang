@@ -22,6 +22,19 @@ const LANGS = {
       'inventor', 'explorer', 'navigator', 'conquistador', 'philosopher', 'painter', 'artist', 'composer', 'revolutionary', 'reformist',
       'propagandist', 'nationalist', 'politician', 'statesman', 'scholar', 'physician', 'doctor', 'teacher', 'lawyer', 'governor',
       'minister', 'senator', 'saint', 'mathematician', 'chemist', 'physicist', 'biologist', 'engineer'], // "a Portuguese explorer who…"
+    headingWords: ['note', 'notes', 'example', 'examples', 'figure', 'table', 'chapter', 'slide', 'page', 'summary', 'objective', 'objectives',
+      'introduction', 'reference', 'references', 'agenda', 'tip', 'tips', 'hint', 'hints', 'remember', 'reminder', 'reminders', 'recap', 'review',
+      'q&a', 'question', 'questions'], // a heading, never a term or a fact list
+    instructionHeads: ['instructions', 'instruction', 'directions', 'direction'], // "Instructions:" heads an exam section
+    imperatives: ['write', 'answer', 'choose', 'select', 'fill', 'complete', 'read', 'study', 'review', 'identify', 'enumerate', 'match', 'list', 'give',
+      'state', 'define', 'explain', 'describe', 'compute', 'solve', 'calculate', 'circle', 'encircle', 'underline', 'label', 'draw', 'name', 'provide',
+      'show', 'compare', 'discuss', 'mention', 'true or false', 'multiple choice', 'matching', 'essay', 'test', 'quiz', 'exam', 'score', 'points', 'point'],
+    rubrics: [], // English rubric phrases need patterns, so they stay in RUBRIC
+    objectiveHeads: [], // English uses the OBJ_HEAD pattern ("Learning objectives", "… able to:")
+    outlineHeads: [], // English uses the OUTLINE pattern
+    bloom: ['explain', 'describe', 'define', 'identify', 'differentiate', 'distinguish', 'compare', 'contrast', 'apply', 'list', 'discuss', 'understand',
+      'analyze', 'analyse', 'evaluate', 'demonstrate', 'state', 'recognize', 'solve', 'compute', 'calculate', 'summarize', 'summarise', 'classify',
+      'illustrate', 'outline', 'relate', 'use', 'name'], // an objective line starts with one
   },
   fil: {
     articles: ['Ang mga', 'Ang', 'Sina', 'Si'],       // "Ang Katipunan ay …", "Si Rizal ay …"
@@ -34,6 +47,17 @@ const LANGS = {
     clauseWords: ['kung', 'kapag', 'dahil', 'habang', 'noong', 'nang', 'upang', 'sapagkat'],
     answerFiller: ['ang', 'ng', 'mga', 'si', 'ni', 'sa', 'ay', 'na'],
     personNouns: ['bayani', 'pinuno', 'pangulo', 'hari', 'reyna', 'manunulat', 'makata', 'heneral', 'tagapagtatag', 'pari', 'ama', 'ina'],
+    headingWords: ['halimbawa', 'mga halimbawa', 'tandaan', 'paalala', 'buod', 'layunin', 'panimula', 'sanggunian', 'talahanayan', 'larawan',
+      'aralin', 'tanong', 'mga tanong', 'pagsasanay'],
+    instructionHeads: ['mga panuto', 'panuto'],
+    imperatives: ['isulat', 'basahin', 'piliin', 'sagutin', 'bilugan', 'salungguhitan', 'punan', 'itapat', 'ekisan'],
+    rubrics: ['isulat ang tama', 'isulat ang mali', 'tama o mali', 'kung wasto ang pahayag', 'kung tama ang pahayag'],
+    objectiveHeads: ['mga layunin ng aralin', 'layunin ng aralin', 'mga layunin', 'layunin', 'inaasahang matututuhan'], // alone on a line;
+    // "Mga layunin ng Katipunan:" is content, not this
+    outlineHeads: ['mga paksa', 'paksa', 'nilalaman', 'balangkas'],
+    bloom: ['ipaliwanag', 'tukuyin', 'ilarawan', 'ihambing', 'paghambingin', 'suriin', 'isa-isahin', 'ibigay', 'bigyang-kahulugan', 'talakayin',
+      'naipapaliwanag', 'natutukoy', 'nailalarawan', 'naihahambing', 'nasusuri', 'naiisa-isa', 'nakapagbibigay', 'nabibigyang-kahulugan',
+      'natatalakay', 'napahahalagahan', 'nakikilala'], // competency verbs ("Naipapaliwanag ang …")
   },
 };
 const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -181,14 +205,15 @@ const TERM_VERB = new RegExp('\\b(?:' + anyOf('termVerbs') + ')\\b', 'i'), CLAUS
 // A term is a short name, not a sentence opener ("This", "Many cells"), a heading word, an instruction or a clause.
 const termFine = t => t.split(' ').length <= 5 && !NOT_TERM.test(t) && !LOW.test(t) && !LABEL.test(t) && !instruction(t) && !TERM_VERB.test(t) && !CLAUSE.test(t);
 const COLON = /^([A-Za-z.][\w .\/\-]{0,38}?)\s*(?::|\s[–—-]\s)\s*(.{20,})$/;
-const LOW = /^(note|notes|example|examples|figure|table|chapter|slide|page|summary|objectives?|introduction|references?|agenda|tips?|hints?|remember|reminders?|recap|review|q&a|questions?)$/i; // headings, not terms
+const LOW = new RegExp('^(?:' + anyOf('headingWords') + ')$', 'i'); // headings, not terms
 // Exam-paper furniture: instructions, rubrics and answer keys describe the test, not the subject. A definition
 // split out of one of them ("Write TRUE if the statement" + "is") is nonsense, and so is a question built from it.
 // Also skipped: lines that already contain blanks, because the app cannot answer its own exam paper.
 const NUM_PREFIX = /^(?:\d+|[IVXLC]+|[A-Za-z])[.)]\s+/; // "6. ", "II. ", "A. "
 // "Instructions:" heads an exam section; "instruction pointer" is a term, so those two words need a colon or nothing after.
-const IMPERATIVE = /^(?:(?:instructions?|directions?)\s*(?::|$)|(?:write|answer|choose|select|fill|complete|read|study|review|identify|enumerate|match|list|give|state|define|explain|describe|compute|solve|calculate|circle|encircle|underline|label|draw|name|provide|show|compare|discuss|mention|true or false|multiple choice|matching|essay|test|quiz|exam|score|points?)\b)/i;
-const RUBRIC = /\bif the statement is\b|\bwrite (?:true|false|t|f)\b|\btrue or false\b|\btell whether\b|\bidentify whether\b|\bindicate whether\b|\bchoose the (?:best|correct|right)\b|\bfill in the blanks?\b|\banswer key\b|\bmatch(?:ing)? (?:type|the (?:items|column))\b/i;
+const IMPERATIVE = new RegExp('^(?:(?:' + anyOf('instructionHeads') + ')\\s*(?::|$)|(?:' + anyOf('imperatives') + ')\\b)', 'i');
+const RUBRIC = new RegExp(/\bif the statement is\b|\bwrite (?:true|false|t|f)\b|\btrue or false\b|\btell whether\b|\bidentify whether\b|\bindicate whether\b|\bchoose the (?:best|correct|right)\b|\bfill in the blanks?\b|\banswer key\b|\bmatch(?:ing)? (?:type|the (?:items|column))\b/.source
+  + '|\\b(?:' + anyOf('rubrics') + ')\\b', 'i');
 const PREBLANK = /_{3,}/;
 // The numbering is stripped first, so "6. Write TRUE if…" and "II. Write TRUE if…" are both recognised.
 const instruction = t => {
@@ -242,12 +267,13 @@ function statementOk(text) {
   return verbIn(t);                             // must say something that can be true or false
 }
 // Outline material (agenda, "Module 2 — ...", "Topics covered") lists what a course covers; it is not a fact to quiz on.
-const OUTLINE = /^(topics?( covered)?|agenda|outline|contents?|overview|objectives?|learning outcomes?|course (outline|map)|schedule|syllabus)$/i;
+const OUTLINE = new RegExp('^(?:topics?(?: covered)?|agenda|outline|contents?|overview|objectives?|learning outcomes?|course (?:outline|map)|schedule|syllabus|'
+  + anyOf('outlineHeads') + ')$', 'i');
 const LABEL = /^(module|unit|chapter|lesson|week|day|topic|part|section|session|lecture|step)\s*[\dIVX]+$/i;
 // What a professor tests is stated in the learning objectives ("Explain what a kernel does"). Their lines start with
 // a Bloom verb right under an "Objectives" heading or "...you will be able to:".
-const OBJ_HEAD = /^(?:learning )?(?:objectives?|outcomes?)\b|\bable to\s*:?$/i;
-const BLOOM = /^(?:explain|describe|define|identify|differentiate|distinguish|compare|contrast|apply|list|discuss|understand|analy[sz]e|evaluate|demonstrate|state|recognize|solve|compute|calculate|summari[sz]e|classify|illustrate|outline|relate|use|name)\b/i;
+const OBJ_HEAD = new RegExp(/^(?:learning )?(?:objectives?|outcomes?)\b|\bable to\s*:?$/.source + '|^(?:' + anyOf('objectiveHeads') + ')\\s*:?$', 'i');
+const BLOOM = new RegExp('^(?:' + anyOf('bloom') + ')\\b', 'i');
 // Jumbled text (broken PDF columns, symbols, number runs) must not become a question.
 function garbled(s) {
   const w = s.match(/\S+/g) || [];

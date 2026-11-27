@@ -333,6 +333,20 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
     });
   }
   assert(askedYears.has('1565') && askedYears.has('1898'), 'both years of a two-date sentence are asked: ' + [...askedYears].join(', '));
+  // Filipino lesson furniture: a "Layunin" block of competencies ranks questions and is not asked, "Halimbawa:" is not
+  // a fact list, and "Panuto:" / "Isulat ang TAMA kung…" are exam instructions. "Mga layunin ng Katipunan:" is content.
+  const filLesson = ['Araling Panlipunan - Ang Katipunan', 'Layunin', 'Naipapaliwanag ang mga layunin ng Katipunan', 'Natutukoy ang mga pinuno ng himagsikan',
+    'Ang Katipunan ay isang lihim na samahan na itinatag ni Andres Bonifacio noong 1892.', 'Ang Kartilya ng Katipunan ay isinulat ni Emilio Jacinto.',
+    'Mga layunin ng Katipunan:', '- Pampulitika', '- Moral', '- Pansibiko', 'Halimbawa:', '- Tondo', '- Maynila', '- Cavite',
+    'Panuto: Basahin ang bawat pahayag at sagutin nang tapat.', 'Isulat ang TAMA kung wasto ang pahayag at MALI kung hindi.'];
+  for (let i = 0; i < 10; i++) {
+    const outL = generate(filLesson);
+    assert.strictEqual(reasonFor(outL, 'Naipapaliwanag ang mga layunin ng Katipunan'), 'objective', 'a Filipino competency is an objective');
+    assert.strictEqual(reasonFor(outL, 'Halimbawa: Tondo, Maynila, Cavite'), 'outline', '"Halimbawa:" is not a fact list');
+    assert.strictEqual(reasonFor(outL, 'Panuto: Basahin ang bawat pahayag at sagutin nang tapat.'), 'instruction', '"Panuto:" is an exam instruction');
+    assert.strictEqual(reasonFor(outL, 'Isulat ang TAMA kung wasto ang pahayag at MALI kung hindi.'), 'instruction', 'a Filipino rubric is an exam instruction');
+    assert(outL.some(q => q.type === 'enum' && /Mga layunin ng Katipunan/.test(q.q)), '"Mga layunin ng Katipunan:" is still content');
+  }
   // A fact that made a question but was cut by the limit, or by a type the student turned off, says so.
   const capped = generate(skipNotes, [], { max: 1 });
   assert(capped.skipped.some(s => s.reason === 'limit'), 'items cut by the limit are reported');
