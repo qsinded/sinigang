@@ -199,6 +199,8 @@ p.k,.card>.k:not(h2),.err+.k{font:inherit;text-transform:none;letter-spacing:0}
 .item.one .q{font-size:1.1rem;line-height:1.45}
 .item>.k:first-child{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px} /* "Q1 · CORRECT" never runs into Flag */
 .opt-group{margin:14px 0 6px}
+.camera{display:inline-flex;align-items:center;margin:8px 0}.camera:focus-within{outline:3px solid var(--ink);outline-offset:2px}
+.ocr-note{border-left:3px solid var(--acc);padding:4px 0 4px 12px;color:var(--ink)}
 .flag-btn{padding:6px 10px;min-height:44px;font-size:.85rem;white-space:nowrap}
 .flag-btn[aria-pressed=true]{border-color:var(--acc);color:var(--acc-text);background:color-mix(in srgb,var(--acc) 10%,transparent)}
 .quiz-nav{position:sticky;bottom:calc(70px + env(safe-area-inset-bottom));z-index:5;display:flex;gap:8px;align-items:center;margin-top:8px;padding:10px 0;background:var(--bg);border-top:1px solid var(--line)}

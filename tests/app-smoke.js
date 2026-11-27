@@ -290,7 +290,7 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   assert.strictEqual(ctx.cleanMasks(Array.from({ length: 61 }, (_, i) => ({ x: 0, y: i / 100, w: 0.1, h: 0.01 }))).length, 60, 'a reviewer keeps up to 60 covers');
   // The label finder. Tesseract is injected, so the real 7 MB engine never loads in tests.
   const fakeT = { terminated: 0, opts: null, gate: Promise.resolve(), lines: [L('Aorta', 91, 100, 50, 200, 70)], createWorker: async (lang, oem, opts) => {
-    fakeT.opts = opts; opts.logger({ status: 'recognizing text', progress: 0.5 });
+    fakeT.opts = opts; fakeT.lang = lang; opts.logger({ status: 'recognizing text', progress: 0.5 });
     return { recognize: async () => { await fakeT.gate; return { data: { blocks: [{ paragraphs: [{ lines: fakeT.lines.map(l => ({ ...l, words: l.words || [l] })) }] }] } }; }, terminate: async () => { fakeT.terminated++; } };
   } };
   ctx.location = { href: 'https://example.com/app/', hash: '' };
@@ -300,6 +300,7 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   const progress = [];
   const labels = plain(await ctx.findLabels(new sandbox.Blob(), [], p => progress.push(p)));
   assert.strictEqual(labels.length, 1, 'findLabels turns the text it reads into covers');
+  assert.strictEqual(fakeT.lang, 'eng', 'labels are read in English only (the smaller download)');
   // Seen in Chrome: a leader line touching a label is read as a backslash and joined to it, and the whole
   // line's confidence drops to 44. Words keep their own boxes and confidence, so the label is still covered.
   const leader = { ...L('\\ Nucleus', 44, 224, 81, 813, 201), words: [L('\\', 30, 224, 150, 300, 201), L('Nucleus', 93, 720, 100, 813, 125)] };
@@ -1493,6 +1494,134 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   ctx.home();
   const del = find(appEl, e => e.tagName === 'BUTTON' && screenText(e) === 'Delete')[0];
   assert.ok(String(del.className).includes('danger'), 'Delete is styled apart');
+
+  // Photos and scanned pages of notes are read into the paste box, never straight into questions.
+  {
+    const texts = [], gates = [], langs = [];
+    let calls = 0, stopped = 0, loads = 0, asked = 0, agree = true, logger = null, loadGate = null;
+    const notesT = { createWorker: async (lang, oem, opts) => {
+      langs.push(lang); logger = opts.logger; opts.logger({ status: 'recognizing text', progress: 0.5 });
+      return {
+        recognize: async () => {
+          const i = calls++; await (gates[i] || Promise.resolve());
+          logger({ status: 'recognizing text', progress: 0.9 }); // a progress tick while the page is read
+          if (texts[i] instanceof Error) throw texts[i];
+          return { data: { text: texts[i] || '' } };
+        },
+        terminate: async () => { stopped++; }
+      };
+    } };
+    ctx.loadTesseract = async () => { loads++; if (loadGate) await loadGate; return notesT; };
+    ctx.fitForOcr = async f => { if (/bad/.test(f.name)) throw new Error('canvas out of memory'); return { width: 100, height: 100 }; };
+    ctx.ask = async msg => { asked++; assert.match(msg, /about 9 MB/, 'the download is named before it happens'); return agree; };
+    ctx.Worker = function Worker() {}; ctx.navigator = { serviceWorker: { controller: {} } };
+    const photo = name => ({ name, type: 'image/jpeg', arrayBuffer: async () => new ArrayBuffer(4) });
+    const choose = (list, typed = '') => { ctx.__files = list; ctx.__typed = typed; vm.runInContext('files = __files; err = ""; pending = null; pasteText = __typed; pasteTitle = ""', ctx); };
+    const pasted = () => vm.runInContext('pasteText', ctx);
+    const reset = list => { texts.length = 0; gates.length = 0; calls = 0; texts.push(...list); };
+    const tick = () => new Promise(r => setTimeout(r, 20));
+    const fakePdf = pages => async () => {
+      const doc = { destroyed: 0, numPages: pages.length, destroy() { doc.destroyed++; }, getPage: async n => ({ getTextContent: async () => ({ items: pages[n - 1] ? [{ str: pages[n - 1], transform: [0, 0, 0, 0, 0, 10] }] : [] }) }) };
+      fakePdf.last = doc;
+      return { getDocument: () => ({ promise: Promise.resolve(doc) }) };
+    };
+    const pdfFile = name => ({ name, type: 'application/pdf', arrayBuffer: async () => new ArrayBuffer(4) });
+    ctx.renderPdfPage = async () => ({ width: 100, height: 100 });
+    localStorage.removeItem('reviewer_ocr_notes_v1');
+    vm.runInContext("R = []; cur = null;", ctx);
+    // A typed PDF with a short page ("Thank you!") is not a scanned PDF: it works as before, even where photos cannot be read.
+    const typedNotes = 'Mitosis is the division of a nucleus into two identical nuclei. Meiosis is a cell division that produces four haploid gametes. Osmosis is the diffusion of water across a selectively permeable membrane. Diffusion is the movement of particles from high to low concentration.';
+    ctx.loadPdfjs = fakePdf([typedNotes, 'Thank you!']);
+    ctx.navigator.serviceWorker.controller = null;
+    choose([pdfFile('lecture.pdf')]); await ctx.run();
+    assert.ok(vm.runInContext('pending', ctx) && !vm.runInContext('err', ctx), 'a typed PDF with a title or thank-you page still becomes questions, with no reader needed');
+    assert.strictEqual(loads, 0, 'and nothing is downloaded for it');
+    assert.ok(fakePdf.last.destroyed >= 1, 'the PDF is closed after reading, freeing its memory');
+    ctx.navigator.serviceWorker.controller = {};
+    // Declining downloads nothing and says how to go on.
+    agree = false; reset(['x']); choose([photo('page1.jpg')]);
+    await ctx.run();
+    assert.ok(loads === 0 && /Press Generate again/.test(vm.runInContext('err', ctx)), 'declining downloads nothing and says how to read them after all');
+    assert.strictEqual(vm.runInContext('files.length', ctx), 1, 'and keeps the chosen photos');
+    // Agreeing: English and Filipino, into the paste box after what the student already typed, with a note.
+    agree = true; reset(['Mitosis is the division of a nucleus into two identical nuclei.']);
+    choose([photo('page1.jpg')], 'My own line about cells.');
+    await ctx.run();
+    assert.ok(langs.includes('eng+fil'), 'notes are read in English and Filipino');
+    assert.ok(/My own line about cells/.test(pasted()) && /Mitosis is the division/.test(pasted()), 'the read text is added after what the student already typed, not over it');
+    assert.ok(!pasted().includes('\u0000'), 'no page markers reach the notes');
+    assert.strictEqual(vm.runInContext('pending', ctx), null, 'no questions are made before the student checks the text');
+    assert.match(screenText(appEl), /Read from 1 page\. Fix any mistakes the reader made, then Generate/, 'the student is told to check it');
+    assert.ok(stopped >= 1 && !vm.runInContext('busy', ctx), 'the reader is shut down and the app is free again');
+    reset(['Again.']); choose([photo('page2.jpg')]); await ctx.run();
+    assert.strictEqual(asked, 2, 'a yes is remembered');
+    // A scanned PDF (mostly pictures): its picture pages are read in page order, typed pages kept, title kept.
+    ctx.loadPdfjs = fakePdf(['', 'Typed page two: Osmosis is the diffusion of water across a membrane.']);
+    reset(['Scanned page one: Diffusion is the movement of particles from high to low concentration.']);
+    choose([pdfFile('handout.pdf')]); await ctx.run();
+    assert.ok(pasted().indexOf('Scanned page one') >= 0 && pasted().indexOf('Scanned page one') < pasted().indexOf('Typed page two'), 'a scanned page is read and kept in page order before the typed one');
+    assert.strictEqual(vm.runInContext('pasteTitle', ctx), 'handout', 'the file name becomes the title, not "Pasted notes"');
+    assert.ok(fakePdf.last.destroyed >= 1, 'the scanned PDF is closed after reading');
+    // One page that cannot be read does not lose the others.
+    reset(['Good page text.', 'Third page text.']);
+    choose([photo('one.jpg'), photo('bad.jpg'), photo('three.jpg')]); await ctx.run();
+    assert.ok(/Good page text/.test(pasted()) && /Third page text/.test(pasted()), 'the readable pages are kept');
+    assert.match(screenText(appEl), /Page 2 could not be read/, 'and the bad one is named');
+    // Nothing readable (blur, handwriting): said plainly.
+    reset(['   ']); choose([photo('blurry.jpg')]); await ctx.run();
+    assert.match(screenText(appEl), /No text was found/, 'an empty read says so instead of "fix any mistakes"');
+    // Stop keeps the pages already read, and the app is free again.
+    let openTwo; reset(['Page one about cells.', 'Page two.']); gates.push(Promise.resolve(), new Promise(r => { openTwo = r; }));
+    choose([photo('a.jpg'), photo('b.jpg')]);
+    const reading = ctx.run(); await tick();
+    assert.ok(find(appEl, e => e.tagName === 'INPUT' && e.attrs.id === 'file')[0].attrs.disabled !== undefined, 'files cannot be changed while reading');
+    const stopBtn = find(appEl, e => e.tagName === 'BUTTON' && screenText(e) === 'Stop')[0];
+    assert.ok(stopBtn, 'a Stop button is offered while reading');
+    assert.match(screenText(appEl), /Reading page 2 of 2/, 'progress names the page');
+    stopBtn.onclick(); await reading; openTwo(); await tick();
+    assert.ok(/Page one about cells/.test(pasted()) && !/Page two/.test(pasted()), 'Stop keeps the pages already read');
+    assert.match(screenText(appEl), /Stopped after 1 of 2 pages/, 'and says so');
+    assert.strictEqual(vm.runInContext('busy', ctx), false, 'the app is not left busy after Stop');
+    // Stop during the first download: nothing read, photos kept, the late reader is shut down.
+    let openLoad; loadGate = new Promise(r => { openLoad = r; });
+    const stoppedBefore = stopped; reset(['never']); choose([photo('x.jpg')]);
+    const loading = ctx.run(); await tick();
+    assert.match(screenText(appEl), /Getting the reader ready/, 'the first download shows that it is under way');
+    find(appEl, e => e.tagName === 'BUTTON' && screenText(e) === 'Stop')[0].onclick(); await loading;
+    assert.ok(vm.runInContext('files.length', ctx) === 1 && /Stopped/.test(screenText(appEl)), 'Stop before any page keeps the photos and says it stopped');
+    loadGate = null; openLoad(); await tick();
+    assert.strictEqual(stopped, stoppedBefore + 1, 'a reader that arrives after Stop is shut down');
+    // A student who leaves for another screen is not pulled back to home by progress.
+    let openPage; reset(['Background page.']); gates.push(new Promise(r => { openPage = r; }));
+    const quizR = ctx.cleanReviewer({ ...base, title: 'Elsewhere' });
+    choose([photo('bg.jpg')]);
+    const bg = ctx.run(); await tick();
+    ctx.open(quizR);
+    openPage(); await bg;
+    assert.strictEqual(vm.runInContext('lastScreen', ctx), 'quiz', 'reading in the background never drags the student back to home');
+    // A reader failure: the app's own sentence, not the engine's.
+    reset([new Error('Network error while fetching https://example.com/vendor/tesseract/fil.traineddata.gz')]);
+    ctx.loadTesseract = async () => { throw new Error('Network error while fetching https://example.com/x'); };
+    choose([photo('c.jpg')]); await ctx.run();
+    assert.ok(/Could not read the photos/.test(vm.runInContext('err', ctx)) && !/https:/.test(vm.runInContext('err', ctx)), 'a failed read shows a plain sentence');
+    ctx.loadTesseract = async () => { loads++; return notesT; };
+    // Where the reader cannot be kept offline: a plain message, nothing downloaded.
+    const loadsBefore = loads; ctx.navigator.serviceWorker.controller = null;
+    choose([photo('d.jpg')]); await ctx.run();
+    assert.ok(loads === loadsBefore && /normal browser or the installed app/.test(vm.runInContext('err', ctx)), 'without the service worker photos are not read');
+    ctx.navigator.serviceWorker.controller = {};
+    // On a touch phone a camera button adds each photo; it only offers kinds the app can read.
+    const realMM = sandbox.matchMedia; sandbox.matchMedia = q => ({ matches: /coarse/.test(q) });
+    vm.runInContext('files = []; err = ""; ocrNote = ""', ctx); ctx.home();
+    const cam = () => find(appEl, e => e.tagName === 'INPUT' && e.attrs.capture === 'environment')[0];
+    assert.ok(cam(), 'a touch phone gets a Take a photo button');
+    assert.strictEqual(cam().attrs.accept, 'image/jpeg,image/png,image/webp', 'the camera is not offered HEIC or GIF, which would fail the whole batch');
+    cam().onchange({ target: { files: [photo('cam1.jpg')], value: 'x' } });
+    cam().onchange({ target: { files: [photo('cam2.jpg')], value: 'x' } });
+    assert.strictEqual(vm.runInContext('files.length', ctx), 2, 'each photo taken is added, not replacing the last');
+    assert.match(screenText(find(appEl, e => e.className === 'sub')[0]), /photos of printed notes/, 'the home subtitle says photos can be used');
+    sandbox.matchMedia = realMM;
+  }
 
   console.log('app smoke checks passed');
 })().catch(e => { console.error(e); process.exit(1); });

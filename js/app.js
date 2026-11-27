@@ -126,12 +126,13 @@ function ocrSupported() { // WebAssembly can be switched off (iOS Lockdown Mode)
   return typeof Worker === 'function' && typeof WebAssembly === 'object' && !!WebAssembly && typeof navigator !== 'undefined' && !!(navigator.serviceWorker && navigator.serviceWorker.controller);
 }
 // With storage blocked the answer is kept for this visit, or the question would stay on screen after "Yes".
-let ocrAnswer = '';
-function ocrConsent() { // an answer that could not be stored is the newest one, so it wins over an older stored one
-  if (ocrAnswer) return ocrAnswer;
-  try { return localStorage.getItem(OCR_KEY) || ''; } catch (e) { return ''; }
+// One answer per use (labels, notes): agreeing to one download is not agreeing to the other.
+const ocrAnswers = {};
+function ocrConsent(key = OCR_KEY) { // an answer that could not be stored is the newest one, so it wins over an older stored one
+  if (ocrAnswers[key]) return ocrAnswers[key];
+  try { return localStorage.getItem(key) || ''; } catch (e) { return ''; }
 }
-function setOcrConsent(v) { try { localStorage.setItem(OCR_KEY, v); ocrAnswer = ''; } catch (e) { ocrAnswer = v; } }
+function setOcrConsent(v, key = OCR_KEY) { try { localStorage.setItem(key, v); delete ocrAnswers[key]; } catch (e) { ocrAnswers[key] = v; } }
 // Errors the app wrote are shown as they are; anything from the engine (URLs, response codes) is not.
 const appError = msg => Object.assign(new Error(msg), { app: true });
 const labelError = e => (e && e.app ? e.message : 'Could not read the picture for printed labels. Check the connection and try again.');
@@ -152,15 +153,19 @@ async function imageSize(blob) {
   if (bmp.close) bmp.close();
   return size;
 }
-// One worker per search, shut down afterwards: a cheap phone needs that memory back.
-async function findLabels(blob, existing, onProgress, onWorker) {
+// A reader for the given languages ('eng', 'eng+fil'). One per job, shut down afterwards: a cheap phone needs
+// that memory back.
+async function ocrWorker(langs, onProgress) {
   // Absolute, because the worker resolves paths against its own address; same folder as this page.
   const T = await loadTesseract(), dir = location.href.replace(/[?#].*$/, '').replace(/[^/]*$/, '') + OCR_DIR.slice(2, -1);
-  const worker = await T.createWorker('eng', 1, {
+  return T.createWorker(langs, 1, {
     workerPath: dir + '/worker.min.js', corePath: dir, langPath: dir, gzip: true,
     workerBlobURL: false, cacheMethod: 'none', // requests go through the service worker; no second copy in IndexedDB
     logger: m => { if (onProgress && m && typeof m.progress === 'number') onProgress(m.progress, m.status); }
   });
+}
+async function findLabels(blob, existing, onProgress, onWorker) {
+  const worker = await ocrWorker('eng', onProgress); // labels: English only, the smaller download
   if (onWorker) onWorker(worker); // lets a dropped search stop it early
   try {
     const { data } = await worker.recognize(blob, {}, { blocks: true });
@@ -171,11 +176,21 @@ async function findLabels(blob, existing, onProgress, onWorker) {
     return labelCovers(words, width, height, existing);
   } finally { try { await worker.terminate(); } catch (e) { /* already stopped */ } }
 }
-async function pdfLines(pdfjs, buf, tags) {
+// pics (optional) collects scanned pages: a page with almost no text is a picture of text. Its place in the notes
+// is kept by a marker line, which readPictures() replaces with what it reads, so page order survives.
+async function pdfLines(pdfjs, buf, tags, pics) {
   const doc = await pdfjs.getDocument({ data: buf, isEvalSupported: false }).promise, out = [];
+  let scanned = false;
   for (let p = 1; p <= doc.numPages; p++) {
     status = 'Reading page ' + p + ' of ' + doc.numPages + '…'; home();
-    const tc = await (await doc.getPage(p)).getTextContent(), before = out.length;
+    const page = await doc.getPage(p), tc = await page.getTextContent(), before = out.length;
+    if (pics && tc.items.map(i => i.str).join('').replace(/\s/g, '').length < 20) {
+      const mark = OCR_MARK + pics.length;
+      pics.push({ mark, image: () => renderPdfPage(page) });
+      out.push(mark); tags[out.length - 1] = 'page ' + p;
+      scanned = true;
+      continue;
+    }
     let line = '', y = null;
     for (const it of tc.items) {
       if (y !== null && Math.abs(it.transform[5] - y) > 2) { out.push(line); line = ''; }
@@ -184,6 +199,8 @@ async function pdfLines(pdfjs, buf, tags) {
     out.push(line);
     for (let i = before; i < out.length; i++) tags[i] = 'page ' + p;
   }
+  // A PDF holds its decoded pages in memory: close it now, or after its scanned pages are read (run() does that).
+  if (scanned) (pics.docs ||= []).push(doc); else if (doc.destroy) doc.destroy();
   return out;
 }
 
@@ -941,7 +958,8 @@ function deleteReviewer(r) {
 }
 
 async function run() {
-  busy = true; err = ''; lastSkips = null; status = 'Starting…'; home();
+  busy = true; err = ''; lastSkips = null; ocrNote = ''; status = 'Starting…'; home();
+  const pics = []; // photos and scanned pages, read into the paste box for the student to check
   try {
     let lines = [], tags = [];
     if (!files.length) {
@@ -950,15 +968,34 @@ async function run() {
     }
     for (const f of files) {
       const t = []; let l; // t[i] = page or slide of l[i]
-      if (/\.pdf$/i.test(f.name)) l = await pdfLines(await loadPdfjs(), await f.arrayBuffer(), t);
+      if (isPhoto(f)) { const mark = OCR_MARK + pics.length; pics.push({ mark, image: () => fitForOcr(f) }); l = [mark]; }
+      else if (/\.pdf$/i.test(f.name)) l = await pdfLines(await loadPdfjs(), await f.arrayBuffer(), t, pics);
       else if (/\.pptx$/i.test(f.name)) l = await pptxLines(await f.arrayBuffer(), t);
       else if (/\.docx$/i.test(f.name)) l = await docxLines(await f.arrayBuffer());
       else if (/\.doc$/i.test(f.name)) throw new Error('Old .doc files cannot be read. In Word use Save As > .docx (or PDF), then pick that file.');
       else if (/\.ppt$/i.test(f.name)) l = pptLines(await f.arrayBuffer(), t);
       else if (/\.(txt|md|markdown|csv)$/i.test(f.name)) l = (await f.text()).split(/\r?\n/);
-      else throw new Error('Unsupported file: use PDF, PPTX, PPT, DOCX, TXT or MD. Anything else would be read as garbage.');
+      else throw new Error('Unsupported file: use PDF, PPTX, PPT, DOCX, TXT, MD or a photo (JPG, PNG, WebP). Anything else would be read as garbage.');
       lines.push(...l); tags.push(...l.map((_, i) => t[i] || ''));
     }
+    const isMark = x => x.startsWith(OCR_MARK), typed = lines.filter(x => !isMark(x)).join('').length, photos = files.some(isPhoto);
+    // A typed PDF often has a title, divider or "Thank you!" page with almost no text: that is not a scanned PDF.
+    // Pictures are read only when chosen as photos, or when the typed text is too little to make questions from.
+    if (pics.length && (photos || typed < 200)) { // read text has mistakes, each a wrong question: the student checks it first
+      const { texts, read, failed, stopped } = await readPictures(pics);
+      if (stopped && read === 0) { ocrNote = 'Stopped. Nothing was read yet; press Generate to try again.'; return; } // files kept
+      if (read === 0) throw appError('Could not read the photos. Check the connection and try again, or type or paste the notes instead.');
+      const got = lines.map(x => (texts.has(x) ? texts.get(x) : x)).filter(x => !isMark(x)).join('\n').trim();
+      const named = files.find(f => !isPhoto(f));
+      if (!pasteTitle) pasteTitle = named ? named.name.replace(/\.[^.]+$/, '') : 'Notes from photos';
+      pasteText = [String(pasteText || '').trim(), got].filter(Boolean).join('\n'); // keep what the student already typed
+      files = [];
+      ocrNote = [stopped ? 'Stopped after ' + read + ' of ' + plural(pics.length, 'page', 'pages') + '.' : 'Read from ' + plural(read, 'page', 'pages') + '.',
+        failed.length && (failed.length === 1 ? 'Page ' : 'Pages ') + failed.join(', ') + ' could not be read.',
+        [...texts.values()].some(t => t.trim()) ? 'Fix any mistakes the reader made, then Generate.' : 'No text was found. The reader needs printed text in a clear, well-lit photo; it cannot read handwriting.'].filter(Boolean).join(' ');
+      return;
+    }
+    if (pics.length) { const keep = lines.map(x => !isMark(x)); lines = lines.filter((_, i) => keep[i]); tags = tags.filter((_, i) => keep[i]); }
     if (lines.join('').length < 200) throw new Error('No readable text found. Scanned PDFs or slides that are only pictures cannot be read offline.');
     status = 'Building items…'; home();
     const opts = { max: optMax, mcOnly: optMc, noTF: optNoTF, noEnum: optNoEnum }, items = generate(lines, tags, opts);
@@ -972,8 +1009,88 @@ async function run() {
     const title = (titleEl && titleEl.value.trim()) || pasteTitle || (files[0] ? files[0].name.replace(/\.[^.]+$/, '') : 'Pasted notes');
     pending = { title, items, src: lines, tags, opts, hidden: [], removed: [] }; files = [];
     if (sampleRun) savePending(); else preview(); // own notes are saved only after the student checks the questions
-  } catch (e) { err = String(e.message || e); }
-  busy = false; status = ''; if (!cur && !pending) home();
+  } catch (e) { err = String(e.message || e); } finally {
+    (pics.docs || []).forEach(d => { try { d.destroy(); } catch (e) { /* already closed */ } });
+    busy = false; status = ''; if (!cur && !pending) home();
+    if (ocrNote) { const box = document.getElementById('paste'); if (box) box.focus(); }
+  }
+}
+// Photos and scanned pages of notes. Same engine as Find printed labels, plus Filipino; its own yes.
+const OCR_NOTES_KEY = 'reviewer_ocr_notes_v1', OCR_MARK = '\u0000ocr:';
+const OCR_NOTES_ASK = 'Reading photos downloads about 9 MB once (less if you already use Find printed labels), then works offline.';
+let ocrNote = '', ocrStop = null; // ocrStop: set while reading; the Stop button calls it
+const isPhoto = f => /^image\/(png|jpeg|webp)$/.test(f.type || '') || /\.(png|jpe?g|webp)$/i.test(f.name || '');
+// Phone photos are ~4000 px: 2400 keeps small print readable without running a cheap phone out of memory.
+async function fitForOcr(file) {
+  const bmp = await createImageBitmap(file), k = Math.min(1, 2400 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  if (bmp.close) bmp.close();
+  return c;
+}
+async function renderPdfPage(page) { // about 2000 px wide, the size print reads best at
+  const base = page.getViewport({ scale: 1 }), viewport = page.getViewport({ scale: Math.min(3, 2000 / base.width) });
+  const c = document.createElement('canvas'); c.width = Math.ceil(viewport.width); c.height = Math.ceil(viewport.height);
+  try { await page.render({ canvasContext: c.getContext('2d'), viewport }).promise; } finally { if (page.cleanup) page.cleanup(); }
+  return c;
+}
+// Progress while reading: the status line changes once per page (it is a live region); the percentage sits in a
+// silent span. Both are updated in place, so a student on another screen is never pulled back to home, and the
+// Stop button keeps focus. Home is drawn once, to show Stop.
+let ocrStatusEl = null, ocrPctEl = null;
+function ocrProgress(page, pages) {
+  status = page ? 'Reading page ' + page + ' of ' + pages + '…' : 'Getting the reader ready… (the first time it downloads about 9 MB)';
+  if (lastScreen !== 'home') return;
+  if (ocrStatusEl && ocrPctEl) { ocrStatusEl.replaceChildren(status); ocrPctEl.replaceChildren(''); } else home();
+}
+// While photos are read the status line also holds a silent percentage and Stop; ocrProgress updates them in place.
+function statusLine() {
+  ocrStatusEl = ocrPctEl = null;
+  if (!status) return null;
+  if (!ocrStop) return h('p', { class: 'k', role: 'status' }, status);
+  return h('p', { class: 'k', role: 'status' }, (ocrStatusEl = h('span', null, status)), (ocrPctEl = h('span', { 'aria-hidden': 'true' })), ' ',
+    h('button', { class: 'btn alt', onclick: () => { if (ocrStop) ocrStop(); } }, 'Stop'));
+}
+function ocrTick(p, st) { if (ocrPctEl) ocrPctEl.replaceChildren(' ' + Math.round(p * 100) + '%' + (st && st !== 'recognizing text' ? ' · ' + st : '')); }
+// Reads each picture in turn: { texts (per marker), read, failed (page numbers), stopped }. One bad page does not
+// lose the others; Stop keeps what was read; each picture's canvas is released once read.
+async function readPictures(pics) {
+  if (!ocrSupported()) throw appError('Reading photos needs a normal browser or the installed app. Type or paste the notes instead.');
+  if (ocrConsent(OCR_NOTES_KEY) !== 'yes') {
+    if (!(await ask(OCR_NOTES_ASK, 'Download and read'))) throw appError('The photos were not read. Press Generate again to read them, or type or paste the notes instead.');
+    setOcrConsent('yes', OCR_NOTES_KEY);
+  }
+  const texts = new Map(), failed = [], STOPPED = {};
+  let read = 0, worker = null;
+  const stopped = new Promise(done => { ocrStop = () => done(STOPPED); });
+  try {
+    ocrProgress(0, pics.length);
+    const making = ocrWorker('eng+fil', ocrTick);
+    let first;
+    try { first = await Promise.race([making, stopped]); }
+    catch (e) { throw appError('Could not read the photos. Check the connection and try again, or type or paste the notes instead.'); }
+    if (first === STOPPED) { making.then(w => w.terminate(), () => {}); return { texts, read, failed, stopped: true }; } // a reader that arrives late is shut down
+    worker = first;
+    for (let i = 0; i < pics.length; i++) {
+      ocrProgress(i + 1, pics.length);
+      let img = null;
+      try {
+        const got = await Promise.race([pics[i].image().then(x => { img = x; return worker.recognize(x); }), stopped]);
+        if (got === STOPPED) return { texts, read, failed, stopped: true };
+        texts.set(pics[i].mark, String(got.data.text || '').trim());
+        read++;
+      } catch (e) {
+        failed.push(i + 1); // an odd image or a canvas the phone could not allocate: keep going
+      } finally {
+        if (img && typeof img === 'object' && 'width' in img) { img.width = 0; img.height = 0; } // frees the canvas memory
+        pics[i].image = null;
+      }
+    }
+    return { texts, read, failed, stopped: false };
+  } finally {
+    ocrStop = null;
+    if (worker) { try { await worker.terminate(); } catch (e) { /* already stopped */ } }
+  }
 }
 
 function savePending() {
@@ -1813,7 +1930,7 @@ function home() {
   const t = document.getElementById('title'), tv = t ? t.value : '', nMissed = missedPicks().length;
   const node = h('div', null,
     h('h1', null, BRAND),
-    h('p', { class: 'sub' }, 'Pick a PDF, PowerPoint (.pptx), Word (.docx) or text file. The reviewer is built on this device, no internet needed.'),
+    h('p', { class: 'sub' }, 'Pick a PDF, PowerPoint (.pptx), Word (.docx) or text file, or photos of printed notes. The reviewer is built on this device, no internet needed.'),
     warn(),
     R.length > 0 && planCard(),
     R.length > 0 && backupOld() && h('p', { class: 'k', role: 'status' }, 'No backup in the last 14 days. Your reviewers live only in this browser, so use "Export all" below.'),
@@ -1835,10 +1952,14 @@ function home() {
         h('button', { class: 'btn alt', disabled: busy ? '' : null, onclick: () => trySample('ap') }, 'Subukan: Araling Panlipunan'))),
     h('div', { class: 'card' },
       R.length > 0 && h('h2', { class: 'k' }, 'New reviewer'),
-      h('input', { type: 'file', id: 'file', 'aria-label': 'Choose a PDF, PowerPoint, Word or text file', accept: '.pdf,.pptx,.ppt,.docx,.txt,.md,text/plain,application/pdf', multiple: '', onchange: e => { files = [...e.target.files]; home(); } }),
+      h('input', { type: 'file', id: 'file', 'aria-label': 'Choose a PDF, PowerPoint, Word or text file, or photos of notes', accept: '.pdf,.pptx,.ppt,.docx,.txt,.md,text/plain,application/pdf,image/png,image/jpeg,image/webp,.jpg,.jpeg,.png,.webp', multiple: '', disabled: busy ? '' : null, onchange: e => { files = [...e.target.files]; home(); } }),
+      // A phone camera adds one photo per tap, so each one is added to the pages already taken.
+      typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches && h('label', { class: 'btn alt camera' }, '📷 Take a photo',
+        h('input', { type: 'file', class: 'sr', accept: 'image/jpeg,image/png,image/webp', capture: 'environment', disabled: busy ? '' : null, 'aria-label': 'Take a photo of your notes', onchange: e => { files = [...files, ...e.target.files]; e.target.value = ''; home(); } })),
       files.length > 0 && h('p', { class: 'k' }, files.length + ' file(s): ' + files.map(f => f.name).join(', ')), // the browser already says "No file chosen"
       h('input', { type: 'text', id: 'title', 'aria-label': 'Reviewer title (optional)', placeholder: 'Reviewer title (optional)', value: tv }),
-      h('textarea', { rows: 5, 'aria-label': 'Paste notes', placeholder: '…or paste your notes here (at least 200 characters)', oninput: e => { pasteText = e.target.value; } }, pasteText),
+      ocrNote && h('p', { class: 'k ocr-note' }, ocrNote),
+      h('textarea', { id: 'paste', rows: ocrNote ? 12 : 5, 'aria-label': 'Paste notes', placeholder: '…or paste your notes here (at least 200 characters)', oninput: e => { pasteText = e.target.value; } }, pasteText),
       h('div', { class: 'row' },
         h('label', null, 'Questions: ', h('select', { onchange: e => { optMax = Number(e.target.value); } }, [[0, 'All (max ' + Object.values(ITEM_CAP).reduce((n, c) => n + c, 0) + ')'], [10, '10'], [20, '20']].map(([v, t]) => h('option', { value: v, selected: v === optMax ? '' : null }, t)))),
         h('label', null, h('input', { type: 'checkbox', checked: optMc ? '' : null, onchange: e => { optMc = e.target.checked; } }), 'Multiple choice only')),
@@ -1846,7 +1967,7 @@ function home() {
         h('label', null, h('input', { type: 'checkbox', checked: optNoTF ? null : '', onchange: e => { optNoTF = !e.target.checked; } }), 'True / false'),
         h('label', null, h('input', { type: 'checkbox', checked: optNoEnum ? null : '', onchange: e => { optNoEnum = !e.target.checked; } }), 'Enumeration')),
       h('p', null, h('button', { class: 'btn', disabled: busy ? '' : null, onclick: run }, busy ? 'Working…' : 'Generate reviewer')),
-      status && h('p', { class: 'k', role: 'status' }, status), err && h('p', { class: 'err', role: 'alert' }, err),
+      statusLine(), err && h('p', { class: 'err', role: 'alert' }, err),
       err && skipReport(lastSkips, true)),
     h('div', { class: 'card' },
       h('h2', { class: 'k' }, 'Diagrams'),

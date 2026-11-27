@@ -204,8 +204,12 @@ wording stays English. Words that differ by language live in `LANGS` in
 `js/reviewer-generator.js`; adding a language starts there.
 
 PDF, PowerPoint (`.pptx` and old `.ppt`), Word (`.docx`) and text (`.txt`, `.md`, `.csv`); PNG, JPEG
-and WebP for diagram reviewers. Old `.doc` must be saved as `.docx` or PDF first. Scanned PDFs and
-image-only slides need OCR.
+and WebP for diagram reviewers. Old `.doc` must be saved as `.docx` or PDF first. Photos of printed notes
+(JPG, PNG, WebP, several at once; on a phone, **Take a photo** adds one page per tap) and scanned PDFs are
+read with the built-in text reader (Tesseract, English + Filipino). The first time it asks before downloading
+about 9 MB, then works offline. The text it reads goes into the paste box with a note to fix its mistakes
+first, because each mistake would become a wrong question; then **Generate** as usual. A typed PDF with a
+short title or "Thank you!" page is still read as typed text. Image-only slides in PowerPoint are not read.
 
 ## Known limits
 
@@ -228,8 +232,10 @@ image-only slides need OCR.
   required item is given. The daily limit applies to due flashcard sessions, not to a graded quiz.
 - The Stats panel counts accuracy from answered items only; unanswered items are not counted as
   wrong. It breaks results down by question type, not by page or slide section yet.
-- Paste and OCR: text can be pasted directly, but a scanned handout or a photo of a page still needs
-  OCR before it can be read; the app does not bundle it.
+- Reading photos: printed text in a clear, well-lit photo reads well; handwriting, blur, shadows and
+  very small print do not. It is offered only where the service worker keeps the reader (a normal browser
+  or the installed app, with WebAssembly on). A cheap phone can take several seconds per page; **Stop**
+  keeps the pages already read. Photos are read in the order chosen.
 - In **Choose from labels** mode the options come from the same diagram's other parts, so a student
   can sometimes answer by elimination. That is why it is off by default.
 - Diagram zoom is per part and resets when the reviewer is reopened; on phones the browser's own
