@@ -3,6 +3,10 @@
 // Bump VERSION when a shipped file changes, or phones keep running the old copy.
 const VERSION = 'v32';
 const CACHE = 'reviewer-' + VERSION;
+// The OCR engine for "Find printed labels" (~7 MB) is never precached. It is kept on first use in a
+// cache named after the engine version, which app updates leave alone, so it downloads once per
+// engine version, not once per release. Change the name when vendor/tesseract/ is upgraded.
+const OCR_CACHE = 'ocr-tesseract-7.0.0', OCR_PATH = './vendor/tesseract/';
 const SHELL = [
   './',
   './index.html',
@@ -33,8 +37,8 @@ self.addEventListener('install', event => {
 
 self.addEventListener('activate', event => {
   event.waitUntil((async () => {
-    // Drop every older version, so a fixed bug cannot stay cached on a phone.
-    for (const key of await caches.keys()) if (key !== CACHE) await caches.delete(key);
+    // Drop every older version, so a fixed bug cannot stay cached on a phone. The OCR engine stays.
+    for (const key of await caches.keys()) if (key !== CACHE && key !== OCR_CACHE) await caches.delete(key);
     await self.clients.claim();
   })());
 });
@@ -51,7 +55,7 @@ self.addEventListener('fetch', event => {
   const rel = './' + url.pathname.slice(new URL(base).pathname.length) + url.search.replace(/\?.*/, '');
   const key = isPage(req) ? './index.html' : url.href.startsWith(base) ? rel : url.href;
   event.respondWith((async () => {
-    const cache = await caches.open(CACHE);
+    const cache = await caches.open(key.startsWith(OCR_PATH) ? OCR_CACHE : CACHE);
     const hit = await cache.match(key);
     if (hit) return hit;
     try {

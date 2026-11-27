@@ -1,0 +1,2 @@
+# Vendored third-party files are kept byte for byte.
+vendor/** -text

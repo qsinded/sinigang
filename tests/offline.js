@@ -48,6 +48,7 @@ function world(scope) {
   vm.createContext(sandbox);
   vm.runInContext(SW, sandbox);
   const cacheName = vm.runInContext('CACHE', sandbox); // 'reviewer-v1', kept in one place in sw.js
+  const ocrName = vm.runInContext("typeof OCR_CACHE === 'undefined' ? undefined : OCR_CACHE", sandbox);
   // Fire a listener. A handler that never answers means "not intercepted", which is undefined here.
   const fire = (type, event) => new Promise((resolve, reject) => {
     let answered = false;
@@ -64,7 +65,7 @@ function world(scope) {
     url: new URL(url, scope).href,
     headers: { get: () => (opts.page ? 'text/html' : '') }
   });
-  return { caches, net, broken, hits, fire, request, cacheName, store: () => caches.get(cacheName) };
+  return { caches, net, broken, hits, fire, request, cacheName, ocrName, store: () => caches.get(cacheName) };
 }
 
 (async () => {
@@ -103,6 +104,29 @@ function world(scope) {
     assert.strictEqual(miss && miss.status, 504, 'an uncached file offline answers 504');
     assert.strictEqual(await w.fire('fetch', { request: w.request(at('x'), { method: 'POST' }) }), undefined, 'POST is not intercepted');
     assert.strictEqual(await w.fire('fetch', { request: w.request('https://other.example/x') }), undefined, 'a cross-origin request is not intercepted');
+  }
+
+  // The OCR engine (~7 MB) is never precached. It is kept on first use in its own cache, which an app
+  // update leaves alone, so a student downloads it once and not again after every release.
+  {
+    const scope = 'https://example.com/repo/', w = world(scope), at = u => scope + u;
+    assert.ok(w.ocrName && /^ocr-tesseract-/.test(w.ocrName), 'the OCR engine has its own cache name');
+    [...SHELL, ...OPTIONAL].forEach(u => w.net.add(u));
+    const engine = './vendor/tesseract/worker.min.js';
+    w.net.add(engine);
+    await w.fire('install', {});
+    assert.ok(!w.store().has(engine), 'the engine is not precached');
+    const got = await w.fire('fetch', { request: w.request(at('vendor/tesseract/worker.min.js')) });
+    assert.strictEqual(got && got.body, engine, 'the engine loads on first use');
+    assert.ok(w.caches.get(w.ocrName).has(engine) && !w.store().has(engine), 'the engine goes to its own cache');
+    // An app update: the old app cache and an older engine cache go, this engine's cache stays.
+    w.caches.set('reviewer-old', w.caches.get(w.cacheName)); w.caches.delete(w.cacheName);
+    w.caches.set('ocr-tesseract-0.0.0', new Map());
+    await w.fire('activate', {});
+    assert.deepStrictEqual([...w.caches.keys()], [w.ocrName], 'an update keeps the engine and drops older copies');
+    w.net.delete(engine);
+    const offline = await w.fire('fetch', { request: w.request(at('vendor/tesseract/worker.min.js')) });
+    assert.strictEqual(offline && offline.body, engine, 'the engine works offline after an update');
   }
 
   // Every precached path must exist in the repository, or the install fails on a real phone.
