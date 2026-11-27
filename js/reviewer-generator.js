@@ -130,9 +130,15 @@ function matchWords(A, V, allowTypo) {
  *   what was typed as well ("stalagtite" is one letter off both stalagmite and stalactite)
  * @returns {{ok: boolean, typo: boolean}} typo: accepted, but only by forgiving a spelling slip
  */
+// "Overseas Filipino Worker o OFW", "Deoxyribonucleic acid or DNA", "Define Byte (DB)": a name given with its acronym
+// accepts either one alone. A plain "or" is part of the name ("Fight or flight response"), so the acronym is required.
+const ACR = '([A-Z0-9][A-Z0-9.\\-]{1,9})';
+const ALT = new RegExp('^(.+?)\\s+(?:or|o)\\s+' + ACR + '$|^(.+?)\\s*\\(' + ACR + '\\)$|^' + ACR + '\\s*\\((.+)\\)$');
+const altNames = a => { const m = String(a).trim().match(ALT); return m ? [m[1] || m[3] || m[5], m[2] || m[4] || m[6]] : null; };
 function gradeId(ans, val, others = []) {
   const A = String(ans).trim(), V = String(val).trim(), a = bare(A), v = bare(V), no = { ok: false, typo: false };
   if (!v || !a) return no;
+  for (const name of altNames(A) || []) { const g = gradeId(name, V, others); if (g.ok) return g; }
   if (a === v) return { ok: true, typo: false };
   if (isAcr(A) !== isAcr(V) && abbreviates(isAcr(A) ? A : V, isAcr(A) ? V : A)) return { ok: true, typo: false };
   const m = matchWords(A, V, !isAcr(A));
@@ -182,14 +188,29 @@ const words = s => new Set((String(s).toLowerCase().match(/[a-z0-9]{4,}/g) || []
 const overlap = (a, b) => { const x = words(a), y = words(b); let n = 0; x.forEach(w => { if (y.has(w)) n++; }); return n / (Math.min(x.size, y.size) || 1); };
 // Pick another item's term to put in place of this one's, only when the swap cannot be true: the other term is not
 // mentioned in this sentence, is not a variant of this term, and its own source says something different.
-function verifiedSwap(it, list, srcOf, termOf, textOf, fitsGrammar = () => true) {
+// kin(o) scores how alike o is to it (same section, same head word); the swap is chosen among the most alike, so a
+// false statement is not given away by a term from another topic ("A [divergent boundary] was the supercontinent…").
+function verifiedSwap(it, list, srcOf, termOf, textOf, fitsGrammar = () => true, kin = () => 0) {
   const ok = list.filter(o => o !== it && !variant(termOf(o), termOf(it)) && norm(termOf(o)) !== norm(termOf(it))
     && !norm(termOf(o)).includes(norm(termOf(it))) && !norm(termOf(it)).includes(norm(termOf(o)))
     && !norm(srcOf(it)).includes(norm(termOf(o))) && overlap(textOf(it), textOf(o)) < 0.4);
   // A plural term dropped into a singular sentence reads as a typo ("Chloroplasts is the process...").
-  const same = ok.filter(o => fitsGrammar(o, it));
-  return near(termOf(it), (same.length ? same : ok).map(termOf))[0];
+  const same = ok.filter(o => fitsGrammar(o, it)), pool = same.length ? same : ok;
+  const top = Math.max(0, ...pool.map(kin)), alike = top > 0 ? pool.filter(o => kin(o) === top) : pool;
+  return near(termOf(it), alike.map(termOf))[0];
 }
+// A description that uses a form of its own term gives the answer away: "Storage: Characters are stored…", "Encryption is
+// … encrypting". Every content word of the term must share a real stem with a word of the text (4+ letters and 60% of the
+// shorter word): storage/stored and encryption/encrypting match, diffusion/different do not, and "law of demand" with
+// "quantity demanded" does not, because "law" is not in the text — that question still tests which law it is.
+const sharedStem = (a, b) => { let n = 0; while (n < a.length && n < b.length && a[n] === b[n]) n++; return n >= 4 && n >= 0.6 * Math.min(a.length, b.length); };
+const leaksTerm = (term, text) => {
+  const tw = (String(term).toLowerCase().match(/[a-z]{3,}/g) || []).filter(w => !FILLER_W.includes(w)), xw = String(text).toLowerCase().match(/[a-z]{4,}/g) || [];
+  return tw.length > 0 && tw.every(w => xw.some(x => sharedStem(w, x)));
+};
+// Same section heading counts most, then the same head word ("divergent boundary" / "transform boundary").
+const headWord = t => (String(t).toLowerCase().match(/[a-z0-9]+/g) || []).pop() || '';
+const kinOf = it => o => (it.ctx && o.ctx === it.ctx ? 2 : 0) + (headWord(o.term) === headWord(it.term) ? 1 : 0);
 // Kind of term: acronym (EAX), has a digit (IA-32), several words, or a plain word. Distractors of the same kind look as plausible.
 const shape = t => /^[A-Z][A-Z0-9_.\-]+$/.test(t) ? 'acronym' : /\d/.test(t) ? 'number' : /\s/.test(t) ? 'phrase' : 'word';
 const variant = (a, b) => { const x = norm(a), y = norm(b); return x === y || (x.length >= 3 && y.length >= 3 && (x.includes(y) || y.includes(x)))
@@ -323,6 +344,7 @@ const SKIP_REASONS = {
   'bad-term': 'What the sentence is about is not a term (a clause, a heading, a word like "Many" or "It", or more than 5 words). Start with the term.',
   repeated: 'Repeats a term or definition that is already asked.',
   'empty-blank': 'Hiding the term would leave nothing to answer from.',
+  leaks: 'The description uses a form of its own answer ("stored" for Storage), so it gives the answer away.',
   'no-claim': 'Not a complete statement with a verb.',
   'cut-list': 'A list cut away from its heading.',
   decade: 'Gives only a decade ("the 1950s"), too vague to ask.',
@@ -402,6 +424,8 @@ function generate(rawLines, tags = [], o = {}) {
       else sents.push(note(it, g));
     } else {
       flushList();
+      // An objectives or outline list ends with its last item: what follows is content, not more outline.
+      if (i > 0 && BUL.test(lines[i - 1].t) && (OUTLINE.test(sect.trim()) || OBJ_HEAD.test(sect.trim()))) sect = '';
       if (l.endsWith(':') && l.length < 100) { flushPara(); hdr = l.slice(0, -1); hdrTag = g; sect = hdr; }
       else if (!/[.!?:,;]$/.test(l) && (l.length < 50 || longHead(l, (lines[i + 1] || {}).t))) { flushPara(); sect = l; skip(l, objSet.has(l) ? 'objective' : 'heading'); } // heading
       else {
@@ -446,6 +470,7 @@ function generate(rawLines, tags = [], o = {}) {
         const mask = body.replace(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), '_____');
         // "The CPU is the CPU of the computer" leaves "The _____ of the computer": nothing to answer from.
         if ((mask.replace(/_____/g, ' ').match(/[A-Za-z]{4,}/g) || []).length < 2) { skip(s, 'empty-blank'); continue; }
+        if (leaksTerm(term, mask)) { skip(s, 'leaks'); continue; }
         const who = isPerson(term, body, s);
         // "Telophase is when two new nuclei form…": a description opening with "when"/"where"/"if"… is not a statement,
         // so the term is blanked in the note's own sentence, and the clause is never offered as a statement option.
@@ -492,12 +517,15 @@ function generate(rawLines, tags = [], o = {}) {
     const plainWords = words.map(w => w.replace(/[,;:.]$/, ''));
     // A bare verb form after a singular word is a noun in a name: "Passive transport does…", "The sodium-potassium
     // pump moves…". A singular subject takes "transports"/"pumps", so the real verb comes later.
-    const nounInName = i => VERB_BASE.has(plainWords[i].toLowerCase()) && !manyWord(plainWords[i - 1]);
+    // An -ing word directly before another verb is part of the name too: "Seafloor spreading happens…".
+    const nounInName = i => (VERB_BASE.has(plainWords[i].toLowerCase()) && !manyWord(plainWords[i - 1]))
+      || (/ing$/i.test(plainWords[i]) && i + 1 < plainWords.length && /^[a-z]/.test(plainWords[i + 1]) && verbAt(plainWords, i + 1));
     const k = plainWords.findIndex((w, i) => i >= 1 && /^[a-z]/.test(w) && verbAt(plainWords, i) && !nounInName(i));
     if (k < 1 || k > 4 || /^(?:is|are|was|were|be|been|being)$/.test(words[k])) continue;
     const term = words.slice(0, k).join(' '), rest = words.slice(k).join(' ');
     if (!termFine(term) || /[^\w\s\-]/.test(term)) { refine(s, 'bad-term'); continue; }
     if ((rest.match(/[A-Za-z]{4,}/g) || []).length < 2) { refine(s, 'empty-blank'); continue; }
+    if (leaksTerm(term, rest)) { refine(s, 'leaks'); continue; }
     if (seen.has(term.toLowerCase()) || factTerms.has(term.toLowerCase())) { refine(s, 'same-term'); continue; }
     factTerms.add(term.toLowerCase());
     facts.push({ kind: 'fact', w: score(term), term, q: 'Fill in the blank: ' + art + '_____ ' + rest, src: s, ctx: ctxOf.get(s) || '' });
@@ -562,8 +590,8 @@ function generate(rawLines, tags = [], o = {}) {
   const tfText = (it, t) => {
     if (it.kind === 'fact' && !t) return ''; // swapping a subject needs verb agreement ("Ribosomes builds"); facts only make true claims
     const swap = it.kind === 'def'
-      ? verifiedSwap(it, defs, x => x.src, x => x.term, x => x.body, o => plural(o.term) === subjectPlural(it) && person(o) === person(it))
-      : verifiedSwap(it, clozes, x => x.src, x => x.term, x => x.src, o => plural(o.term) === subjectPlural(it) && person(o) === person(it));
+      ? verifiedSwap(it, defs, x => x.src, x => x.term, x => x.body, o => plural(o.term) === subjectPlural(it) && person(o) === person(it), kinOf(it))
+      : verifiedSwap(it, clozes, x => x.src, x => x.term, x => x.src, o => plural(o.term) === subjectPlural(it) && person(o) === person(it), kinOf(it));
     // No candidate with the right number: skip this true/false rather than print "Chloroplasts is ...".
     if (!t && (!swap || plural(swap) !== subjectPlural(it))) return '';
     const st = (t ? clean(it.src) : replaceTerm(clean(it.src), it.term, swap)).replace(/\.$/, ''); // a true claim is the note's own sentence
@@ -633,7 +661,7 @@ function generate(rawLines, tags = [], o = {}) {
   for (const it of shuffle([...defs.filter(d => !d.clause), ...facts])) {
     if (o.noTF || nMtf >= ITEM_CAP.mtf) break;
     const list = it.kind === 'def' ? defs : [...facts, ...defs];
-    const swap = verifiedSwap(it, list, x => x.src, x => x.term, x => x.body || x.src, x => plural(x.term) === subjectPlural(it) && person(x) === person(it));
+    const swap = verifiedSwap(it, list, x => x.src, x => x.term, x => x.body || x.src, x => plural(x.term) === subjectPlural(it) && person(x) === person(it), kinOf(it));
     const isTrue = !swap || nMtfTrue <= nMtf - nMtfTrue; // TRUE while there are no more TRUE items than false ones
     const shown = isTrue ? it.term : swap, st = (isTrue ? clean(it.src) : replaceTerm(clean(it.src), it.term, swap)).replace(/\.$/, '');
     const marked = st.replace(new RegExp('\\b' + esc(shown) + '\\b', 'i'), m => '[' + m + ']');

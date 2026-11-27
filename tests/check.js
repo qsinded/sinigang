@@ -442,6 +442,42 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
   assert.notStrictEqual(itemKey(mtfA), itemKey(mtfB), 'a modified true or false item is keyed by its answer');
   const setA = { type: 'match', q: 'Matching type (set 1)', pairs: [{ term: 'Mitosis', desc: 'a' }] }, setB = { ...setA, pairs: [{ term: 'Meiosis', desc: 'b' }] };
   assert.notStrictEqual(itemKey(setA), itemKey(setB), 'a matching set is keyed by its pairs');
+  // From the third student test (Science 10, AP 10).
+  // An objectives or outline list ends with its last item: the facts written after it are content, not outline.
+  for (const head of ['Objectives:', 'Objectives']) {
+    const after = generate([head, '- Describe the layers of the Earth', '- Explain the types of plate boundaries',
+      'The lithosphere is the rigid outer layer of the Earth made of the crust and upper mantle.', 'The asthenosphere is the soft, partly molten layer below the lithosphere.',
+      'Plate tectonics is the theory that the lithosphere is divided into plates that move.'], [], { noTF: true });
+    const got = new Set(after.map(q => q.type === 'mc' ? q.options[q.answer] : q.answer));
+    for (const a of ['lithosphere', 'asthenosphere', 'Plate tectonics']) assert(got.has(a), head + ' then "' + a + '" is asked; got: ' + [...got].join(' / '));
+  }
+  // An -ing word right before the real verb belongs to the name: "Seafloor spreading happens…".
+  const ing = generate(['Seafloor spreading happens at mid-ocean ridges where new oceanic crust forms.', 'Rock weathering breaks large rocks into smaller pieces.',
+    'Subduction happens when one plate sinks beneath another plate.', 'The epicenter is the point on the surface above the focus.'], [], { noTF: true });
+  const ingAns = new Set(ing.map(q => q.type === 'mc' ? q.options[q.answer] : q.answer));
+  assert(ingAns.has('Seafloor spreading') && ingAns.has('Rock weathering') && !ingAns.has('Seafloor'), 'names ending in -ing stay whole: ' + [...ingAns].join(' / '));
+  // "X o Y" / "X or Y" with an acronym, or "X (Y)": either name is right on its own; a plain "or" is not split.
+  for (const [ans, typed, want] of [['Overseas Filipino Worker o OFW', 'OFW', true], ['Overseas Filipino Worker o OFW', 'Overseas Filipino Worker', true],
+    ['Deoxyribonucleic acid or DNA', 'DNA', true], ['Deoxyribonucleic acid or DNA', 'deoxyribonucleic acid', true], ['Define Byte (DB)', 'DB', true],
+    ['Fight or flight response', 'fight', false], ['Overseas Filipino Worker o OFW', 'OFX', false]])
+    assert.strictEqual(idOk(ans, typed), want, JSON.stringify(typed) + ' for ' + JSON.stringify(ans) + ' should be ' + want);
+  // A false modified true or false swaps in a term of the same kind (same section) when there is one.
+  const kinds = ['Organelles', 'The nucleus is the control center that holds the genetic material.', 'The mitochondrion is the powerhouse that releases energy for the cell.',
+    'The ribosome is the site of protein synthesis in the cytoplasm.', 'Earth Science', 'Pangaea was the supercontinent that existed about 250 million years ago.',
+    'The Philippine Trench is a deep oceanic trench east of the Philippines.', 'The Ring of Fire is a belt of volcanoes around the Pacific Ocean.'];
+  const organelle = /nucleus|mitochondrion|ribosome/i;
+  let sameKind = 0;
+  for (let i = 0; i < 40; i++) generate(kinds).filter(q => q.type === 'mtf' && q.answer !== 'TRUE').forEach(q => {
+    const shown = q.q.match(/\[(.+?)\]/)[1];
+    assert.strictEqual(organelle.test(shown), organelle.test(q.answer), 'a swap stays within its section: [' + shown + '] for ' + q.answer);
+    sameKind++;
+  });
+  assert(sameKind > 0, 'false items were made');
+  // A description that uses a form of its own term gives the answer away: "Storage: Characters are stored as bytes…".
+  const leak = generate(['Storage: Characters are stored as bytes using directives like DB (Define Byte).', 'Encryption is the process of encrypting data so others cannot read it.',
+    'A register is a small storage location inside the processor.', 'The cache is a small fast memory placed close to the processor.', 'A bus is a set of wires that carries data.']);
+  assert(!leak.some(q => /^(?:Storage|Encryption)$/i.test(q.type === 'mc' ? q.options[q.answer] : q.answer)), 'no question whose description contains its own answer');
+  assert.strictEqual(reasonFor(leak, 'Storage: Characters are stored as bytes using directives like DB (Define Byte).'), 'leaks', 'and the report says why');
   // The objectives still rank: with room for one question, it is the one tied to them.
   for (let i = 0; i < 10; i++) {
     const top = generate(cellNotes, [], { max: 1, noTF: true })[0];
