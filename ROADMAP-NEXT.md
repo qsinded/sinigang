@@ -48,17 +48,20 @@ device. Every phase adds tests to `tests/check.js`, never raises a `tests/qualit
    *Why first:* the app's audience is Filipino students, and today these notes produce nothing.
    **Done 2026-11-27:** `LANGS` table (en, fil) drives articles, linking verbs, non-terms and clause words;
    "Ang X ay Y", "Si X ay Y", "Si X ang Y" and verb-first sentences with a year work; true/false keeps
-   people after "Si". Filipino corpus coverage 0% → 90%, English output unchanged. Still to do: Filipino
-   question wording ("Ano ang tinutukoy?", "Tama o Mali"), Filipino learning objectives ("Layunin",
-   Bloom verbs like "Ipaliwanag"), and Filipino list headings ("Halimbawa", "Tandaan").
+   people after "Si". Filipino corpus coverage 0% → 90%, English output unchanged. Later the same day:
+   Filipino learning objectives ("Layunin", competency verbs like "Naipapaliwanag"), list headings
+   ("Halimbawa", "Tandaan") and exam instructions ("Panuto:", "Isulat ang TAMA kung…") are recognised.
+   Question wording stays English by the owner's decision (no Filipino stems).
 2. **More ways English notes state a fact.** "X states that Y", "X is called Y" / "Y is known as
    X", "X consists of Y", "X happens when Y", "X occurs when Y". Each needs a question form
    ("Which law states that…?") and a quality-corpus line.
    **Done 2026-11-27, more generally:** any plain subject-verb sentence asks for its subject as a blank in
    the note's own sentence ("The _____ states that when price rises…" → law of demand; "A _____ happens
    when…" → shortage). Coverage: biology 67→100%, economics 54→85%, computer architecture 47→74%, exam paper
-   54→69%, networking 88→94%. Not done: "is called" / "is known as" reversals, and wrong options that agree
-   with the verb's number ("register" can appear for "_____ move").
+   54→69%, networking 88→94%. Since done: "X is called Y" / "known as" / "tinatawag na" reversals (only when X is
+   a description, so a name stays the answer), wrong options that agree with the verb, and verbs outside the
+   word list found by form ("The enzyme catalyzes the…": an "-s" word after a singular subject, before a
+   determiner).
 3. **Skipped-line report.** Backend done 2026-11-27: `generate()` returns `.skipped` with a reason code per
    line, and `SKIP_REASONS` words each one for a student with a fix ("Try writing it as *X is …*").
    Still to do (UI, paused): show it when a file yields few questions, instead of the dead-end error.
@@ -78,7 +81,9 @@ with no article whose description opens with a role from `LANGS.personNouns`), p
 subject-blank options that agree with the verb, acronym/year answers with options of their own shape, and
 at most two uses of a wrong option per set, otherwise the item is typed. Measured before: 160 of 160
 subject-blank items mixed singular and plural options; one Filipino option appeared 6 times in a set.
-Still open: "In what year…?" wording (year blanks already read well), B3 awkward option text, B4 two dates.
+Since done: B3 (a description opening with "when/where/if…" is asked as a blank in its own sentence and never
+offered as a statement) and B4 (both years of a two-date sentence are asked). Not planned: "In what year…?"
+wording, since year blanks already read well.
 
 1. **Ask by the kind of answer.** A person: "Who was executed in Bagumbayan in 1896?". A year:
    "In what year…?". A place: "Where…?". Everything else keeps "Which term is described?".

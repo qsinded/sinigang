@@ -64,7 +64,9 @@ const LANGS = {
   },
 };
 const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const anyOf = key => Object.values(LANGS).flatMap(l => l[key]).map(esc).join('|');
+// Alternation of every language's words for a key. With no words at all it never matches: "(?:)" would match
+// everywhere and, in RUBRIC, turn every sentence into an exam instruction.
+const anyOf = key => Object.values(LANGS).flatMap(l => l[key] || []).map(esc).join('|') || '(?!)';
 
 // Grading has to accept the answer the way a student actually types it, or a right answer reads as wrong.
 // Ignored: a leading article, punctuation, and the difference between "RAM" and "random access memory".

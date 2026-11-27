@@ -356,6 +356,15 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
   for (let i = 0; i < 25; i++) generate(morph, [], { noTF: true }).forEach(q => morphAns.add(q.type === 'mc' ? q.options[q.answer] : q.answer));
   for (const a of ['enzyme', 'hypothalamus', 'Insulin', 'thyroid gland']) assert(morphAns.has(a), 'a verb outside the list is found for "' + a + '"; got: ' + [...morphAns].join(' / '));
   assert(!morphAns.has('class'), 'a plural noun before "of" is not a verb');
+  // An empty LANGS list must never match: with every rubric list emptied, plain definitions are not "instructions".
+  {
+    const vm = require('vm'), src = fs.readFileSync(path.join(__dirname, '..', 'js', 'reviewer-generator.js'), 'utf8').replace(/rubrics: \[[^\]]*\]/g, 'rubrics: []');
+    const box = { module: {} };
+    vm.createContext(box); vm.runInContext(src, box);
+    const plainDefs = box.module.exports.generate(['Mitosis is the division of a nucleus into two identical nuclei.',
+      'Meiosis is a cell division that produces four haploid gametes.', 'Interphase is the stage where the cell grows and copies its DNA.']);
+    assert.strictEqual(plainDefs.length, 3, 'an empty word list matches nothing; got skips: ' + JSON.stringify(plainDefs.skipped));
+  }
   // A fact that made a question but was cut by the limit, or by a type the student turned off, says so.
   const capped = generate(skipNotes, [], { max: 1 });
   assert(capped.skipped.some(s => s.reason === 'limit'), 'items cut by the limit are reported');

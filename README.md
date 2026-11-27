@@ -7,8 +7,9 @@ no account and no build step.
 
 ## Features
 
-- **Question generation** from definitions, inline lists, capitalised terms, years and plain subject-verb
-  sentences ("Ribosomes build proteins…" asks "_____ build proteins…"): multiple choice,
+- **Question generation** from definitions (including "… is called X"), inline lists, capitalised terms, years
+  (both years of "from 1565 until 1898") and plain subject-verb sentences ("Ribosomes build proteins…" asks
+  "_____ build proteins…"): multiple choice,
   true/false, identification and enumeration, with distractors chosen to look plausible. A true/false
   item is the note's own sentence ("True or false: A cache is a small fast memory placed close to the
   CPU."), never a rearranged fragment: slide lead-ins like "The control unit is to:" and option lines
@@ -147,8 +148,9 @@ and their export.
 ## Supported input
 
 Notes in English, Filipino or both (Taglish). Filipino definitions are read from "Ang X ay Y", "Si X ay Y"
-and "Si X ang Y", and a year in a Filipino sentence ("… noong 1892") becomes a fill-in-the-blank. The
-question wording is still English. Words that differ by language live in `LANGS` in
+and "Si X ang Y", and a year in a Filipino sentence ("… noong 1892") becomes a fill-in-the-blank.  Filipino
+lesson furniture is recognised too: a "Layunin" block, "Halimbawa:" lists and "Panuto:" instructions. Question
+wording stays English. Words that differ by language live in `LANGS` in
 `js/reviewer-generator.js`; adding a language starts there.
 
 PDF, PowerPoint (`.pptx` and old `.ppt`), Word (`.docx`) and text (`.txt`, `.md`, `.csv`); PNG, JPEG
