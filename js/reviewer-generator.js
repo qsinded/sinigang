@@ -15,7 +15,8 @@ const LANGS = {
     answerArticles: ['the', 'a', 'an'],               // ignored at the start of a typed answer
     notTerm: ['this', 'that', 'these', 'those', 'it', 'they', 'there', 'here', 'which', 'what', 'when', 'where', 'if', 'in', 'on',
       'for', 'each', 'some', 'all', 'one', 'we', 'you', 'why', 'how', 'who', 'whom', 'whose', // a sentence opener, never a term
-      'most', 'many', 'every', 'several', 'both', 'few', 'no', 'another', 'other', 'such', 'its', 'their', 'his', 'her', 'our', 'your', 'my'],
+      'most', 'many', 'every', 'several', 'both', 'few', 'no', 'another', 'other', 'such', 'its', 'their', 'his', 'her', 'our', 'your', 'my',
+      'today', 'tomorrow', 'yesterday', 'tonight', 'now', 'later'], // classroom talk: "Today we will discuss…"
     termVerbs: ['is', 'are', 'was', 'were', 'be', 'do', 'does', 'did', 'will', 'can'], // a term containing one is a clause
     clauseWords: ['when', 'whenever', 'where', 'while', 'if', 'because', 'since', 'that', 'which', 'who', 'whom', 'whose', 'than', 'until', 'unless'],
     answerFiller: ['the', 'a', 'an', 'of', 'and', 'in', 'to', 'for', 'stage', 'phase', 'process', 'type', 'kind', 'part', 'called', 'term'], // may be added to a typed answer
@@ -27,6 +28,7 @@ const LANGS = {
     headingWords: ['note', 'notes', 'example', 'examples', 'figure', 'table', 'chapter', 'slide', 'page', 'summary', 'objective', 'objectives',
       'introduction', 'reference', 'references', 'agenda', 'tip', 'tips', 'hint', 'hints', 'remember', 'reminder', 'reminders', 'recap', 'review',
       'q&a', 'question', 'questions'], // a heading, never a term or a fact list
+    noteWords: ['note', 'notes', 'tip', 'tips', 'hint', 'hints', 'reminder', 'reminders', 'remember', 'nb', 'p.s.', 'ps'], // "Note: Quiz on Friday!"
     instructionHeads: ['instructions', 'instruction', 'directions', 'direction'], // "Instructions:" heads an exam section
     imperatives: ['write', 'answer', 'choose', 'select', 'fill', 'complete', 'read', 'study', 'review', 'identify', 'enumerate', 'match', 'list', 'give',
       'state', 'define', 'explain', 'describe', 'compute', 'solve', 'calculate', 'circle', 'encircle', 'underline', 'label', 'draw', 'name', 'provide',
@@ -50,6 +52,7 @@ const LANGS = {
     clauseWords: ['kung', 'kapag', 'dahil', 'habang', 'noong', 'nang', 'upang', 'sapagkat'],
     answerFiller: ['ang', 'ng', 'mga', 'si', 'ni', 'sa', 'ay', 'na'],
     personNouns: ['bayani', 'pinuno', 'pangulo', 'hari', 'reyna', 'manunulat', 'makata', 'heneral', 'tagapagtatag', 'pari', 'ama', 'ina'],
+    noteWords: ['tandaan', 'paalala', 'pansinin'],
     headingWords: ['halimbawa', 'mga halimbawa', 'tandaan', 'paalala', 'buod', 'layunin', 'panimula', 'sanggunian', 'talahanayan', 'larawan',
       'aralin', 'tanong', 'mga tanong', 'pagsasanay'],
     instructionHeads: ['mga panuto', 'panuto'],
@@ -208,9 +211,12 @@ const looksName = t => { const w = t.split(' '); return w.length >= 2 && w.lengt
 const isPerson = (term, body, src) => /^(?:Si|Sina)\s/.test(src) || (looksName(term) && !/^(?:The|A|An|Ang)\s/.test(src) && PERSON_HEAD.test(body));
 const TERM_VERB = new RegExp('\\b(?:' + anyOf('termVerbs') + ')\\b', 'i'), CLAUSE = new RegExp('\\b(?:' + anyOf('clauseWords') + ')\\b', 'i');
 // A term is a short name, not a sentence opener ("This", "Many cells"), a heading word, an instruction or a clause.
-const termFine = t => t.split(' ').length <= 5 && !NOT_TERM.test(t) && !LOW.test(t) && !LABEL.test(t) && !instruction(t) && !TERM_VERB.test(t) && !CLAUSE.test(t);
+// A lower-case personal pronoun anywhere ("Today we", "Later they") is talk, not a name; "US" in capitals is a name.
+const termFine = t => t.split(' ').length <= 5 && !NOT_TERM.test(t) && !LOW.test(t) && !LABEL.test(t) && !instruction(t) && !TERM_VERB.test(t) && !CLAUSE.test(t)
+  && !/\b(?:we|you|they|he|she|us|i)\b/.test(t);
 const COLON = /^([A-Za-z.][\w .\/\-]{0,38}?)\s*(?::|\s[–—-]\s)\s*(.{20,})$/;
 const LOW = new RegExp('^(?:' + anyOf('headingWords') + ')$', 'i'); // headings, not terms
+const NOTE_LINE = new RegExp('^(?:' + anyOf('noteWords') + ')\\s*:', 'i'); // "Note: Quiz on Friday!" talks to the reader
 // Exam-paper furniture: instructions, rubrics and answer keys describe the test, not the subject. A definition
 // split out of one of them ("Write TRUE if the statement" + "is") is nonsense, and so is a question built from it.
 // Also skipped: lines that already contain blanks, because the app cannot answer its own exam paper.
@@ -308,6 +314,7 @@ const SKIP_REASONS = {
   heading: 'A heading: it names the section, it is not asked.',
   objective: 'A learning objective: it ranks the questions, it is not asked.',
   outline: 'An agenda, outline or example list, not a fact.',
+  note: 'A note to the reader ("Note:", "Tip:", "Reminder:"), not a fact to study.',
   'short-list': 'A list with fewer than 3 items, too short to enumerate.',
   length: 'Too short or too long to make a clear question.',
   garbled: 'Looks jumbled, often broken PDF text.',
@@ -321,7 +328,6 @@ const SKIP_REASONS = {
   decade: 'Gives only a decade ("the 1950s"), too vague to ask.',
   'no-pattern': 'No term found: it does not start with what it is about, and has no year or ACRONYM to ask. Try "X is …" or "X does …".',
   'same-term': 'Its key term is already asked from another sentence.',
-  'off-objectives': 'Not tied to the learning objectives.',
   limit: 'Made a question, but it was cut by the question limit.',
   'type-off': 'Made a question of a type that is turned off.',
 };
@@ -411,7 +417,7 @@ function generate(rawLines, tags = [], o = {}) {
 
   const defs = [], seen = new Set(), seenBody = new Set(), used = new Set(), seenEnum = new Set();
   // Reasons every sentence loop shares; returns the code, or '' when the sentence may be used.
-  const unfit = (s, min, max) => s.length < min || s.length > max ? 'length' : OUTLINE.test((ctxOf.get(s) || '').trim()) ? 'outline'
+  const unfit = (s, min, max) => NOTE_LINE.test(s) ? 'note' : s.length < min || s.length > max ? 'length' : OUTLINE.test((ctxOf.get(s) || '').trim()) ? 'outline'
     : objSet.has(s) ? 'objective' : instruction(s) ? 'instruction' // "II. Write TRUE if…" is a rubric; "____" lines are blanks
     : garbled(s) ? 'garbled' : QUESTION.test(s) ? 'question' : '';
   for (const s of sents) {
@@ -466,7 +472,6 @@ function generate(rawLines, tags = [], o = {}) {
     const caps = [...s.matchAll(/(?:^|[\s(])(\.?[A-Z][A-Z0-9_]{1,})\b/g)].map(x => x[1]).filter(t => !STOP.has(t));
     const mm = yr || caps.find(t => !ctoks.has(t));
     if (!mm) { skip(s, caps.length ? 'same-term' : 'no-pattern'); continue; }
-    if (objWords.size && !yr && !score(mm)) { skip(s, 'off-objectives'); continue; } // with objectives, a loose sentence must tie to one or be repeated
     if (!yr) ctoks.add(mm); // two events can share a year
     // "from 1565 until 1898" asks each year; the other one stays in the sentence, so it is never a wrong option (fits).
     const years = yr ? [...new Set(s.match(/\b(?:1\d|20)\d\d\b/g))].slice(0, 2) : [mm];
@@ -485,13 +490,15 @@ function generate(rawLines, tags = [], o = {}) {
     const c = clean(s), art = (c.match(/^(?:The|A|An)\s+/) || [''])[0], words = c.slice(art.length).split(' ');
     // The subject ends at the first verb (1–4 words in); a verb is lower case mid-sentence. "is"/"are" belong to DEF.
     const plainWords = words.map(w => w.replace(/[,;:.]$/, ''));
-    const k = plainWords.findIndex((w, i) => i >= 1 && /^[a-z]/.test(w) && verbAt(plainWords, i));
+    // A bare verb form after a singular word is a noun in a name: "Passive transport does…", "The sodium-potassium
+    // pump moves…". A singular subject takes "transports"/"pumps", so the real verb comes later.
+    const nounInName = i => VERB_BASE.has(plainWords[i].toLowerCase()) && !manyWord(plainWords[i - 1]);
+    const k = plainWords.findIndex((w, i) => i >= 1 && /^[a-z]/.test(w) && verbAt(plainWords, i) && !nounInName(i));
     if (k < 1 || k > 4 || /^(?:is|are|was|were|be|been|being)$/.test(words[k])) continue;
     const term = words.slice(0, k).join(' '), rest = words.slice(k).join(' ');
     if (!termFine(term) || /[^\w\s\-]/.test(term)) { refine(s, 'bad-term'); continue; }
     if ((rest.match(/[A-Za-z]{4,}/g) || []).length < 2) { refine(s, 'empty-blank'); continue; }
     if (seen.has(term.toLowerCase()) || factTerms.has(term.toLowerCase())) { refine(s, 'same-term'); continue; }
-    if (objWords.size && !score(term)) { refine(s, 'off-objectives'); continue; } // same rule as the clozes
     factTerms.add(term.toLowerCase());
     facts.push({ kind: 'fact', w: score(term), term, q: 'Fill in the blank: ' + art + '_____ ' + rest, src: s, ctx: ctxOf.get(s) || '' });
   }

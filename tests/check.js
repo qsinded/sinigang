@@ -371,6 +371,37 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
     'Interphase is the stage where the cell grows and copies its DNA.']);
   assert(!numbered.skipped.some(s => /^(?:II|B)\.$/.test(s.text)), 'no stray numbering fragment: ' + JSON.stringify(numbered.skipped));
   assert.strictEqual(reasonFor(numbered, 'II. Write TRUE if the statement is correct and FALSE if not.'), 'instruction');
+  // From a student test: learning objectives rank questions but never drop a fact whose words differ from theirs;
+  // "Passive transport" and "sodium-potassium pump" are names, not "Passive" + verb; "Note: …" is skipped on purpose.
+  const cellNotes = ['Learning Objectives', 'At the end of the lesson, students should be able to:', '- Describe the structure of the cell membrane',
+    '- Explain how materials move across the membrane', 'The cell membrane is a thin layer that surrounds the cell and controls what enters and leaves.',
+    'Active transport requires energy in the form of ATP to move substances against their concentration gradient.',
+    'The sodium-potassium pump moves three sodium ions out and two potassium ions into the cell.',
+    'A hypertonic solution causes a cell to shrink because water moves out of the cell.', 'Passive transport does not require energy from the cell.',
+    'Note: Quiz on Friday!'];
+  const cellAns = new Set();
+  for (let i = 0; i < 30; i++) {
+    const out = generate(cellNotes, [], { noTF: true });
+    out.forEach(q => cellAns.add(q.type === 'mc' ? q.options[q.answer] : q.answer));
+    assert(!out.skipped.some(s => s.reason === 'off-objectives'), 'objectives never drop a fact');
+    assert.strictEqual(reasonFor(out, 'Note: Quiz on Friday!'), 'note', 'a "Note:" line is skipped on purpose');
+  }
+  for (const a of ['sodium-potassium pump', 'hypertonic solution', 'Passive transport', 'ATP'])
+    assert(cellAns.has(a), 'asked: "' + a + '"; got: ' + [...cellAns].join(' / '));
+  for (const bad of ['Passive', 'sodium-potassium']) assert(!cellAns.has(bad), 'a noun before the verb is part of the name, not "' + bad + '"');
+  // Classroom talk is not a term: "Today we will discuss processes." never asks for "Today we". (US the country is fine.)
+  const talk = ['Today we will discuss processes and threads.', 'Tomorrow you will review the parts of the cell.', 'Later they will explain how memory works.',
+    'A process is a program that is currently running.', 'A thread is the smallest unit of work that the scheduler runs.',
+    'The US Constitution established three branches of government.'];
+  const talkAns = new Set();
+  for (let i = 0; i < 20; i++) generate(talk, [], { noTF: true }).forEach(q => talkAns.add(q.type === 'mc' ? q.options[q.answer] : q.answer));
+  assert(![...talkAns].some(a => /\b(?:we|you|they)\b|^(?:Today|Tomorrow|Later)\b/.test(a)), 'classroom talk is not a term: ' + [...talkAns].join(' / '));
+  assert(talkAns.has('US') || talkAns.has('US Constitution'), '"US" in a name is not the pronoun "us": ' + [...talkAns].join(' / '));
+  // The objectives still rank: with room for one question, it is the one tied to them.
+  for (let i = 0; i < 10; i++) {
+    const top = generate(cellNotes, [], { max: 1, noTF: true })[0];
+    assert(/cell membrane/i.test(top.q + ' ' + (top.type === 'mc' ? top.options[top.answer] : top.answer)), 'the objective-tied fact comes first: ' + top.q);
+  }
   // A fact that made a question but was cut by the limit, or by a type the student turned off, says so.
   const capped = generate(skipNotes, [], { max: 1 });
   assert(capped.skipped.some(s => s.reason === 'limit'), 'items cut by the limit are reported');

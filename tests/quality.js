@@ -5,7 +5,7 @@
 const fs = require('fs'), path = require('path');
 const { generate, norm } = require('../js/reviewer-generator.js');
 
-const BASELINE = { leak: 0, dupOptions: 0, badKey: 0, outlineOption: 0, tooShort: 0, ungrounded: 0, dupQuestion: 0, falseTrueMismatch: 0, filler: 0, ambiguous: 0, variant: 0, tfFragment: 0, tfMeta: 0, instruction: 0, emptyBlank: 0, labelEnum: 0, articleAdded: 0, blankTrivia: 0, fromQuestion: 0 };
+const BASELINE = { talk: 0, leak: 0, dupOptions: 0, badKey: 0, outlineOption: 0, tooShort: 0, ungrounded: 0, dupQuestion: 0, falseTrueMismatch: 0, filler: 0, ambiguous: 0, variant: 0, tfFragment: 0, tfMeta: 0, instruction: 0, emptyBlank: 0, labelEnum: 0, articleAdded: 0, blankTrivia: 0, fromQuestion: 0 };
 const RUNS = 25;
 // Coverage per corpus, in percent of its substantial lines that some question cites. The counts above only see bad
 // questions; a rule that silently stops reading a kind of sentence shows up here. It may only go up: raise the number
@@ -36,6 +36,8 @@ const usedLine = (line, cited) => { const l = norm(line); return [...cited].some
 function check(q, bad) {
   const ans = answerText(q), qn = norm(q.q);
   if (q.type !== 'enum' && !/^True or false/.test(q.q) && norm(ans).length >= 4 && qn.includes(norm(ans))) bad.leak++;
+  // Classroom talk is not an answer: "Today we" (from "Today we will discuss…"), "Later they".
+  if (q.type !== 'enum' && !/^True or false/.test(q.q) && (/\b(?:we|you|they|he|she|i)\b/.test(ans) || /^(?:today|tomorrow|yesterday|tonight|later|now)\b/i.test(ans))) bad.talk++;
   if (/\b(basically|essentially|simply|actually|really|very|quite)\b|\((see|fig)/i.test(q.q + ' ' + (q.options || []).join(' '))) bad.filler++;
   if (q.type === 'mc' && !/^True or false/.test(q.q)) {
     q.options.forEach((o, i) => {
@@ -103,6 +105,7 @@ function check(q, bad) {
   check({ type: 'mc', q: 'True or false: A Photosynthesis is the process plants use.', options: ['True', 'False'], answer: 0, exp: '(page 1) Photosynthesis is the process plants use.' }, b);
   check({ type: 'id', q: 'Fill in the blank: The _____ was first developed in the 1950s at IBM.', answer: 'OS', exp: '(page 1) The OS was first developed in the 1950s at IBM.' }, b);
   check({ type: 'mc', q: 'Which statement describes "Why"?', options: ['RAM considered volatile memory? (2 pts)', 'a', 'b', 'c'], answer: 0, exp: '(page 13) 3. Why is RAM considered volatile memory? (2 pts)' }, b);
+  check({ type: 'id', q: 'Fill in the blank: _____ will discuss processes.', answer: 'Today we', exp: '(page 1) Today we will discuss processes.' }, b);
   // Filipino exam furniture ("Panuto:", "Isulat ang TAMA kung…") counts as an instruction too.
   for (const opt of ['Panuto: Basahin ang bawat pahayag', 'Isulat ang TAMA kung wasto ang pahayag']) {
     const instrBefore = b.instruction;
@@ -118,7 +121,7 @@ function check(q, bad) {
   if (!usedLine('The CPU runs code.', cited)) throw new Error('coverage misses a cited line');
   if (!usedLine('A cache is small and fast. RAM holds running programs.', cited)) throw new Error('coverage misses a line with one cited sentence');
   if (usedLine('A router forwards packets between networks.', cited)) throw new Error('coverage counts a line no question cites');
-  for (const k of ['fromQuestion', 'emptyBlank', 'labelEnum', 'articleAdded', 'blankTrivia', 'ambiguous', 'variant', 'filler', 'leak', 'dupOptions', 'badKey', 'outlineOption', 'tooShort', 'ungrounded', 'falseTrueMismatch', 'tfFragment', 'tfMeta', 'instruction']) if (!b[k]) throw new Error('quality check "' + k + '" no longer catches a bad question');
+  for (const k of ['talk', 'fromQuestion', 'emptyBlank', 'labelEnum', 'articleAdded', 'blankTrivia', 'ambiguous', 'variant', 'filler', 'leak', 'dupOptions', 'badKey', 'outlineOption', 'tooShort', 'ungrounded', 'falseTrueMismatch', 'tfFragment', 'tfMeta', 'instruction']) if (!b[k]) throw new Error('quality check "' + k + '" no longer catches a bad question');
 })();
 
 const dir = path.join(__dirname, 'corpus'), bad = Object.fromEntries(Object.keys(BASELINE).map(k => [k, 0]));
