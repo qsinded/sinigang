@@ -845,5 +845,46 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   assert.match(ctx.reciteQuestion(formatR.items[0]), /Division that makes four gametes/, 'recitation reads the descriptions');
   assert.match(ctx.reciteAnswer(formatR.items[0]), /Meiosis/, 'recitation reads the pairs');
 
+  // Sessions across reviewers ("My mistakes", Periodical exam): copies of questions whose answers and schedule are
+  // written back to the reviewer each came from; undo restores the original's old answer.
+  const mkR = (title, pre) => ctx.cleanReviewer({ ...base, title, items: ['x', 'y', 'z'].map((k, i) => ({ id: 'id' + i, type: 'id', q: title + ' question ' + k, answer: k + 'ans', exp: '' })),
+    ans: { id0: { val: 'wrong', ok: false, exp: pre + 'x' }, id1: { val: 'yans', ok: true, exp: 'yans' } } });
+  const bio = mkR('Bio', 'b'), chem = mkR('Chem', 'c');
+  vm.runInContext('R = []', ctx); vm.runInContext('R.push(' + JSON.stringify(bio) + ', ' + JSON.stringify(chem) + ')', ctx);
+  ctx.home();
+  const mistakesBtn = find(appEl, e => e.tagName === 'BUTTON' && /My mistakes \(2\)/.test(screenText(e)))[0];
+  assert.ok(mistakesBtn, 'home offers "My mistakes (2)" across reviewers');
+  mistakesBtn.onclick();
+  assert.strictEqual(vm.runInContext('cur.virtual', ctx), 'mistakes', 'a mistakes session opens');
+  assert.strictEqual(vm.runInContext('cur.items.length', ctx), 2, 'one question per missed item, from both reviewers');
+  assert.strictEqual(vm.runInContext('Object.keys(cur.ans).length', ctx), 0, 'the mistakes are asked again from scratch');
+  const mText = screenText(appEl);
+  assert.ok(!/\bShuffle\b|\bRename\b|Add a question/.test(mText), 'tools that would only change copies are hidden');
+  assert.ok(!find(appEl, e => e.tagName === 'BUTTON' && screenText(e) === 'Edit').length, 'no Edit on a copy');
+  vm.runInContext("tab = 'id'; quizIndex = 0;", ctx);
+  vm.runInContext('answer(cur.items[0], "xans")', ctx);
+  assert.strictEqual(vm.runInContext('R[0].ans.id0.ok', ctx), true, 'the right answer is written back to Bio');
+  assert.ok(vm.runInContext('R[0].plan.srs.id0.box', ctx) >= 1, 'the schedule moves forward in Bio');
+  vm.runInContext('undoAnswer()', ctx);
+  assert.strictEqual(vm.runInContext('R[0].ans.id0.val', ctx), 'wrong', 'undo puts Bio\'s old answer back');
+  // Periodical exam: pick reviewers, get Test I, Test II, … from all of them; answers count in each reviewer.
+  ctx.periodicalSetup();
+  assert.match(screenText(appEl), /Periodical exam/, 'a periodical exam screen');
+  ctx.startPeriodical([vm.runInContext('R[0].id', ctx), vm.runInContext('R[1].id', ctx)], 0);
+  assert.strictEqual(vm.runInContext('cur.virtual', ctx), 'exam', 'the exam opens');
+  assert.strictEqual(vm.runInContext('cur.items.length', ctx), 6, 'every question of both reviewers');
+  assert.match(screenText(appEl), /Test I\. Identification/, 'parts are named like an exam paper');
+  vm.runInContext('answer(cur.items.find(i => i.q === "Chem question z"), "zans")', ctx);
+  assert.strictEqual(vm.runInContext('R[1].ans.id2.ok', ctx), true, 'an exam answer counts in its own reviewer');
+  // Cram mode: the exam is tomorrow, so every card not yet known, missed ones first, no daily limit.
+  const tomorrow = new Date(Date.now() + 864e5); const ymd = tomorrow.getFullYear() + '-' + String(tomorrow.getMonth() + 1).padStart(2, '0') + '-' + String(tomorrow.getDate()).padStart(2, '0');
+  vm.runInContext('R[0].plan.exam = ' + JSON.stringify(ymd) + '; R[0].flashKnown = ["id1"]; R[0].ans.id0 = { val: "wrong", ok: false, exp: "x" };', ctx);
+  vm.runInContext('open(R[0])', ctx);
+  const cramBtn = find(appEl, e => e.tagName === 'BUTTON' && /Cram/.test(screenText(e)))[0];
+  assert.ok(cramBtn, 'a Cram button when the exam is tomorrow');
+  cramBtn.onclick();
+  const order = vm.runInContext('flashOrder.map(i => cur.items[i].id)', ctx);
+  assert.deepStrictEqual(plain(order), ['id0', 'id2'], 'cram: the missed card first, the known card left out');
+
   console.log('app smoke checks passed');
 })().catch(e => { console.error(e); process.exit(1); });

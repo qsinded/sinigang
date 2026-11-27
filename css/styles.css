@@ -264,3 +264,6 @@ p.k,.card>.k:not(h2),.err+.k{font:inherit;text-transform:none;letter-spacing:0}
 .match select{display:block;margin-top:6px;max-width:100%;min-height:44px}
 .match li.ok select{border:2px solid var(--ok)}
 .match li.bad select{border:2px solid var(--bad)}
+/* Periodical exam: one reviewer per line, a real tap target each. */
+.picks .pick{display:flex;align-items:center;gap:10px;min-height:44px}
+.row.across{margin:0 0 12px}
