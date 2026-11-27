@@ -285,6 +285,8 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   assert.ok(edge.x === 0 && edge.y === 0, 'a box at the edge is clamped to the picture');
   assert.strictEqual(ctx.labelCovers([L('Left', 90, 100, 100, 160, 120), L('ventricle', 90, 158, 100, 260, 120)], 1000, 500, []).length, 1, 'touching boxes merge into one cover');
   assert.strictEqual(ctx.labelCovers([L('Aorta', 91, 100, 50, 200, 70)], 1000, 500, lineCovers).length, 0, 'a label already covered is not covered twice');
+  assert.strictEqual(ctx.labelCovers([L('Atrium', 90, 100, 100, 160, 120), L('Valve', 90, 164, 124, 220, 144)], 1000, 500, []).length, 2, 'labels on different lines that touch at a corner stay separate, so the drawing between them is not hidden');
+  assert.match(ctx.labelStatusText({ masks: new Array(61).fill({ x: 0, y: 0, w: 0.1, h: 0.1 }) }), /first 60/, 'more labels than a reviewer can hold is said, not silently cut');
   assert.strictEqual(ctx.cleanMasks(Array.from({ length: 61 }, (_, i) => ({ x: 0, y: i / 100, w: 0.1, h: 0.01 }))).length, 60, 'a reviewer keeps up to 60 covers');
   // The label finder. Tesseract is injected, so the real 7 MB engine never loads in tests.
   const fakeT = { terminated: 0, opts: null, gate: Promise.resolve(), lines: [L('Aorta', 91, 100, 50, 200, 70)], createWorker: async (lang, oem, opts) => {
@@ -321,7 +323,17 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   ctx.navigator = { serviceWorker: { controller: null } };
   assert.strictEqual(ctx.ocrSupported(), false, 'not offered without the service worker, which keeps the download');
   ctx.navigator.serviceWorker.controller = {};
+  vm.runInContext('var __wasm = WebAssembly; WebAssembly = undefined;', ctx);
+  assert.strictEqual(ctx.ocrSupported(), false, 'not offered with WebAssembly switched off: it would download 7 MB and then fail');
+  vm.runInContext('WebAssembly = __wasm;', ctx);
   assert.strictEqual(ctx.ocrSupported(), true, 'offered with a Worker and the service worker');
+  const realSetItem = localStorage.setItem;
+  localStorage.setItem = () => { throw new Error('storage blocked'); };
+  ctx.setOcrConsent('yes');
+  assert.strictEqual(ctx.ocrConsent(), 'yes', 'with storage blocked the answer is kept for this visit, so the question does not stick');
+  localStorage.setItem = realSetItem;
+  ctx.setOcrConsent('no');
+  assert.strictEqual(ctx.ocrConsent(), 'no', 'a stored answer wins again once storage works');
   assert.deepStrictEqual(plain(ctx.boxFromPoints({ x: 0.75, y: 0.75 }, { x: 0.25, y: 0.25 })), { x: 0.25, y: 0.25, w: 0.5, h: 0.5 }, 'a drag becomes a box in any direction');
   assert.strictEqual(ctx.boxFromPoints({ x: 0.5, y: 0.5 }, { x: 0.505, y: 0.5 }), null, 'a stray tap does not leave a sliver');
   assert.deepStrictEqual(plain(ctx.moveBox({ x: 0.7, y: 0.7, w: 0.2, h: 0.2 }, 0.5, 0)), { x: 0.8, y: 0.7, w: 0.2, h: 0.2 }, 'moving a cover keeps it inside the image');
@@ -550,12 +562,15 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   assert.match(layer().style.transform, /scale\(1\)/, 'Fit returns to 100%');
   // Auto-cover in the diagram maker: asked once, then each new picture is searched in the background.
   localStorage.removeItem('reviewer_ocr_v1');
-  ctx.loadTesseract = async () => fakeT;
+  let engineLoads = 0;
+  ctx.loadTesseract = async () => { engineLoads++; return fakeT; };
+  let focused = null;
+  El.prototype.focus = function () { focused = this; }; // records where focus goes after a redraw
   ctx.prepareImage = async () => ({ blob: new sandbox.Blob(['labelled diagram']), url: 'blob:p' });
   const hold = () => { let open; fakeT.gate = new Promise(r => { open = r; }); return open; };
   const settle = () => new Promise(r => setTimeout(r, 10));
   const btnNamed = label => find(appEl, e => e.tagName === 'BUTTON' && screenText(e) === label)[0];
-  const statusText = () => vm.runInContext('labelStatusEl ? labelStatusEl.textContent : ""', ctx);
+  const statusText = () => { const el = vm.runInContext('labelStatusEl', ctx); return el ? screenText(el) : ''; };
   const threeParts = "diagParts = [{ x: 0.1, y: 0.1, name: 'A' }, { x: 0.5, y: 0.5, name: 'B' }, { x: 0.9, y: 0.9, name: 'C' }];";
   ctx.clearDiagram();
   await ctx.pickDiagram({ name: 'heart.png', type: 'image/png' });
@@ -563,12 +578,16 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   btnNamed('No thanks').onclick();
   assert.strictEqual(ctx.ocrConsent(), 'no', 'a no is remembered');
   assert.strictEqual(state('labelSearch'), null, 'declining starts nothing');
+  assert.strictEqual(engineLoads, 0, 'and downloads nothing');
+  assert.strictEqual(focused, vm.runInContext('labelStatusEl', ctx), 'focus lands on the note that replaced the question');
+  assert.match(statusText(), /not searched/, 'which says labels will not be searched');
   assert.doesNotMatch(screenText(appEl), /7 MB/, 'and the question goes away');
   localStorage.removeItem('reviewer_ocr_v1'); ctx.diagramSetup();
   let release = hold();
   btnNamed('Yes, find labels').onclick();
   assert.strictEqual(ctx.ocrConsent(), 'yes', 'a yes is remembered');
   assert.ok(state('labelSearch'), 'agreeing starts the search on this picture');
+  assert.strictEqual(focused, vm.runInContext('labelStatusEl', ctx), 'focus lands on the search status, not the page');
   release(); await settle();
   assert.match(statusText(), /Found 1 printed label/, 'the maker says what it found, without a redraw');
   assert.ok(!vm.runInContext('labelStatusEl.hasAttribute("role")', ctx), 'progress is not a live region: a screen reader would read every tick');
@@ -585,19 +604,66 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   release(); await settle();
   assert.strictEqual(made.masks.length, 1, 'the covers reach the saved reviewer when the search ends');
   assert.match(JSON.parse(store.get('reviewer_gen_v1'))[0].masks.length ? 'saved' : '', /saved/, 'and are saved');
-  // A search for a picture that is no longer there lands nowhere.
+  // A late result does not redraw the quiz under a student who is typing an answer.
+  release = hold();
+  await ctx.pickDiagram({ name: 'typing.png', type: 'image/png' }); await settle();
+  vm.runInContext(threeParts, ctx);
+  await ctx.createDiagram();
+  const typedOn = vm.runInContext('R[0]', ctx), screenBefore = appEl.children[0];
+  document.activeElement = { tagName: 'INPUT' };
+  release(); await settle();
+  assert.strictEqual(typedOn.masks.length, 1, 'the covers are still saved');
+  assert.strictEqual(appEl.children[0], screenBefore, 'the quiz is not redrawn while the student types');
+  document.activeElement = undefined;
+  vm.runInContext('R.shift()', ctx);
+  // A search for a picture that is no longer there never lands, even after Create.
   ctx.clearDiagram();
   const first = hold();
-  await ctx.pickDiagram({ name: 'one.png', type: 'image/png' });
-  const firstSearch = vm.runInContext('labelSearch', ctx);
+  await ctx.pickDiagram({ name: 'one.png', type: 'image/png' }); await settle();
   const second = hold();
-  await ctx.pickDiagram({ name: 'two.png', type: 'image/png' });
+  await ctx.pickDiagram({ name: 'two.png', type: 'image/png' }); await settle();
+  assert.doesNotMatch(statusText(), /Found/, 'the new picture shows its own search');
+  vm.runInContext(threeParts, ctx);
+  await ctx.createDiagram();
+  const twoMade = vm.runInContext('R[0]', ctx);
   first(); await settle();
-  assert.strictEqual(firstSearch.masks === null || vm.runInContext('labelSearch', ctx) !== firstSearch, true, 'a replaced picture\'s search is dropped');
-  assert.doesNotMatch(statusText(), /Found/, 'and its result is not shown for the new picture');
+  assert.strictEqual(twoMade.masks.length, 0, "a replaced picture's search never lands on the reviewer");
+  second(); await settle();
+  assert.strictEqual(twoMade.masks.length, 1, 'only the search for its own picture does');
+  vm.runInContext('R.shift()', ctx);
+  // Picture replaced (Edit parts) before the late result: the old covers are dropped.
+  release = hold();
+  await ctx.pickDiagram({ name: 'swap.png', type: 'image/png' }); await settle();
+  vm.runInContext(threeParts, ctx);
+  await ctx.createDiagram();
+  const swapped = vm.runInContext('R[0]', ctx);
+  swapped.items.forEach(i => { i.imageId = 'img_other'; });
+  release(); await settle();
+  assert.strictEqual(swapped.masks.length, 0, 'a reviewer whose picture was replaced does not get the old covers');
+  vm.runInContext('R.shift()', ctx);
+  // A failed download in the maker: a plain message, Try again, and Create still works.
+  let failNow; fakeT.gate = new Promise((_, no) => { failNow = no; }); fakeT.gate.catch(() => {});
+  await ctx.pickDiagram({ name: 'net.png', type: 'image/png' }); await settle();
+  failNow(new Error('Network error while fetching https://example.com/app/vendor/tesseract/eng.traineddata.gz. Response code: 504')); await settle();
+  assert.ok(/Could not/.test(statusText()) && !/https:/.test(statusText()), "the student sees a plain message, not the engine's error");
+  fakeT.gate = Promise.resolve();
+  btnNamed('Try again').onclick(); await settle();
+  assert.match(statusText(), /Found 1 printed label/, 'Try again searches the same picture again');
+  fakeT.gate = new Promise((_, no) => { failNow = no; }); fakeT.gate.catch(() => {});
+  await ctx.pickDiagram({ name: 'net2.png', type: 'image/png' }); await settle();
+  failNow(new Error('offline')); await settle();
+  vm.runInContext(threeParts, ctx);
+  const shelfBeforeFail = vm.runInContext('R.length', ctx);
+  await ctx.createDiagram();
+  assert.strictEqual(vm.runInContext('R.length', ctx), shelfBeforeFail + 1, 'Create still works after a failed search');
+  vm.runInContext('R.shift()', ctx);
+  fakeT.gate = Promise.resolve();
+  // Leaving the maker drops the search.
+  hold();
+  await ctx.pickDiagram({ name: 'leave.png', type: 'image/png' }); await settle();
   btnNamed('← Cancel').onclick();
   assert.strictEqual(state('labelSearch'), null, 'leaving the maker drops the search');
-  second(); await settle();
+  fakeT.gate = Promise.resolve();
   // The reviewer was deleted before its search ended: nothing breaks, nothing is saved for it.
   release = hold();
   await ctx.pickDiagram({ name: 'gone.png', type: 'image/png' });
@@ -692,11 +758,23 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   assert.strictEqual(vm.runInContext('coverList.length', ctx), masksBefore.length + 1, 'a label already under a cover is not covered again');
   assert.match(screenText(appEl), /1 printed label covered/, 'the editor says what it added');
   assert.ok(!vm.runInContext('coverStatusEl.hasAttribute("role")', ctx), 'the editor status is not a live region either');
+  assert.strictEqual(focused, findBtn(), 'focus returns to Find printed labels after the search');
   assert.deepStrictEqual(plain(imgReviewer.masks), masksBefore, 'nothing is saved until Save covers');
   await findBtn().onclick(); await settle();
   assert.strictEqual(asked, 1, 'a yes is not asked again');
   assert.strictEqual(vm.runInContext('coverList.length', ctx), masksBefore.length + 1, 'searching twice adds nothing');
   assert.match(screenText(appEl), /No printed labels found that are not already covered/, 'and says so');
+  vm.runInContext('coverList.splice(1)', ctx); // take the found cover away again
+  const editorRelease = hold();
+  const running = findBtn().onclick(); await settle();
+  vm.runInContext('coverList.push({ x: 0.59, y: 0.59, w: 0.22, h: 0.08 })', ctx); // drawn by hand while it runs
+  editorRelease(); await running; await settle();
+  assert.strictEqual(vm.runInContext('coverList.length', ctx), 2, 'a cover drawn during the search is not doubled');
+  // Near the 60-cover limit the message counts what was really added, not what was found.
+  vm.runInContext('coverList = Array.from({ length: 59 }, (_, i) => ({ x: (i % 10) / 10, y: 0.9, w: 0.05, h: 0.05 }))', ctx);
+  await findBtn().onclick(); await settle();
+  assert.strictEqual(vm.runInContext('coverList.length', ctx), 60, 'the editor stops at 60 covers');
+  assert.match(screenText(appEl), /1 printed label covered \(a reviewer holds 60 covers/, 'and says one was added and why the rest were not');
   ctx.navigator.serviceWorker.controller = null; ctx.openCovers(imgReviewer);
   assert.ok(!findBtn() && /hide them by hand here/.test(screenText(appEl)), 'without the service worker the button is replaced by a note');
   ctx.navigator.serviceWorker.controller = {};

@@ -238,7 +238,8 @@ image-only slides need OCR.
   case the setup screen explains that images cannot be stored. Naming parts is manual — the app finds
   printed text to cover, not arrows or which part a label belongs to.
 - **Find printed labels** is offered only in a normal browser or the installed app, where the service
-  worker keeps the ~7 MB engine; opened from `file://` or in a phone's HTML viewer it says to cover
+  worker keeps the ~7 MB engine, with WebAssembly on; opened from `file://`, in a phone's HTML viewer or
+  with WebAssembly switched off (iOS Lockdown Mode) it says to cover
   labels by hand. It reads printed English best: handwriting, very small or faint text, text over a
   busy picture and some Filipino words can be missed, so check the covers. Arrows and leader lines are
   not covered.

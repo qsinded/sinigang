@@ -119,17 +119,25 @@ function loadPdfjs() {
 // app's service worker, which keeps it in its own cache across updates. Phone HTML viewers and file://
 // have neither. The student is asked before the first download; the answer is remembered on the device.
 const OCR_KEY = 'reviewer_ocr_v1', OCR_DIR = './vendor/tesseract/';
-function ocrSupported() {
-  return typeof Worker === 'function' && typeof navigator !== 'undefined' && !!(navigator.serviceWorker && navigator.serviceWorker.controller);
+function ocrSupported() { // WebAssembly can be switched off (iOS Lockdown Mode): the download would then be wasted
+  return typeof Worker === 'function' && typeof WebAssembly === 'object' && !!WebAssembly && typeof navigator !== 'undefined' && !!(navigator.serviceWorker && navigator.serviceWorker.controller);
 }
-function ocrConsent() { try { return localStorage.getItem(OCR_KEY) || ''; } catch (e) { return ''; } }
-function setOcrConsent(v) { try { localStorage.setItem(OCR_KEY, v); } catch (e) { /* asked again next visit */ } }
+// With storage blocked the answer is kept for this visit, or the question would stay on screen after "Yes".
+let ocrAnswer = '';
+function ocrConsent() { // an answer that could not be stored is the newest one, so it wins over an older stored one
+  if (ocrAnswer) return ocrAnswer;
+  try { return localStorage.getItem(OCR_KEY) || ''; } catch (e) { return ''; }
+}
+function setOcrConsent(v) { try { localStorage.setItem(OCR_KEY, v); ocrAnswer = ''; } catch (e) { ocrAnswer = v; } }
+// Errors the app wrote are shown as they are; anything from the engine (URLs, response codes) is not.
+const appError = msg => Object.assign(new Error(msg), { app: true });
+const labelError = e => (e && e.app ? e.message : 'Could not read the picture for printed labels. Check the connection and try again.');
 let tesseractLoading = null;
 function loadTesseract() {
   tesseractLoading ||= new Promise((ok, fail) => {
     if (window.Tesseract) { ok(window.Tesseract); return; }
     const s = document.createElement('script'); s.src = OCR_DIR + 'tesseract.min.js';
-    const failed = () => fail(new Error('Could not download the label finder. Check the connection and try again.'));
+    const failed = () => fail(appError('Could not download the label finder. Check the connection and try again.'));
     s.onload = () => (window.Tesseract ? ok(window.Tesseract) : failed());
     s.onerror = failed;
     document.head.append(s);
@@ -558,13 +566,17 @@ function resizeBox(m, dw, dh) {
 const LABEL_PAD = 0.005, LABEL_MIN_CONFIDENCE = 60;
 function labelCovers(lines, width, height, existing) {
   if (!width || !height) return [];
-  const touches = (a, b) => a.x <= b.x + b.w && b.x <= a.x + a.w && a.y <= b.y + b.h && b.y <= a.y + a.h;
+  // Words of one label sit on one line: boxes merge when they touch AND share at least half the shorter
+  // one's height. Labels on different lines that only meet at a corner stay apart, so the drawing between
+  // them is not hidden by one big rectangle.
+  const touches = (a, b) => a.x <= b.x + b.w && b.x <= a.x + a.w &&
+    Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) >= Math.min(a.h, b.h) / 2;
   const union = (a, b) => { const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y); return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y }; };
   let boxes = (lines || []).filter(l => l && l.bbox && l.confidence >= LABEL_MIN_CONFIDENCE && (String(l.text).match(/[\p{L}\p{N}]/gu) || []).length >= 2).map(l => {
     const x = unit(l.bbox.x0 / width - LABEL_PAD), y = unit(l.bbox.y0 / height - LABEL_PAD);
     return { x, y, w: unit(l.bbox.x1 / width + LABEL_PAD) - x, h: unit(l.bbox.y1 / height + LABEL_PAD) - y };
   });
-  for (let merged = true; merged;) { // merge until no two boxes touch
+  for (let merged = true; merged;) { // merge until no two boxes on one line touch
     merged = false;
     for (let i = 0; i < boxes.length && !merged; i++) for (let j = i + 1; j < boxes.length; j++) {
       if (touches(boxes[i], boxes[j])) { boxes[i] = union(boxes[i], boxes[j]); boxes.splice(j, 1); merged = true; break; }
@@ -1172,7 +1184,9 @@ const OCR_UNSUPPORTED = 'Finding labels automatically needs the installed app or
 function labelStatusText(s) {
   if (!s) return '';
   if (s.error) return s.error + ' You can still hide labels by hand after creating the reviewer.';
-  if (s.masks) return s.masks.length ? 'Found ' + s.masks.length + ' printed label' + (s.masks.length === 1 ? '' : 's') + '. They will be hidden when you practise; adjust them under Hide printed labels.' : 'No printed labels found.';
+  const n = s.masks ? s.masks.length : 0;
+  if (n > COVER_MAX) return 'Found ' + n + ' printed labels; the first ' + COVER_MAX + ' will be hidden (a reviewer holds ' + COVER_MAX + ' covers). Cover the rest by hand under Hide printed labels.';
+  if (s.masks) return n ? 'Found ' + n + ' printed label' + (n === 1 ? '' : 's') + '. They will be hidden when you practise; adjust them under Hide printed labels.' : 'No printed labels found.';
   return s.status === 'recognizing text' ? 'Looking for printed labels… ' + Math.round(s.pct * 100) + '%' : 'Getting the label finder ready…';
 }
 // A dropped search (new picture, Cancel) is stopped: a cheap phone cannot hold two engines at once. One
@@ -1182,6 +1196,12 @@ function dropLabelSearch() {
   labelSearch = null;
   if (s && !s.reviewerId) { s.dropped = true; if (s.worker) s.worker.terminate(); }
 }
+// The status line's content: the text, plus Try again after a failure (same picture, same search).
+function labelStatusKids(s) {
+  return [labelStatusText(s), s.error && diagBlob ? h('button', { class: 'btn alt', style: 'margin-left:8px', onclick: () => {
+    startLabelSearch(diagBlob); diagramSetup(); if (labelStatusEl) labelStatusEl.focus();
+  } }, 'Try again') : null].filter(Boolean);
+}
 function startLabelSearch(blob) {
   dropLabelSearch();
   const s = labelSearch = { pct: 0, status: '', masks: null, error: '', reviewerId: null, imageId: null, worker: null, dropped: false };
@@ -1189,7 +1209,7 @@ function startLabelSearch(blob) {
   // a redraw (it would steal focus from a part name); the result is announced once.
   const show = final => {
     if (labelSearch !== s) return;
-    if (labelStatusEl) labelStatusEl.textContent = labelStatusText(s);
+    if (labelStatusEl) labelStatusEl.replaceChildren(...labelStatusKids(s));
     if (final) say(labelStatusText(s));
   };
   const onWorker = w => { s.worker = w; if (s.dropped) w.terminate(); };
@@ -1197,7 +1217,7 @@ function startLabelSearch(blob) {
     s.masks = masks;
     if (s.reviewerId) attachLabels(s); else show(true);
   }, e => {
-    s.error = e && e.message ? e.message : 'Could not look for printed labels.';
+    s.error = labelError(e);
     if (!s.reviewerId) { show(true); return; }
     if (labelSearch === s) labelSearch = null;
     const r = R.find(x => x.id === s.reviewerId); // the student left the maker: say it, or they practise with the answers showing
@@ -1216,7 +1236,9 @@ function attachLabels(s) {
     coverList = cleanMasks([...coverList, ...freshCovers(add, coverList)]);
     if (lastScreen === 'covers') coversScreen();
   }
-  if (cur === r && lastScreen === 'quiz') quiz();
+  // A redraw would take focus from an answer being typed; the covers then show on the next redraw.
+  const a = document.activeElement, typing = !!a && ['INPUT', 'TEXTAREA', 'SELECT'].includes(a.tagName);
+  if (cur === r && lastScreen === 'quiz' && !typing) quiz();
   say(add.length + ' printed label' + (add.length === 1 ? '' : 's') + ' hidden on "' + r.title + '".');
 }
 function clearDiagram() {
@@ -1410,10 +1432,13 @@ function labelFinderNote() {
   if (!ocrSupported()) return h('p', { class: 'k' }, OCR_UNSUPPORTED);
   if (!ocrConsent()) return h('div', { class: 'card ocr-ask' }, h('p', null, OCR_ASK),
     h('div', { class: 'row' },
-      h('button', { class: 'btn', onclick: () => { setOcrConsent('yes'); if (diagBlob) startLabelSearch(diagBlob); diagramSetup(); } }, 'Yes, find labels'),
-      h('button', { class: 'btn alt', onclick: () => { setOcrConsent('no'); diagramSetup(); say('Labels will not be searched. You can hide them by hand.'); } }, 'No thanks')));
+      // The pressed button disappears in the redraw, so focus goes to what replaced the question.
+      h('button', { class: 'btn', onclick: () => { setOcrConsent('yes'); if (diagBlob) startLabelSearch(diagBlob); diagramSetup(); if (labelStatusEl) labelStatusEl.focus(); } }, 'Yes, find labels'),
+      h('button', { class: 'btn alt', onclick: () => { setOcrConsent('no'); diagramSetup(); if (labelStatusEl) labelStatusEl.focus(); say('Labels will not be searched. You can hide them by hand.'); } }, 'No thanks')));
+  // Not live regions: results go through say(). tabindex -1 so focus can land here after a button vanishes.
+  if (ocrConsent() !== 'yes') return (labelStatusEl = h('p', { class: 'k', tabindex: '-1' }, 'Printed labels are not searched on this device. After creating the reviewer you can hide them by hand, or choose Find printed labels there.'));
   if (!labelSearch) return null;
-  labelStatusEl = h('p', { class: 'k' }, labelStatusText(labelSearch)); // not a live region: results go through say()
+  labelStatusEl = h('p', { class: 'k', tabindex: '-1' }, ...labelStatusKids(labelSearch));
   return labelStatusEl;
 }
 function diagramSetup() {
@@ -1510,7 +1535,7 @@ function moveCoverKey(e, i) {
 }
 // "Find printed labels" in the cover editor: adds covers only for text not already covered; nothing is
 // saved until Save covers, so the student can check them first. Asked before the first download.
-let coverFinding = null, coverNote = '', coverStatusEl = null;
+let coverFinding = null, coverNote = '', coverStatusEl = null, findBtnEl = null;
 async function findCovers() {
   const r = coverFor, it = r && r.items.find(i => i.type === 'img');
   if (!it || coverFinding) return;
@@ -1518,19 +1543,21 @@ async function findCovers() {
   coverFinding = { pct: 0, status: '' }; coverNote = ''; coversScreen();
   try {
     const blob = await idbGet(it.imageId);
-    if (!blob) throw new Error('The diagram image is not on this device.');
-    const add = await findLabels(blob, coverList, (pct, status) => {
+    if (!blob) throw appError('The diagram image is not on this device.');
+    const found = await findLabels(blob, coverList, (pct, status) => {
       coverFinding.pct = pct; coverFinding.status = status;
       if (coverStatusEl) coverStatusEl.textContent = labelStatusText(coverFinding);
     });
     if (coverFor !== r) return;
-    coverList.push(...add.slice(0, Math.max(0, COVER_MAX - coverList.length)));
-    coverNote = add.length ? add.length + ' printed label' + (add.length === 1 ? '' : 's') + ' covered. Check them, then Save covers.'
+    // Checked again now: covers drawn while it ran must not be doubled. The count is what was really added.
+    const fresh = freshCovers(found, coverList), add = fresh.slice(0, Math.max(0, COVER_MAX - coverList.length));
+    coverList.push(...add);
+    coverNote = add.length ? add.length + ' printed label' + (add.length === 1 ? '' : 's') + ' covered' + (add.length < fresh.length ? ' (a reviewer holds ' + COVER_MAX + ' covers; cover the rest by hand)' : '') + '. Check them, then Save covers.'
       : 'No printed labels found' + (coverList.length ? ' that are not already covered.' : '.');
   } catch (e) {
-    coverNote = (e && e.message ? e.message : 'Could not look for printed labels.') + ' You can still cover them by hand.';
+    coverNote = labelError(e) + ' You can still cover them by hand.';
   } finally { coverFinding = null; }
-  if (coverFor === r) { coversScreen(); say(coverNote); }
+  if (coverFor === r) { coversScreen(); if (findBtnEl) findBtnEl.focus(); say(coverNote); }
 }
 function coversScreen() {
   const r = coverFor; if (!r) return quiz();
@@ -1591,7 +1618,7 @@ function coversScreen() {
     h('div', { class: 'card' }, wrap,
       h('p', { class: 'k' }, coverList.length ? coverList.length + ' cover(s). Drag on the image to add another.' : 'Drag a box over any printed label. One box per block of text is usually enough.'),
       ocrSupported()
-        ? h('p', null, h('button', { class: 'btn', disabled: coverFinding ? '' : null, onclick: findCovers }, 'Find printed labels'))
+        ? h('p', null, (findBtnEl = h('button', { class: 'btn', disabled: coverFinding ? '' : null, onclick: findCovers }, 'Find printed labels')))
         : h('p', { class: 'k' }, OCR_UNSUPPORTED),
       (coverStatusEl = (coverFinding || coverNote) ? h('p', { class: 'k' }, coverFinding ? labelStatusText(coverFinding) : coverNote) : null), // result announced by say()
       h('div', { class: 'row' },
