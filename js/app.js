@@ -1544,7 +1544,11 @@ function markCorrect(r, it) {
 function answer(it, val) {
   let ok, exp, part;
   if (it.type === 'mc') { ok = val === it.answer; exp = it.options[it.answer]; }
-  else if (it.type === 'id' || it.type === 'img') { ok = idOk(it.answer, val); exp = it.answer; }
+  else if (it.type === 'id' || it.type === 'img') {
+    // A slip is forgiven only when no other answer in this reviewer fits what was typed as well; the feedback says so.
+    const g = gradeId(it.answer, val, cur.items.map(answerText));
+    ok = g.ok; exp = it.answer + (g.typo ? ' (accepted, but check the spelling)' : '');
+  }
   else { const c = enumCheck(it.items, val); ok = c.ok; exp = it.items.join(', ') + (c.ok ? '' : ' (you missed: ' + c.missing.join(', ') + ')'); part = it.items.length ? c.got.length / it.items.length : 0; }
   lastUndo = snapshotAnswer(cur, it.id);
   const a = { val, ok, exp };

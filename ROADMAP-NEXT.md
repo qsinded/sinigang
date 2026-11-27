@@ -86,6 +86,13 @@ the guard, so A4 lands with A1.
 
 ## Phase C: fair grading
 
+**Done 2026-11-27 (C1–C3):** `gradeId()` grades word by word with filler words from `LANGS`, forgives one
+slip in 6–9 letters and two in 10+, never in short words or acronyms, rejects a slip that fits another answer
+in the reviewer as well, and the app adds "(accepted, but check the spelling)". A sweep over every corpus
+answer: correct variants accepted 561 → 572 of 572, wrong-answer acceptances unchanged (4, all genuine:
+OS/operating system, switch/Switches). Limit: a slip can still match a real word that is not in the reviewer
+("adsorption" for "absorption").
+
 1. **Accept small spelling mistakes** on longer answers: one wrong letter for 6–9 letters, two for
    10 or more, never for short words or acronyms, so `heap` and `head` stay different.
 2. **Grade by words, not characters.** An extra filler word ("the", "stage", "process") is fine;

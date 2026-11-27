@@ -707,5 +707,16 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   const tables = find(appEl, e => e.tagName === 'TABLE');
   assert.strictEqual(tables.length, 1, 'the stats panel renders one table');
 
+  // A small spelling slip in a long answer is accepted, and the feedback says so; a different real term is still wrong.
+  const spellR = ctx.cleanReviewer({ ...base, title: 'Spelling', items: ['Mitochondria', 'Photosynthesis', 'Meiosis'].map((k, i) => ({ id: 'sp' + i, type: 'id', q: 'q' + i, answer: k, exp: '' })) });
+  ctx.open(spellR);
+  ctx.answer(spellR.items[0], 'mitocondria');
+  assert.strictEqual(spellR.ans.sp0.ok, true, 'one wrong letter in a long answer is accepted');
+  assert.match(spellR.ans.sp0.exp, /check the spelling/i, 'the feedback points out the spelling');
+  ctx.answer(spellR.items[1], 'Photosynthesis');
+  assert.doesNotMatch(spellR.ans.sp1.exp, /spelling/i, 'an exact answer gets no spelling note');
+  ctx.answer(spellR.items[2], 'mitosis');
+  assert.strictEqual(spellR.ans.sp2.ok, false, 'a different real term is still wrong');
+
   console.log('app smoke checks passed');
 })().catch(e => { console.error(e); process.exit(1); });

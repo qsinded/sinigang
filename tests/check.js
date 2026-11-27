@@ -1,6 +1,6 @@
 // Run: node tests/check.js   (Node 18+, no packages). Checks the generator and the .pptx/.docx readers.
 const assert = require('assert'), zlib = require('zlib');
-const { generate, enumCheck, idOk, norm, itemKey, carryProgress, ITEM_CAP, SKIP_REASONS } = require('../js/reviewer-generator.js');
+const { generate, enumCheck, idOk, gradeId, norm, itemKey, carryProgress, ITEM_CAP, SKIP_REASONS } = require('../js/reviewer-generator.js');
 
 // Professor logic: the learning objectives decide what matters; jumbled text is never asked.
 {
@@ -114,6 +114,27 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
   assert.strictEqual(idOk('Interphase', 'prophase metaphase anaphase interphase telophase'), false, 'typing every candidate is not correct');
   assert.strictEqual(idOk('Interphase', 'interphase stage'), true, 'a small extra word is still accepted');
   assert.strictEqual(idOk('centromere', 'the centromere'), true, 'a leading article is ignored');
+  // Grading by words: extra filler is fine, an extra content word is not; a missing word is fine while most is there.
+  for (const [ans, typed, want] of [['Telophase', 'telophase lol idk', false], ['Interphase', 'interphase stage', true],
+    ['Interphase', 'not interphase', false], ['Mitosis', 'mitosis and meiosis', false], ['cell membrane', 'cell membranes', true],
+    ['cell membrane', 'membrane', true], ['Andres Bonifacio', 'Bonifacio', true], ['law of demand', 'demand', false],
+    ['Research and development', 'research and development', true]])
+    assert.strictEqual(idOk(ans, typed), want, JSON.stringify(typed) + ' for ' + JSON.stringify(ans) + ' should be ' + want);
+  // Small spelling slips in long words are accepted and flagged; short words, acronyms and other real terms are not.
+  for (const [ans, typed] of [['Mitochondria', 'mitocondria'], ['Photosynthesis', 'photosinthesis'], ['Cytokinesis', 'cytokenesis']]) {
+    assert.deepStrictEqual(gradeId(ans, typed), { ok: true, typo: true }, JSON.stringify(typed) + ' is a typo of ' + ans);
+  }
+  assert.deepStrictEqual(gradeId('Mitochondria', 'mitochondria'), { ok: true, typo: false }, 'an exact answer is no typo');
+  assert.deepStrictEqual(gradeId('cell membrane', 'cell membranes'), { ok: true, typo: false }, 'a plural is not a spelling slip');
+  assert.strictEqual(idOk('Mitosis', 'meiosis'), false, 'two letters off a 7-letter word is another word');
+  assert.strictEqual(idOk('CPU', 'CPV'), false, 'acronyms get no typo tolerance');
+  assert.strictEqual(idOk('CPU', 'CPUs'), true, 'a short answer typed in the plural is still right');
+  assert.strictEqual(idOk('CPU', 'CPU unit stuff'), false, 'a short answer with extra words is not');
+  // A slip is only accepted when no other answer in the reviewer is as close: "stalagtite" is one letter off both.
+  assert.strictEqual(idOk('stalagmite', 'stalagtite'), true, 'alone, one slip in a long word is accepted');
+  assert.strictEqual(idOk('stalagmite', 'stalagtite', ['stalagmite', 'stalactite']), false, 'equally close to another answer is not accepted');
+  assert.strictEqual(idOk('Mitosis', 'mitosos', ['Mitosis', 'Meiosis']), true, 'closer to its own answer than any other is accepted');
+  assert.deepStrictEqual(enumCheck(['Prophase', 'Metaphase', 'Anaphase', 'Telophase'], 'prophase, metaphse, anaphase, telophase').missing, [], 'a slip inside a list is accepted');
   // History notes are past tense: "X was Y" is a definition too.
   const hist = ['The Katipunan was a secret society founded by Andres Bonifacio in 1892.', 'The Malolos Constitution was the first republican constitution in Asia.',
     'La Liga Filipina was a civic organization founded by Rizal to unite Filipinos.', 'The Treaty of Paris was the agreement that ended the Spanish-American War.'];

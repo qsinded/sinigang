@@ -14,6 +14,7 @@ const LANGS = {
       'most', 'many', 'every', 'several', 'both', 'few', 'no', 'another', 'other', 'such', 'its', 'their', 'his', 'her', 'our', 'your', 'my'],
     termVerbs: ['is', 'are', 'was', 'were', 'be', 'do', 'does', 'did', 'will', 'can'], // a term containing one is a clause
     clauseWords: ['when', 'whenever', 'where', 'while', 'if', 'because', 'since', 'that', 'which', 'who', 'whom', 'whose', 'than', 'until', 'unless'],
+    answerFiller: ['the', 'a', 'an', 'of', 'and', 'in', 'to', 'for', 'stage', 'phase', 'process', 'type', 'kind', 'part', 'called', 'term'], // may be added to a typed answer
   },
   fil: {
     articles: ['Ang mga', 'Ang', 'Sina', 'Si'],       // "Ang Katipunan ay …", "Si Rizal ay …"
@@ -22,6 +23,7 @@ const LANGS = {
     notTerm: ['ito', 'iyan', 'iyon', 'dito', 'doon', 'sila', 'siya', 'tayo', 'kami', 'kayo', 'ako', 'ikaw'],
     termVerbs: ['ay'],
     clauseWords: ['kung', 'kapag', 'dahil', 'habang', 'noong', 'nang', 'upang', 'sapagkat'],
+    answerFiller: ['ang', 'ng', 'mga', 'si', 'ni', 'sa', 'ay', 'na'],
   },
 };
 const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -40,16 +42,70 @@ function abbreviates(short, long) {
   const w = wordsOf(long).map(x => x.toLowerCase()).filter(x => !FILLER_W.includes(x));
   return norm(short).length >= 2 && w.length >= 2 && w.map(x => x[0]).join('') === norm(short);
 }
-function idOk(ans, val) {
-  const A = String(ans).trim(), V = String(val).trim();
-  const a = bare(A), v = bare(V);
-  if (!v || !a) return false;
-  if (a === v) return true;
-  if (isAcr(A) !== isAcr(V) && abbreviates(isAcr(A) ? A : V, isAcr(A) ? V : A)) return true;
-  // Extra or missing words count only while the shorter side is most of the longer one, so typing every
-  // candidate ("prophase metaphase anaphase interphase") is not graded correct for "Interphase".
-  return contains(a, v) && Math.min(a.length, v.length) >= Math.max(a.length, v.length) * 0.6;
+const ANSWER_FILLER = new Set(Object.values(LANGS).flatMap(l => l.answerFiller));
+const lower = w => w.toLowerCase();
+// Singular and plural are the same answer: "membrane"/"membranes", "class"/"classes".
+const sameWord = (e, g) => e === g || e + 's' === g || g + 's' === e || e + 'es' === g || g + 'es' === e;
+/** Edit distance (insert, delete, substitute) between two short words. */
+function lev(a, b) {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = row;
+  }
+  return prev[b.length];
 }
+// Spelling slips forgiven in one word: none below 6 letters (heap/head, CPU/CPV), one for 6–9, two for 10 or more.
+const slips = w => (w.length >= 10 ? 2 : w.length >= 6 ? 1 : 0);
+/**
+ * Matches a typed answer to the expected one word by word. Every typed word must be one of the answer's words (a plural
+ * or, with allowTypo, a small slip counts) or harmless filler ("the", "stage"); any other word makes it wrong, so
+ * "telophase lol idk" and "mitosis and meiosis" fail. Missing words are fine while 60% of the answer is there.
+ * @returns {{ok: boolean, typo: boolean, cost: number}} cost = letters changed by slips
+ */
+function matchWords(A, V, allowTypo) {
+  const exp = wordsOf(String(A).replace(ART, '')).map(lower), got = wordsOf(String(V).replace(ART, '')).map(lower), used = new Set();
+  let cost = 0;
+  for (const g of got) {
+    let j = exp.findIndex((e, i) => !used.has(i) && sameWord(e, g));
+    if (j < 0 && allowTypo) {
+      j = exp.findIndex((e, i) => !used.has(i) && lev(e, g) <= slips(e));
+      if (j >= 0) cost += lev(exp[j], g);
+    }
+    if (j >= 0) used.add(j);
+    else if (!ANSWER_FILLER.has(g)) return { ok: false, typo: false, cost };
+  }
+  const have = [...used].reduce((n, i) => n + exp[i].length, 0), need = exp.join('').length;
+  // At least 4 letters must match, or the whole answer when it is shorter ("CPU" typed as "CPUs").
+  return { ok: have >= Math.min(4, need) && have >= need * 0.6, typo: cost > 0, cost };
+}
+/**
+ * Grades a typed identification answer.
+ * @param {string} ans the expected answer
+ * @param {string} val what the student typed
+ * @param {string[]} [others] every answer in the reviewer: a spelling slip is only accepted when no other answer fits
+ *   what was typed as well ("stalagtite" is one letter off both stalagmite and stalactite)
+ * @returns {{ok: boolean, typo: boolean}} typo: accepted, but only by forgiving a spelling slip
+ */
+function gradeId(ans, val, others = []) {
+  const A = String(ans).trim(), V = String(val).trim(), a = bare(A), v = bare(V), no = { ok: false, typo: false };
+  if (!v || !a) return no;
+  if (a === v) return { ok: true, typo: false };
+  if (isAcr(A) !== isAcr(V) && abbreviates(isAcr(A) ? A : V, isAcr(A) ? V : A)) return { ok: true, typo: false };
+  const m = matchWords(A, V, !isAcr(A));
+  if (!m.ok) return no;
+  // Another answer is a rival when what was typed is that answer, or is at most as many slips away from it.
+  const rival = o => {
+    if (norm(o) === norm(A)) return false;
+    if (bare(o) === v) return true;
+    const r = matchWords(o, V, !isAcr(o));
+    return r.ok && r.cost <= m.cost;
+  };
+  if (m.typo && others.some(rival)) return no;
+  return { ok: true, typo: m.typo };
+}
+const idOk = (ans, val, others) => gradeId(ans, val, others).ok;
 const contains = (a, v) => v.length >= 4 && a.length >= 4 && (a.includes(v) || v.includes(a));
 
 // Answer separators for enumeration items: new lines, commas, semicolons, "and"/"&".
@@ -60,7 +116,7 @@ function enumCheck(items, val) {
   const vals = raw.split(LIST_SPLIT).map(s => s.replace(BULLET, '').trim()).filter(Boolean);
   // The whole answer is tried as well, so an item whose own name contains "and" still matches.
   // Listing everything is the task here, so the whole answer only has to contain the item.
-  const hit = it => contains(bare(it), bare(raw)) || vals.some(v => idOk(it, v));
+  const hit = it => contains(bare(it), bare(raw)) || vals.some(v => idOk(it, v, items)); // a slip must not fit another item better
   const got = items.filter(hit);
   return { ok: got.length === items.length, got, missing: items.filter(i => !got.includes(i)) };
 }
@@ -530,4 +586,4 @@ function carryProgress(oldItems, newItems, progress = {}) {
   return { ans, known, learn, srs, flags, kept };
 }
 
-if (typeof module !== 'undefined') module.exports = { generate, idOk, enumCheck, norm, itemKey, carryProgress, ITEM_CAP, SKIP_REASONS };
+if (typeof module !== 'undefined') module.exports = { generate, idOk, gradeId, enumCheck, norm, itemKey, carryProgress, ITEM_CAP, SKIP_REASONS };

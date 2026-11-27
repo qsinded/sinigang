@@ -16,6 +16,10 @@ no account and no build step.
   statement is only made when the swap cannot be true. Exam-paper furniture (instructions, rubrics like
   "Write TRUE if the statement is correct", answer keys and lines that already contain blanks) is
   skipped instead of becoming a question, so a past paper yields questions only from its real content.
+- **Fair grading** of typed answers, word by word: filler such as "the" or "stage" may be added, any other
+  extra word makes it wrong ("telophase lol idk", "mitosis and meiosis"), plurals count, and a small spelling
+  slip in a long word ("mitocondria") is accepted with "check the spelling" — unless another answer in the
+  same reviewer is just as close ("stalagtite" between stalagmite and stalactite).
 - **"Show in my notes"** on every answered item: the sentence the answer came from is reopened in
   its original paragraph, with the answer highlighted, so feedback points at the student's own
   material instead of a canned explanation.
