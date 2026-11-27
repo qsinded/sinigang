@@ -365,6 +365,12 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
       'Meiosis is a cell division that produces four haploid gametes.', 'Interphase is the stage where the cell grows and copies its DNA.']);
     assert.strictEqual(plainDefs.length, 3, 'an empty word list matches nothing; got skips: ' + JSON.stringify(plainDefs.skipped));
   }
+  // A numbering prefix ("II.", "B.") is not a sentence of its own: "II. Write TRUE if…" stays one instruction.
+  const numbered = generate(['II. Write TRUE if the statement is correct and FALSE if not.', 'B. Choose the best answer from the choices below.',
+    'Mitosis is the division of a nucleus into two identical nuclei.', 'Meiosis is a cell division that produces four haploid gametes.',
+    'Interphase is the stage where the cell grows and copies its DNA.']);
+  assert(!numbered.skipped.some(s => /^(?:II|B)\.$/.test(s.text)), 'no stray numbering fragment: ' + JSON.stringify(numbered.skipped));
+  assert.strictEqual(reasonFor(numbered, 'II. Write TRUE if the statement is correct and FALSE if not.'), 'instruction');
   // A fact that made a question but was cut by the limit, or by a type the student turned off, says so.
   const capped = generate(skipNotes, [], { max: 1 });
   assert(capped.skipped.some(s => s.reason === 'limit'), 'items cut by the limit are reported');

@@ -19,6 +19,7 @@ let q = '', qSort = 'recent', qDue = false, optMax = 0, optMc = false, optNoTF =
 let optCap = 20;
 try { const c = Number(localStorage.getItem('reviewer_cap_v1')); if ([10, 20, 40, 0].includes(c)) optCap = c; } catch (e) { /* session default */ }
 const draft = {};
+let lastSkips = null; // why the last build made too few questions; shown under its error
 
 function h(tag, p, ...kids) {
   const e = document.createElement(tag);
@@ -540,7 +541,7 @@ function deleteReviewer(r) {
 }
 
 async function run() {
-  busy = true; err = ''; status = 'Starting…'; home();
+  busy = true; err = ''; lastSkips = null; status = 'Starting…'; home();
   try {
     let lines = [], tags = [];
     if (!files.length) {
@@ -561,7 +562,12 @@ async function run() {
     if (lines.join('').length < 200) throw new Error('No readable text found. Scanned PDFs or slides that are only pictures cannot be read offline.');
     status = 'Building items…'; home();
     const opts = { max: optMax, mcOnly: optMc, noTF: optNoTF, noEnum: optNoEnum }, items = generate(lines, tags, opts);
-    if (items.length < 3) throw new Error('Could not find enough definitions or lists in this file. Notes written as full sentences ("X is …") work best.');
+    if (items.length < 3) {
+      lastSkips = items.skipped; // shown open under the error, so the student sees what to reword
+      const made = items.length ? 'Only ' + plural(items.length, 'question', 'questions') + ' could be made from these notes, and a reviewer needs at least 3.' : 'No questions could be made from these notes.';
+      throw new Error(made + (skipReport(lastSkips) ? ' The list below shows why each line was skipped and how to reword it.'
+        : ' Notes written as full sentences ("X is …", "X does …") work best.'));
+    }
     const titleEl = document.getElementById('title');
     const title = (titleEl && titleEl.value.trim()) || (files[0] ? files[0].name.replace(/\.[^.]+$/, '') : 'Pasted notes');
     pending = { title, items, src: lines, tags, opts, hidden: [], removed: [] }; files = []; preview(); // saved only after the student checks the questions
@@ -577,6 +583,33 @@ function savePending() {
   const r = { id: newRid(), title: p.title, items: p.items, ans: {}, src, tags, opts: p.opts, plan: { exam: '', srs: {} }, flags: [], hidden: cleanHidden(p.hidden), removed };
   pending = null; R.unshift(r); save(); open(r);
 }
+// The skip report: which note lines made no question and why, so a student can reword them instead of hitting a
+// dead end. Lines that could become questions are listed by reason (worded in SKIP_REASONS); facts cut by the
+// question limit are counted; headings, objectives and instructions are skipped on purpose and only counted.
+const SKIP_ON_PURPOSE = new Set(['furniture', 'heading', 'objective', 'outline', 'instruction', 'question', 'short-list']);
+const SKIP_CUT = new Set(['limit', 'type-off']);
+const SKIP_SHOWN = 20; // lines listed per reason; the rest are counted
+const plural = (n, one, many) => n + ' ' + (n === 1 ? one : many);
+function skipReport(skipped, open) {
+  const all = Array.isArray(skipped) ? skipped : [];
+  const fix = all.filter(s => !SKIP_ON_PURPOSE.has(s.reason) && !SKIP_CUT.has(s.reason));
+  const cut = all.filter(s => SKIP_CUT.has(s.reason)).length, onPurpose = all.length - fix.length - cut;
+  if (!fix.length && !cut) return null;
+  const byReason = new Map();
+  fix.forEach(s => byReason.set(s.reason, [...(byReason.get(s.reason) || []), s.text]));
+  const short = t => (t.length > 160 ? t.slice(0, 157) + '…' : t);
+  return h('details', { class: 'more skips', open: open ? '' : null },
+    h('summary', null, h('span', null,
+      h('b', null, fix.length ? plural(fix.length, 'line could become a question', 'lines could become questions') : plural(cut, 'fact was left out', 'facts were left out')),
+      h('span', { class: 'more-hint' }, fix.length ? 'See why they were skipped and how to reword them' : 'Cut by the question limit or a turned-off question type'))),
+    [...byReason].sort((a, b) => b[1].length - a[1].length).map(([reason, texts]) => h('div', { class: 'skip-group' }, // not .skip: that is the skip link
+      h('p', { class: 'skip-why' }, SKIP_REASONS[reason] || reason),
+      h('ul', null, texts.slice(0, SKIP_SHOWN).map(t => h('li', null, short(t))),
+        texts.length > SKIP_SHOWN && h('li', { class: 'k' }, '…and ' + (texts.length - SKIP_SHOWN) + ' more')))),
+    fix.length > 0 && cut > 0 && h('p', { class: 'k' }, plural(cut, 'more made a question but was', 'more made a question but were') + ' cut by the question limit or a turned-off question type.'),
+    onPurpose > 0 && h('p', { class: 'k' }, plural(onPurpose, 'heading, objective or instruction was', 'headings, objectives or instructions were') + ' skipped on purpose.'));
+}
+
 let removedAt = null;
 function preview() {
   const p = pending, few = p.items.length < 3;
@@ -584,6 +617,7 @@ function preview() {
     h('button', { class: 'btn alt', onclick: () => home() }, '← Cancel'),
     h('h1', null, 'Check your questions'),
     h('p', { class: 'sub' }, 'Remove any question that looks wrong or confusing, then save. A removed question stays out of later shuffles.'),
+    skipReport(p.items.skipped, false),
     h('div', { class: 'row' }, h('button', { class: 'btn', disabled: few ? '' : null, onclick: savePending }, 'Save reviewer (' + p.items.length + ' questions)'),
       h('button', { class: 'btn alt', onclick: () => openItemEditor({ items: p.items, hidden: p.hidden, removed: p.removed, index: -1, back: preview }) }, 'Add a question'),
       few && h('span', { class: 'err' }, 'Keep at least 3 questions.')),
@@ -1171,7 +1205,8 @@ function home() {
         h('label', null, h('input', { type: 'checkbox', checked: optNoTF ? null : '', onchange: e => { optNoTF = !e.target.checked; } }), 'True / false'),
         h('label', null, h('input', { type: 'checkbox', checked: optNoEnum ? null : '', onchange: e => { optNoEnum = !e.target.checked; } }), 'Enumeration')),
       h('p', null, h('button', { class: 'btn', disabled: busy ? '' : null, onclick: run }, busy ? 'Working…' : 'Generate reviewer')),
-      status && h('p', { class: 'k', role: 'status' }, status), err && h('p', { class: 'err', role: 'alert' }, err)),
+      status && h('p', { class: 'k', role: 'status' }, status), err && h('p', { class: 'err', role: 'alert' }, err),
+      err && skipReport(lastSkips, true)),
     h('div', { class: 'card' },
       h('h2', { class: 'k' }, 'Diagrams'),
       h('p', { class: 'k' }, 'Upload a heart, cell, map or any diagram, tap its parts and name them. Each part becomes an identification question that works offline.'),

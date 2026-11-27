@@ -21,6 +21,10 @@ no account and no build step.
   people as options; a subject blank only offers terms that agree with its verb ("_____ build" never offers
   "nucleus"); an acronym or year gets its own kind; and no wrong option appears more than twice in one set.
   When the notes are too small for that, the item is asked by typing instead.
+- **Skip report**: the check screen lists the note lines that made no question, grouped by why, with how to
+  reword them ("Try \"X is …\" or \"X does …\""). When a file makes fewer than 3 questions, the same report opens
+  under the error, so the student can fix the notes instead of hitting a dead end. Headings, objectives and
+  exam instructions are skipped on purpose and only counted.
 - **Fair grading** of typed answers, word by word: filler such as "the" or "stage" may be added, any other
   extra word makes it wrong ("telophase lol idk", "mitosis and meiosis"), plurals count, and a small spelling
   slip in a long word ("mitocondria") is accepted with "check the spelling" — unless another answer in the

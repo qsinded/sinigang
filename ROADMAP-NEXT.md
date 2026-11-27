@@ -64,7 +64,10 @@ device. Every phase adds tests to `tests/check.js`, never raises a `tests/qualit
    determiner).
 3. **Skipped-line report.** Backend done 2026-11-27: `generate()` returns `.skipped` with a reason code per
    line, and `SKIP_REASONS` words each one for a student with a fix ("Try writing it as *X is …*").
-   Still to do (UI, paused): show it when a file yields few questions, instead of the dead-end error.
+   **UI done 2026-11-27:** the check screen has a closed "N lines could become questions" panel, and a build
+   with fewer than 3 questions shows the same report open under the error instead of a dead end. Lines are
+   grouped by reason in the student's words; facts cut by the limit and lines skipped on purpose (headings,
+   objectives, instructions) are only counted.
    Today's gaps by reason (`npm run quality -- --missed`): no-pattern 13, no-claim 10 (all Filipino),
    bad-term 7, then furniture the generator is right to skip.
 4. **Done 2026-11-27:** `tests/corpus/` has history, economics and Filipino notes, and `npm run quality`

@@ -374,7 +374,13 @@ function generate(rawLines, tags = [], o = {}) {
     }
     hdr = null; items = [];
   };
-  const flushPara = () => { if (para) para.split(/(?<=[.!?])\s+(?=[A-Z".])/).forEach(s => sents.push(note(s.trim(), paraTag))); para = ''; };
+  // A numbering prefix ("II.", "B.") ends in a full stop but is not a sentence: it is joined back to what follows.
+  const NUM_ONLY = /^(?:\d+|[IVXLC]+|[A-Za-z])[.)]$/;
+  const sentencesOf = text => text.split(/(?<=[.!?])\s+(?=[A-Z".])/).reduce((acc, s) => {
+    if (acc.length && NUM_ONLY.test(acc[acc.length - 1])) acc[acc.length - 1] += ' ' + s; else acc.push(s);
+    return acc;
+  }, []);
+  const flushPara = () => { if (para) sentencesOf(para).forEach(s => sents.push(note(s.trim(), paraTag))); para = ''; };
 
   // A long heading starts a sentence and is either Title Case or, in sentence case ("Spanish colonization and the
   // revolution"), has no verb, does not stop on "and"/"the", and the next line starts a new sentence. A line cut

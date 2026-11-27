@@ -143,6 +143,15 @@ body{padding-bottom:70px}
 .more[open]>summary{border-color:var(--acc);background:color-mix(in srgb,var(--acc) 8%,var(--card))}
 @media(max-width:520px){.more>summary{padding:12px 14px;min-height:54px}}
 @media(forced-colors:active){.more>summary{border:2px solid ButtonText}}
+/* Skip report: each reason in words, then the note lines it applies to. Lines are sentences, so the monospace
+   uppercase label style of .k is turned off inside it. */
+.skips{margin:0 0 16px;max-width:75ch}
+.skips .skip-group{border-left:3px solid var(--acc);padding:2px 0 2px 12px;margin:14px 0}
+.skips .skip-why{margin:0 0 4px;font-weight:600}
+.skips ul{margin:0;padding-left:20px}
+.skips li{margin:4px 0;overflow-wrap:anywhere}
+.skips .k{font:inherit;text-transform:none;letter-spacing:0;color:var(--mut)}
+.skips>p.k{margin:12px 0 0}
 @media print{.more,.keys{display:none}}
 
 /* UI polish: softer surfaces, clearer hierarchy, tactile controls. Colors still come from the variables above. */

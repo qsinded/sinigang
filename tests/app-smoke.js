@@ -718,5 +718,49 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   ctx.answer(spellR.items[2], 'mitosis');
   assert.strictEqual(spellR.ans.sp2.ok, false, 'a different real term is still wrong');
 
+  // The skip report on the check screen: lines that could become questions are listed with the reason in words;
+  // headings and objectives are only counted. It starts closed, so the questions stay first.
+  const okNotes = ['Mitosis is the division of a nucleus into two identical nuclei.', 'Meiosis is a cell division that produces four haploid gametes.',
+    'Interphase is the stage where the cell grows and copies its DNA.', 'Cytokinesis is the division of the cytoplasm after mitosis.',
+    'Long chains of amino acids folded into shapes form the proteins of a cell.', 'Objectives', 'Explain the stages of mitosis'];
+  vm.runInContext('pending = { title: "Report", items: generate(' + JSON.stringify(okNotes) + '), src: [], tags: [], opts: {}, hidden: [], removed: [] }', ctx);
+  ctx.preview();
+  const checkText = screenText(appEl);
+  assert.match(checkText, /1 line could become a question/, 'the check screen counts the fixable lines');
+  assert.match(checkText, /No term found/, 'the reason is explained in words');
+  assert.ok(checkText.includes('Long chains of amino acids folded into shapes'), 'the skipped line itself is shown');
+  assert.match(checkText, /2 headings, objectives or instructions were skipped on purpose/, 'furniture is counted');
+  assert.ok(!checkText.includes('Explain the stages of mitosis'), 'an objective is counted, not listed');
+  const report = find(appEl, e => e.tagName === 'DETAILS' && String(e.className).split(' ').includes('skips'));
+  assert.strictEqual(report.length, 1, 'one report on the check screen');
+  assert.strictEqual(report[0].attrs.open, undefined, 'the report starts closed on the check screen');
+
+  // Too few questions: instead of a dead end, the error explains and the report is open with every fixable line.
+  const fewNotes = ['Cell Biology Review', 'In every living cell, ribosomes build proteins from amino acids for the body.',
+    'During photosynthesis plants turn light into sugar inside the green chloroplasts.', 'Within the membrane small channels let water move in and out of the cell.',
+    'Long chains of amino acids folded into shapes form the proteins of a cell.'];
+  vm.runInContext('cur = null; pending = null; files = []; pasteText = ' + JSON.stringify(fewNotes.join('\n')), ctx);
+  await ctx.run();
+  const fewText = screenText(appEl);
+  assert.match(fewText, /No questions could be made from these notes/, 'the error says how many questions were possible');
+  assert.match(fewText, /The list below shows why/, 'the error points at the report');
+  assert.match(fewText, /4 lines could become questions/, 'the report counts the fixable lines');
+  for (const line of fewNotes.slice(1)) assert.ok(fewText.includes(line.slice(0, 40)), 'every fixable line is listed: ' + line);
+  assert.match(fewText, /Not a complete statement with a verb/, 'each reason is explained');
+  const openReport = find(appEl, e => e.tagName === 'DETAILS' && String(e.className).split(' ').includes('skips'));
+  assert.strictEqual(openReport.length, 1, 'the home screen shows the report after a failed build');
+  assert.strictEqual(openReport[0].attrs.open, '', 'the report is already open after a failed build');
+  // Only furniture (headings, instructions): there is no list to point at, so the error gives the general hint instead.
+  const furnitureOnly = ['Instructions: Answer all the questions below carefully and completely.', 'II. Write TRUE if the statement is correct and FALSE if not.',
+    'Why is the cell membrane so important to every living cell?', 'Chapter 4 Review', 'Cell Biology Review'];
+  vm.runInContext('pasteText = ' + JSON.stringify(furnitureOnly.join('\n')), ctx);
+  await ctx.run();
+  const furnText = screenText(appEl);
+  assert.match(furnText, /No questions could be made/);
+  assert.doesNotMatch(furnText, /list below/, 'no promise of a list that is not there');
+  assert.match(furnText, /full sentences/, 'the general hint is given instead');
+  assert.strictEqual(find(appEl, e => e.tagName === 'DETAILS' && String(e.className).split(' ').includes('skips')).length, 0, 'no empty report');
+  vm.runInContext("pasteText = ''", ctx);
+
   console.log('app smoke checks passed');
 })().catch(e => { console.error(e); process.exit(1); });
