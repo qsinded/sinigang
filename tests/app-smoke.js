@@ -813,5 +813,37 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   assert.ok(srcWrap && srcWrap.attrs.hidden === undefined, 'the notes panel is still open after a redraw');
   sandbox.matchMedia = wideMedia;
 
+  // Filipino exam formats in the app: Matching type and Modified true or false get their own tabs, are graded, survive a
+  // reload, and show up in flashcards and recitation.
+  const formatR = ctx.cleanReviewer({ ...base, title: 'Exam formats', items: [
+    { id: 'm0', type: 'match', q: 'Matching type (set 1): match each description with the term it describes.',
+      pairs: [{ term: 'Mitosis', desc: 'Division into two identical nuclei' }, { term: 'Meiosis', desc: 'Division that makes four gametes' }, { term: 'Osmosis', desc: 'Diffusion of water' }],
+      terms: ['Osmosis', 'Mitosis', 'Meiosis'], exp: 'Mitosis is the division into two identical nuclei.' },
+    { id: 't0', type: 'mtf', q: 'Modified true or false: [Osmosis] is the division into two identical nuclei. Write TRUE if it is correct; if not, write the word that should replace the one in brackets.', answer: 'Mitosis', exp: 'Mitosis is the division into two identical nuclei.' },
+    { id: 't1', type: 'mtf', q: 'Modified true or false: [Osmosis] is the diffusion of water. Write TRUE if it is correct; if not, write the word that should replace the one in brackets.', answer: 'TRUE', exp: 'Osmosis is the diffusion of water.' }] });
+  assert.ok(formatR && formatR.items.length === 3, 'matching and modified true or false items pass validation');
+  ctx.open(formatR);
+  const formatText = screenText(appEl);
+  assert.match(formatText, /Matching type/, 'a Matching type tab');
+  assert.match(formatText, /Modified true or false/, 'a Modified true or false tab');
+  ctx.answer(formatR.items[1], 'mitosis');
+  assert.strictEqual(formatR.ans.t0.ok, true, 'a false statement is answered with the right word');
+  ctx.answer(formatR.items[2], 'true');
+  assert.strictEqual(formatR.ans.t1.ok, true, 'a correct statement is answered TRUE');
+  vm.runInContext("tab = 'match'; quizIndex = 0;", ctx);
+  ctx.quiz();
+  const selects = find(appEl, e => e.tagName === 'SELECT' && /^Term for/.test(e.attrs['aria-label'] || ''));
+  assert.strictEqual(selects.length, 3, 'one term picker per description');
+  ctx.answer(formatR.items[0], ['Mitosis', 'Osmosis', 'Osmosis']);
+  assert.strictEqual(formatR.ans.m0.ok, false, 'a wrong pair makes the set wrong');
+  assert.ok(Math.abs(formatR.ans.m0.part - 2 / 3) < 1e-9, 'each right pair earns its share (2 of 3 here)');
+  assert.match(formatR.ans.m0.exp, /Division that makes four gametes → Meiosis/, 'the feedback lists the right pairs');
+  const reloaded = ctx.cleanReviewer(JSON.parse(JSON.stringify(formatR)));
+  assert.ok(reloaded.ans.m0 && reloaded.ans.t0, 'matching and modified true or false answers survive a reload');
+  assert.match(ctx.flashAnswer(formatR.items[0]), /Mitosis/, 'a matching set has a flashcard answer');
+  assert.strictEqual(ctx.flashAnswer(formatR.items[1]), 'Mitosis', 'a modified true or false flashcard shows its answer');
+  assert.match(ctx.reciteQuestion(formatR.items[0]), /Division that makes four gametes/, 'recitation reads the descriptions');
+  assert.match(ctx.reciteAnswer(formatR.items[0]), /Meiosis/, 'recitation reads the pairs');
+
   console.log('app smoke checks passed');
 })().catch(e => { console.error(e); process.exit(1); });

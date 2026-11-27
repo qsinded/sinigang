@@ -307,7 +307,7 @@ const MINOR = /^(?:a|an|the|and|or|of|in|on|at|to|for|by|with|from|vs|ng|sa|mga)
 const titleCase = s => { const w = s.match(/[A-Za-z][A-Za-z'’]*/g) || []; return w.length >= 3 && w.every(x => MINOR.test(x) || /^[A-Z]/.test(x)); };
 const STOP = new Set(['AND', 'OR', 'THE', 'IF', 'IN', 'IS', 'IT', 'TO', 'OF', 'NOT', 'FOR', 'ON', 'AS', 'AT', 'BY']);
 // Visible caps, so the interface can say what "All" means instead of silently truncating.
-const ITEM_CAP = { mc: 30, id: 20, tf: 8, enum: 10 };
+const ITEM_CAP = { mc: 30, id: 20, tf: 8, enum: 10, mtf: 6, match: 2 };
 // Why a note line produced no question (generate(...).skipped). Worded for the student, with a fix where one exists.
 const SKIP_REASONS = {
   furniture: 'A page number, or a header or footer repeated on every page.',
@@ -615,6 +615,33 @@ function generate(rawLines, tags = [], o = {}) {
       nID++;
     }
   }
+  // Matching type, as in a Filipino exam's "Test III": sets of 4–5 definitions, people and things in separate sets,
+  // each description paired with its own term; the terms are listed shuffled for the student to match.
+  const matchable = defs.filter(d => !d.clause && d.body.length <= 140);
+  for (const group of [matchable.filter(d => !d.who), matchable.filter(d => d.who)]) {
+    for (let i = 0; i + 4 <= group.length && out.filter(x => x.type === 'match').length < ITEM_CAP.match; i += 5) {
+      const set = group.slice(i, i + 5);
+      const n = out.filter(x => x.type === 'match').length + 1;
+      out.push({ w: Math.max(...set.map(d => d.w)), type: 'match', q: 'Matching type (set ' + n + '): match each description with the ' + (set[0].who ? 'person' : 'term') + ' it describes.',
+        pairs: set.map(d => ({ term: d.term, desc: d.body })), terms: shuffle(set.map(d => d.term)), exp: ex(set[0].src) + set.slice(1).map(d => ' ' + d.src).join('') });
+    }
+  }
+  // Modified true or false: the note's sentence with its term in [brackets]. TRUE when it is the note's own term;
+  // otherwise the term is swapped for one that certainly does not belong (verifiedSwap, with the same grammar rules
+  // as true/false) and the answer is the term that does. Half are false when a swap is possible.
+  let nMtf = 0, nMtfTrue = 0;
+  for (const it of shuffle([...defs.filter(d => !d.clause), ...facts])) {
+    if (o.noTF || nMtf >= ITEM_CAP.mtf) break;
+    const list = it.kind === 'def' ? defs : [...facts, ...defs];
+    const swap = verifiedSwap(it, list, x => x.src, x => x.term, x => x.body || x.src, x => plural(x.term) === subjectPlural(it) && person(x) === person(it));
+    const isTrue = !swap || nMtfTrue <= nMtf - nMtfTrue; // TRUE while there are no more TRUE items than false ones
+    const shown = isTrue ? it.term : swap, st = (isTrue ? clean(it.src) : replaceTerm(clean(it.src), it.term, swap)).replace(/\.$/, '');
+    const marked = st.replace(new RegExp('\\b' + esc(shown) + '\\b', 'i'), m => '[' + m + ']');
+    if (marked === st || !statementOk(st)) continue;
+    out.push({ w: it.w, type: 'mtf', q: 'Modified true or false: ' + cap1(marked) + '. Write TRUE if it is correct; if not, write the word that should replace the one in brackets.',
+      answer: isTrue ? 'TRUE' : it.term, exp: ex(it.src) });
+    nMtf++; if (isTrue) nMtfTrue++;
+  }
   const firstList = e => { if (seenEnum.has(norm(e.hdr))) { skip(e.src, 'repeated'); return false; } seenEnum.add(norm(e.hdr)); return true; };
   shuffle(enums).sort((a, b) => score(b.hdr) - score(a.hdr)).filter(firstList).slice(0, ITEM_CAP.enum).forEach(e =>
     out.push({ w: score(e.hdr), type: 'enum', q: 'Enumerate: ' + e.hdr, items: e.items, exp: ex(e.src) }));
@@ -643,7 +670,8 @@ function generate(rawLines, tags = [], o = {}) {
 function answerText(it) {
   if (!it) return '';
   if (it.type === 'mc') return Array.isArray(it.options) && it.options[it.answer] != null ? it.options[it.answer] : '';
-  if (it.type === 'id' || it.type === 'img') return it.answer || '';
+  if (it.type === 'id' || it.type === 'img' || it.type === 'mtf') return it.answer || '';
+  if (it.type === 'match') return (it.pairs || []).map(p => p.term + ' = ' + p.desc).join(' | ');
   return (it.items || []).join(' | ');
 }
 function itemKey(it) { return norm(it && it.q) + '|' + norm(answerText(it)); }

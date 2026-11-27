@@ -398,7 +398,7 @@ function applyCovers(r, list) {
   return r.masks;
 }
 function cleanItem(x) {
-  if (!x || !['mc', 'id', 'enum', 'img'].includes(x.type)) return null;
+  if (!x || !['mc', 'id', 'enum', 'img', 'mtf', 'match'].includes(x.type)) return null;
   const id = str(x.id, 40), q = str(x.q), exp = str(x.exp) ?? '';
   if (!id || !q) return null;
   let it = null;
@@ -409,9 +409,16 @@ function cleanItem(x) {
   } else if (x.type === 'mc') {
     const options = Array.isArray(x.options) ? x.options.map(o => str(o)) : [];
     if (options.length >= 2 && options.length <= 4 && !options.includes(null) && Number.isInteger(x.answer) && x.answer >= 0 && x.answer < options.length) it = { id, type: 'mc', q, options, answer: x.answer, exp };
-  } else if (x.type === 'id') {
+  } else if (x.type === 'id' || x.type === 'mtf') {
     const answer = str(x.answer);
-    if (answer) it = { id, type: 'id', q, answer, exp };
+    if (answer) it = { id, type: x.type, q, answer, exp };
+  } else if (x.type === 'match') {
+    // 2–8 description/term pairs, and a term list that is exactly the pairs' terms (in shown order).
+    const pairs = Array.isArray(x.pairs) ? x.pairs.map(p => p && { term: str(p.term), desc: str(p.desc) }) : [];
+    const terms = Array.isArray(x.terms) ? x.terms.map(t => str(t)) : [];
+    const ok = pairs.length >= 2 && pairs.length <= 8 && pairs.every(p => p && p.term && p.desc)
+      && terms.length === pairs.length && [...terms].sort().join('\n') === pairs.map(p => p.term).sort().join('\n');
+    if (ok) it = { id, type: 'match', q, pairs, terms, exp };
   } else {
     const items = Array.isArray(x.items) ? x.items.map(o => str(o)) : [];
     if (items.length && !items.includes(null)) it = { id, type: 'enum', q, items, exp };
@@ -1218,7 +1225,7 @@ function home() {
       h('input', { type: 'text', id: 'title', 'aria-label': 'Reviewer title (optional)', placeholder: 'Reviewer title (optional)', value: tv }),
       h('textarea', { rows: 5, 'aria-label': 'Paste notes', placeholder: '…or paste your notes here (at least 200 characters)', oninput: e => { pasteText = e.target.value; } }, pasteText),
       h('div', { class: 'row' },
-        h('label', null, 'Questions: ', h('select', { onchange: e => { optMax = Number(e.target.value); } }, [[0, 'All (max ' + (ITEM_CAP.mc + ITEM_CAP.id + ITEM_CAP.tf + ITEM_CAP.enum) + ')'], [10, '10'], [20, '20']].map(([v, t]) => h('option', { value: v, selected: v === optMax ? '' : null }, t)))),
+        h('label', null, 'Questions: ', h('select', { onchange: e => { optMax = Number(e.target.value); } }, [[0, 'All (max ' + Object.values(ITEM_CAP).reduce((n, c) => n + c, 0) + ')'], [10, '10'], [20, '20']].map(([v, t]) => h('option', { value: v, selected: v === optMax ? '' : null }, t)))),
         h('label', null, h('input', { type: 'checkbox', checked: optMc ? '' : null, onchange: e => { optMc = e.target.checked; } }), 'Multiple choice only')),
       h('div', { class: 'row' },
         h('label', null, h('input', { type: 'checkbox', checked: optNoTF ? null : '', onchange: e => { optNoTF = !e.target.checked; } }), 'True / false'),
@@ -1251,7 +1258,7 @@ function home() {
   const nt = document.getElementById('title'); if (nt) nt.value = tv;
 }
 
-const TABS = { mc: 'Multiple choice', id: 'Identification', enum: 'Enumeration', img: 'Diagram' };
+const TABS = { mc: 'Multiple choice', mtf: 'Modified true or false', match: 'Matching type', id: 'Identification', enum: 'Enumeration', img: 'Diagram' };
 // A partial enumeration answer earns its fraction; every other type is all or nothing.
 const credit = a => (a && typeof a.part === 'number' ? a.part : a && a.ok ? 1 : 0);
 const scoreText = n => String(Math.round(n * 10) / 10);
@@ -1385,7 +1392,8 @@ function startFlash(mode = 'all', cap = 0) {
 }
 function flashAnswer(it) {
   if (it.type === 'mc') return it.options[it.answer] || '';
-  if (it.type === 'id' || it.type === 'img') return it.answer || '';
+  if (it.type === 'id' || it.type === 'img' || it.type === 'mtf') return it.answer || '';
+  if (it.type === 'match') return (it.pairs || []).map(p => p.desc + ' → ' + p.term).join('; ');
   return (it.items || []).join(', ');
 }
 function flipcards() {
@@ -1440,12 +1448,14 @@ function ttsReady() { return 'speechSynthesis' in window && typeof SpeechSynthes
 function reciteQuestion(it) {
   if (it.type === 'img') return 'Look at the diagram. Identify the part marked.';
   const q = it.q.replace(/_{3,}/g, 'blank');
+  if (it.type === 'match') return q + ' ' + it.pairs.map((p, i) => (i + 1) + '. ' + p.desc).join('. ') + '. The terms are: ' + it.terms.join(', ') + '.';
   if (it.type !== 'mc') return q;
   return q + ' Options: ' + it.options.map((o, i) => 'ABCD'[i] + '. ' + o).join('. ') + '.';
 }
 function reciteAnswer(it) {
   if (it.type === 'mc') return 'The answer is ' + 'ABCD'[it.answer] + ': ' + it.options[it.answer] + '.';
-  if (it.type === 'id' || it.type === 'img') return 'The answer is ' + it.answer + '.';
+  if (it.type === 'id' || it.type === 'img' || it.type === 'mtf') return 'The answer is ' + it.answer + '.';
+  if (it.type === 'match') return it.pairs.map((p, i) => (i + 1) + ' is ' + p.term).join('. ') + '.';
   return 'The answers are: ' + (it.items || []).join(', ') + '.';
 }
 function voice() {
@@ -1592,7 +1602,14 @@ function markCorrect(r, it) {
 function answer(it, val) {
   let ok, exp, part;
   if (it.type === 'mc') { ok = val === it.answer; exp = it.options[it.answer]; }
-  else if (it.type === 'id' || it.type === 'img') {
+  else if (it.type === 'match') {
+    // One term per description; each right pair earns its share, like an enumeration.
+    const picks = (Array.isArray(val) ? val : String(val).split('\n')).map(v => String(v || ''));
+    const right = it.pairs.filter((p, i) => picks[i] === p.term).length;
+    ok = right === it.pairs.length; part = right / it.pairs.length; val = picks.join('\n');
+    exp = it.pairs.map(p => p.desc + ' → ' + p.term).join('; ');
+  }
+  else if (it.type === 'id' || it.type === 'img' || it.type === 'mtf') {
     // A slip is forgiven only when no other answer in this reviewer fits what was typed as well; the feedback says so.
     const g = gradeId(it.answer, val, cur.items.map(answerText));
     ok = g.ok; exp = it.answer + (g.typo ? ' (accepted, but check the spelling: you typed "' + String(val).trim() + '")' : '');
@@ -1638,7 +1655,7 @@ function quizItem(r, it, idx, one) {
   return h('div', { class: 'item' + (one ? ' one' : '') },
     h('div', { class: 'k' }, 'Q' + (idx + 1) + (a ? ' · ' : ''), a && h('span', { class: a.ok ? 'good' : 'miss' }, a.ok ? 'correct' : 'missed'),
       h('button', { class: 'btn alt flag-btn', 'aria-pressed': flagged ? 'true' : 'false', onclick: () => toggleFlag(r, it) }, flagged ? '⚑ Flagged' : '⚑ Flag'),
-      h('button', { class: 'btn alt', onclick: () => openItemEditor({ items: r.items, hidden: r.hidden || (r.hidden = []), reviewer: r, index: r.items.indexOf(it), back: quiz }) }, 'Edit')),
+      !['match', 'mtf'].includes(it.type) && h('button', { class: 'btn alt', onclick: () => openItemEditor({ items: r.items, hidden: r.hidden || (r.hidden = []), reviewer: r, index: r.items.indexOf(it), back: quiz }) }, 'Edit')),
     h('div', { class: 'q', id: 'q-' + it.id }, it.q),
     it.type === 'mc'
       ? h('div', { role: 'group', 'aria-labelledby': 'q-' + it.id }, it.options.map((o, oi) => h('button', { class: 'opt' + (a ? (oi === it.answer ? ' ok' : oi === a.val ? ' bad' : '') : ''), disabled: a || over ? '' : null, onclick: () => answer(it, oi) }, h('b', null, 'ABCD'[oi]), capFirst(o), a && oi === it.answer && h('span', { class: 'mark' }, '✓ Correct answer'), a && oi === a.val && oi !== it.answer && h('span', { class: 'mark' }, '✗ Your answer'))))
@@ -1648,13 +1665,20 @@ function quizItem(r, it, idx, one) {
         // too, not only in a menu above the first question.
         it.type === 'img' && !(r.masks && r.masks.length) && h('p', { class: 'k' }, 'The printed labels give the answer away. ',
           h('button', { class: 'btn alt', onclick: () => openCovers(r) }, 'Hide printed labels')),
-        it.type === 'enum'
+        it.type === 'match'
+          ? h('ol', { class: 'match' }, it.pairs.map((p, i) => {
+              const picked = a ? String(a.val).split('\n')[i] : (draft[it.id] || [])[i];
+              return h('li', { class: a ? (picked === p.term ? 'ok' : 'bad') : null }, h('span', null, p.desc),
+                h('select', { 'aria-label': 'Term for: ' + p.desc, disabled: a || over ? '' : null, onchange: e => { (draft[it.id] = draft[it.id] || [])[i] = e.target.value; } },
+                  h('option', { value: '' }, 'Choose…'), it.terms.map(t => h('option', { value: t, selected: picked === t ? '' : null }, t))));
+            }))
+          : it.type === 'enum'
           ? h('textarea', { rows: 4, 'aria-labelledby': 'q-' + it.id, placeholder: 'One per line or separated by commas', disabled: a || over ? '' : null, oninput: e => { draft[it.id] = e.target.value; }, onkeydown: e => { if (e.key === 'Enter' && e.ctrlKey) answer(it, draft[it.id] || ''); } }, a ? a.val : draft[it.id] || '')
           : h('input', { type: 'text', 'aria-labelledby': 'q-' + it.id, placeholder: 'Your answer', value: a ? a.val : draft[it.id] || '', disabled: a || over ? '' : null, oninput: e => { draft[it.id] = e.target.value; }, onkeydown: e => { if (e.key === 'Enter') answer(it, draft[it.id] || ''); } }),
         !a && !over && h('p', null, h('button', { class: 'btn', onclick: () => answer(it, draft[it.id] || '') }, 'Check'))),
     a && h('div', { class: 'fb' + (a.ok ? '' : ' bad'), id: 'fb-' + it.id, tabindex: '-1' }, h('b', null, a.ok ? 'Correct.' : 'Not quite.'),
       h('div', null, 'Answer: ' + a.exp + '.'),
-      a.part != null && a.part < 1 && h('div', null, Math.round(a.part * it.items.length) + ' of ' + it.items.length + ' required answers were right.'),
+      a.part != null && a.part < 1 && h('div', null, Math.round(a.part * (it.items || it.pairs).length) + ' of ' + (it.items || it.pairs).length + (it.type === 'match' ? ' pairs were right.' : ' required answers were right.')),
       !a.ok && it.type !== 'mc' && h('button', { class: 'btn alt', onclick: () => markCorrect(r, it) }, 'Count it correct'),
       lastUndo && lastUndo.r === r && lastUndo.id === it.id && h('button', { class: 'btn alt', onclick: undoAnswer }, 'Undo')),
     a && it.type !== 'img' && sourcePanel(r, it),

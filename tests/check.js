@@ -363,7 +363,7 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
     vm.createContext(box); vm.runInContext(src, box);
     const plainDefs = box.module.exports.generate(['Mitosis is the division of a nucleus into two identical nuclei.',
       'Meiosis is a cell division that produces four haploid gametes.', 'Interphase is the stage where the cell grows and copies its DNA.']);
-    assert.strictEqual(plainDefs.length, 3, 'an empty word list matches nothing; got skips: ' + JSON.stringify(plainDefs.skipped));
+    assert(plainDefs.length >= 3 && !plainDefs.skipped.some(s => s.reason === 'instruction'), 'an empty word list matches nothing; got skips: ' + JSON.stringify(plainDefs.skipped));
   }
   // A numbering prefix ("II.", "B.") is not a sentence of its own: "II. Write TRUE if…" stays one instruction.
   const numbered = generate(['II. Write TRUE if the statement is correct and FALSE if not.', 'B. Choose the best answer from the choices below.',
@@ -410,6 +410,38 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
     assert(!/^True or false: (?:Register|Cache|Router)\b/.test(q.q), 'a countable noun keeps its article: ' + q.q);
   });
   assert(falseTF > 0, 'false true/false items were made, so the article rule was exercised');
+  // Filipino exam formats. Matching type: sets of 4–5 definitions, each description paired with its own term, the
+  // terms listed shuffled. Modified true or false: the note's sentence with a [bracketed] term; TRUE when it is the
+  // note's own term, otherwise the answer is the term that belongs there (a swap that is certainly false).
+  const examNotes = ['Mitosis is the division of a nucleus into two identical nuclei.', 'Meiosis is a cell division that produces four haploid gametes.',
+    'Interphase is the stage where the cell grows and copies its DNA.', 'Cytokinesis is the division of the cytoplasm after mitosis.',
+    'Osmosis is the diffusion of water across a selectively permeable membrane.', 'Diffusion is the movement of particles from high to low concentration.',
+    'Photosynthesis is the process plants use to make food from light.', 'Respiration is the process cells use to release energy from food.'];
+  const byTerm = new Map(examNotes.map(s => [s.split(' is ')[0], s.split(' is ')[1].replace(/\.$/, '')]));
+  let sawMatch = 0, sawMtfTrue = 0, sawMtfFalse = 0;
+  for (let i = 0; i < 30; i++) generate(examNotes).forEach(q => {
+    if (q.type === 'match') {
+      sawMatch++;
+      assert(q.pairs.length >= 4 && q.pairs.length <= 5, 'a matching set has 4–5 pairs');
+      q.pairs.forEach(p => assert.strictEqual(p.desc.toLowerCase(), byTerm.get(p.term).toLowerCase(), 'each description is paired with its own term'));
+      assert.deepStrictEqual([...q.terms].sort(), q.pairs.map(p => p.term).sort(), 'the term list holds exactly the set\'s terms');
+    }
+    if (q.type === 'mtf') {
+      const m = q.q.match(/^Modified true or false: (.*)\[(.+?)\](.*?)\. Write TRUE/);
+      assert(m, 'the statement marks one term in brackets: ' + q.q);
+      const own = (m[1] + m[2] + m[3]).replace(/^An? /, '');
+      if (q.answer === 'TRUE') { sawMtfTrue++; assert(examNotes.some(s => s.startsWith(own)), 'a TRUE statement is the note\'s own sentence: ' + q.q); }
+      else { sawMtfFalse++; assert(byTerm.has(q.answer) && m[2] !== q.answer, 'a false one asks for the term that belongs there: ' + q.q + ' => ' + q.answer);
+        assert(examNotes.some(s => s.startsWith(q.answer + ' is ' + m[3].trim().replace(/^is /, ''))), 'the answer\'s own note says that: ' + q.q); }
+    }
+  });
+  assert(sawMatch && sawMtfTrue && sawMtfFalse, 'matching and both kinds of modified true or false are made: ' + [sawMatch, sawMtfTrue, sawMtfFalse]);
+  assert(generate(examNotes, [], { mcOnly: true }).every(q => q.type === 'mc'), 'multiple choice only still means only multiple choice');
+  // Progress follows a question by what it asks and answers, so the new types need real keys.
+  const mtfA = { type: 'mtf', q: 'Modified true or false: [Osmosis] is …', answer: 'Mitosis' }, mtfB = { ...mtfA, answer: 'TRUE' };
+  assert.notStrictEqual(itemKey(mtfA), itemKey(mtfB), 'a modified true or false item is keyed by its answer');
+  const setA = { type: 'match', q: 'Matching type (set 1)', pairs: [{ term: 'Mitosis', desc: 'a' }] }, setB = { ...setA, pairs: [{ term: 'Meiosis', desc: 'b' }] };
+  assert.notStrictEqual(itemKey(setA), itemKey(setB), 'a matching set is keyed by its pairs');
   // The objectives still rank: with room for one question, it is the one tied to them.
   for (let i = 0; i < 10; i++) {
     const top = generate(cellNotes, [], { max: 1, noTF: true })[0];
@@ -499,7 +531,9 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
     paperItems++;
     // "True or false: " and "Fill in the blank: … _____" are the app's own wording, not note text; the source sentence
     // (exp) is still checked, so a pre-blanked exam line ("1. ________ DB defines…") is still caught.
-    each(x, s => assert(!RUBRIC_TEXT.test(String(s).replace(/^True or false: /, '').replace(/^Fill in the blank: (.*)_____/, '$1')), 'no question is built from a rubric, an instruction or a blank line: ' + s));
+    each(x, s => assert(!RUBRIC_TEXT.test(String(s).replace(/^True or false: /, '').replace(/^Fill in the blank: (.*)_____/, '$1')
+      .replace(/^Modified true or false: (.*) Write TRUE if it is correct; if not, write the word that should replace the one in brackets\.$/, '$1')),
+    'no question is built from a rubric, an instruction or a blank line: ' + s));
     assert(!RUBRIC_TEXT.test(String(x.exp).replace(/^\([^)]*\)\s*/, '')), 'no question cites a rubric or a pre-blanked line: ' + x.exp);
     if (!/^True or false: /.test(x.q)) return;
     paperTF++;

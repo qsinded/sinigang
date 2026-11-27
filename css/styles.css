@@ -258,3 +258,9 @@ p.k,.card>.k:not(h2),.err+.k{font:inherit;text-transform:none;letter-spacing:0}
 .veil{position:fixed;inset:0;z-index:100;display:grid;place-items:center;padding:16px;background:color-mix(in srgb,var(--ink) 55%,transparent)}
 .modal{width:100%;max-width:26rem;display:grid;gap:12px;padding:20px;border:1px solid var(--line);border-radius:14px;background:var(--card);color:var(--ink);box-shadow:0 12px 40px var(--shadow)}
 .modal p{margin:0}
+/* Matching type: each description with its term picker under it; after checking, the row says right or wrong. */
+.match{padding-left:22px;margin:8px 0}
+.match li{margin:12px 0}
+.match select{display:block;margin-top:6px;max-width:100%;min-height:44px}
+.match li.ok select{border:2px solid var(--ok)}
+.match li.bad select{border:2px solid var(--bad)}

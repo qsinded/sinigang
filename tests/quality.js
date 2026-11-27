@@ -25,7 +25,10 @@ const OUTLINE_OPT = /^(module|unit|chapter|lesson|week|topic)\s*\d/i;
 const RUBRIC_TEXT = /\bif the statement is\b|\bwrite (?:true|false)\b|\bchoose the (?:best|correct)\b|\bfill in the blanks?\b|_{3,}|\bisulat ang (?:tama|mali)\b|\btama o mali\b/i;
 // "Instructions:" heads an exam section; "instruction pointer" is a term (same rule as the generator).
 const IMPERATIVE = /^(?:(?:instructions?|directions?|(?:mga )?panuto)\s*(?::|$)|(?:write|answer|choose|select|fill|complete|identify|enumerate|match|true or false|multiple choice|matching|essay|isulat|basahin|piliin|sagutin)\b)/i;
-const answerText = q => q.type === 'mc' ? q.options[q.answer] : q.type === 'id' ? q.answer : (q.items || []).join(' ');
+const answerText = q => q.type === 'mc' ? q.options[q.answer] : q.type === 'id' || q.type === 'mtf' ? q.answer
+  : q.type === 'match' ? (q.pairs || []).map(p => p.term).join(' ') : (q.items || []).join(' ');
+// A modified true or false item's statement, without the app's instruction around it.
+const MTF = /^Modified true or false: (.*) Write TRUE if it is correct; if not, write the word that should replace the one in brackets\.$/;
 // Share of the text's words that appear in the source sentence. Cleaning removes filler words, so exact matching would flag good questions.
 const covered = (text, src) => { const w = String(text).toLowerCase().match(/[a-z0-9]{3,}/g) || [], s = new Set(String(src).toLowerCase().match(/[a-z0-9]{3,}/g) || []); return w.length ? w.filter(x => s.has(x)).length / w.length : 1; };
 const rawSrc = q => String(q.exp).replace(/^\([^)]*\)\s*/, '');
@@ -35,7 +38,8 @@ const usedLine = (line, cited) => { const l = norm(line); return [...cited].some
 
 function check(q, bad) {
   const ans = answerText(q), qn = norm(q.q);
-  if (q.type !== 'enum' && !/^True or false/.test(q.q) && norm(ans).length >= 4 && qn.includes(norm(ans))) bad.leak++;
+  // A TRUE modified true or false names its own term in brackets on purpose; a matching set lists its terms.
+  if (!['enum', 'match'].includes(q.type) && !(q.type === 'mtf' && ans === 'TRUE') && !/^True or false/.test(q.q) && norm(ans).length >= 4 && qn.includes(norm(ans))) bad.leak++;
   // Classroom talk is not an answer: "Today we" (from "Today we will discuss…"), "Later they".
   if (q.type !== 'enum' && !/^True or false/.test(q.q) && (/\b(?:we|you|they|he|she|i)\b/.test(ans) || /^(?:today|tomorrow|yesterday|tonight|later|now)\b/i.test(ans))) bad.talk++;
   if (/\b(basically|essentially|simply|actually|really|very|quite)\b|\((see|fig)/i.test(q.q + ' ' + (q.options || []).join(' '))) bad.filler++;
@@ -76,7 +80,23 @@ function check(q, bad) {
     if (/matches this description|is described by/.test(q.q)) bad.tfMeta++;
   }
   // the answer must come from the source sentence it cites
-  if (q.type === 'enum' ? !q.items.every(i => covered(i, rawSrc(q)) >= 0.8) : !/^True$|^False$/.test(ans) && covered(ans, rawSrc(q)) < 0.8) bad.ungrounded++;
+  if (q.type === 'enum' ? !q.items.every(i => covered(i, rawSrc(q)) >= 0.8)
+    : q.type === 'match' ? !q.pairs.every(p => covered(p.term, rawSrc(q)) >= 0.8 && covered(p.desc, rawSrc(q)) >= 0.8)
+    : !/^True$|^False$|^TRUE$/.test(ans) && covered(ans, rawSrc(q)) < 0.8) bad.ungrounded++;
+  // A matching set lists exactly its own terms, each once.
+  if (q.type === 'match') {
+    if (new Set(q.terms.map(norm)).size !== q.terms.length) bad.dupOptions++;
+    if ([...q.terms].sort().join('|') !== q.pairs.map(p => p.term).sort().join('|')) bad.badKey++;
+  }
+  // Modified true or false: TRUE means the bracketed word is the note's own and the statement is the note's sentence;
+  // otherwise the bracketed word must not be the answer, and the answer must be the note's own term.
+  const mtf = q.type === 'mtf' && q.q.match(MTF);
+  if (mtf) {
+    const shown = (mtf[1].match(/\[(.+?)\]/) || [])[1] || '', statement = mtf[1].replace(/[[\]]/g, '');
+    const ok = q.answer === 'TRUE' ? covered(statement, rawSrc(q)) >= 0.95 && covered(shown, rawSrc(q)) >= 1
+      : norm(shown) !== norm(q.answer) && covered(q.answer, rawSrc(q)) >= 0.8;
+    if (!ok) bad.falseTrueMismatch++;
+  }
   // a "true" statement must come from the source; a "false" one must not be a statement the source makes
   const tf = q.q.match(/^True or false: "(.+)" matches this description: (.+)$/) || q.q.match(/^True or false: (.+)$/);
   if (tf) {
@@ -112,6 +132,16 @@ function check(q, bad) {
     check({ type: 'mc', q: 'Which term is described? A secret society', options: ['Katipunan', opt], answer: 0, exp: '(page 1) Ang Katipunan ay isang lihim na samahan.' }, b);
     if (b.instruction === instrBefore) throw new Error('the instruction check misses Filipino furniture: ' + opt);
   }
+  // The new exam formats are checked too: a modified true or false whose bracketed word is its own answer is a
+  // mismatch, a TRUE one must be the note's sentence, and a matching pair must come from the notes it cites.
+  const seesNew = (fixture, key) => { const before = b[key]; check(fixture, b); if (b[key] === before) throw new Error('quality check "' + key + '" misses a bad ' + fixture.type + ' item'); };
+  const mtfQ = st => 'Modified true or false: ' + st + ' Write TRUE if it is correct; if not, write the word that should replace the one in brackets.';
+  seesNew({ type: 'mtf', q: mtfQ('[Osmosis] is the diffusion of water across a membrane.'), answer: 'Osmosis', exp: '(page 1) Osmosis is the diffusion of water across a membrane.' }, 'falseTrueMismatch');
+  seesNew({ type: 'mtf', q: mtfQ('[Mitosis] is the diffusion of water across a membrane.'), answer: 'TRUE', exp: '(page 1) Osmosis is the diffusion of water across a membrane.' }, 'falseTrueMismatch');
+  seesNew({ type: 'match', q: 'Matching type (set 1): match each description with the term it describes.', pairs: [{ term: 'Osmosis', desc: 'The release of hormones into blood' }],
+    terms: ['Osmosis'], exp: '(page 1) Osmosis is the diffusion of water across a membrane.' }, 'ungrounded');
+  seesNew({ type: 'match', q: 'Matching type (set 1): match each description with the term it describes.', pairs: [{ term: 'Osmosis', desc: 'The diffusion of water' }],
+    terms: ['Mitosis'], exp: '(page 1) Osmosis is the diffusion of water.' }, 'badKey');
   // "Who is described?" questions get the same empty-blank check as "Which term is described?".
   const emptyBefore = b.emptyBlank;
   check({ type: 'id', q: 'Who is described? The _____ of it', answer: 'Jose Rizal', exp: '(page 1) Jose Rizal is the Jose Rizal of it.' }, b);
