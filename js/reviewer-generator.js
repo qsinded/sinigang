@@ -534,6 +534,12 @@ function generate(rawLines, tags = [], o = {}) {
   // acronym becomes "RAM is…", while "ROM is…" with a common noun becomes "A register is…" (never
   // "A RAM is…", "A operating system is…" or "Register is…").
   const isAcrWord = x => /^[A-Z0-9][A-Z0-9.\-]{1,}$/.test(String(x).trim());
+  // A swapped-in term takes the article its own note gives it: "A register is…" keeps "A", but "Exocytosis is…" has
+  // none, so it never becomes "An Exocytosis". A term without a note of its own keeps the old rule.
+  const ownArticle = t => {
+    const own = [...defs, ...clozes, ...facts].find(x => x.term.toLowerCase() === String(t).toLowerCase());
+    return own ? new RegExp('^(?:a|an|the)\\s+' + esc(own.term), 'i').test(own.src) : true;
+  };
   const replaceTerm = (src, oldT, newT) => {
     const at = src.toLowerCase().indexOf(oldT.toLowerCase());
     if (at < 0) return src;
@@ -545,8 +551,8 @@ function generate(rawLines, tags = [], o = {}) {
     if (art && !atStart) return src; // the term is part of a longer phrase ("the cache memory"); leave it alone
     if (art) {
       // An article already sits before the term: keep the head, then give the new term the right one.
-      before = initial + (isAcrWord(newT) || plural(newT) ? '' : artFor(newT));
-    } else if (atStart && !isAcrWord(newT) && !plural(newT)) {
+      before = initial + (isAcrWord(newT) || plural(newT) || !ownArticle(newT) ? '' : artFor(newT));
+    } else if (atStart && !isAcrWord(newT) && !plural(newT) && ownArticle(newT)) {
       before = initial + artFor(newT); // "ROM is…" -> "A register is…"
     }
     return before + newT + after;

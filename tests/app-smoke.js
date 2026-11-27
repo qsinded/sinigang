@@ -762,5 +762,56 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   assert.strictEqual(find(appEl, e => e.tagName === 'DETAILS' && String(e.className).split(' ').includes('skips')).length, 0, 'no empty report');
   vm.runInContext("pasteText = ''", ctx);
 
+  // From a student test on a phone.
+  // A "Note:" line is skipped on purpose: counted, never listed as a line that could become a question.
+  vm.runInContext('pending = { title: "Notes", items: generate(' + JSON.stringify([...okNotes, 'Note: Quiz on Friday!']) + '), src: [], tags: [], opts: {}, hidden: [], removed: [] }', ctx);
+  ctx.preview();
+  assert.ok(!screenText(appEl).includes('Quiz on Friday'), 'a note to the reader is not listed as fixable');
+  assert.match(screenText(appEl), /3 headings, objectives or instructions were skipped on purpose/, 'the note is counted as skipped on purpose');
+  // Saving clears the pasted notes, so pressing Generate again does not make a duplicate reviewer.
+  vm.runInContext('pasteText = "some pasted notes"', ctx);
+  ctx.savePending();
+  assert.strictEqual(vm.runInContext('pasteText', ctx), '', 'the notes box is cleared after saving');
+  // Home: saved reviewers come before the new-reviewer form; the app does not repeat the browser's "No file chosen".
+  ctx.home();
+  const homeText = screenText(appEl);
+  assert.ok(homeText.indexOf('Saved reviewers') >= 0 && homeText.indexOf('Saved reviewers') < homeText.indexOf('Generate reviewer'), 'saved reviewers are above the form');
+  assert.ok(!homeText.includes('No file chosen'), 'no second "No file chosen" line');
+  // The backup reminder waits until the oldest reviewer is 14 days old when nothing was ever backed up.
+  vm.runInContext('localStorage.removeItem(BACKUP_KEY)', ctx);
+  ctx.home();
+  assert.ok(!screenText(appEl).includes('No backup in the last 14 days'), 'no backup warning on the first day');
+  vm.runInContext('R.push({ ...R[0], id: (Date.now() - 20 * 864e5) * 1000, title: "Old one" })', ctx);
+  ctx.home();
+  assert.match(screenText(appEl), /No backup in the last 14 days/, 'the warning shows once a reviewer is old enough');
+  vm.runInContext('R.pop()', ctx);
+  // Quiz on a phone: the question comes before the extra tools, options start with a capital, and the spelling note
+  // shows what was typed.
+  const phoneR = ctx.cleanReviewer({ ...base, title: 'Phone', items: [
+    { id: 'p0', type: 'mc', q: 'Fill in the blank: The _____ controls what enters and leaves the cell.', options: ['cell membrane', 'nucleus', 'cytoplasm', 'cell wall'], answer: 0, exp: '' },
+    { id: 'p1', type: 'id', q: 'Which term is described? The powerhouse of the cell', answer: 'Mitochondria', exp: 'Mitochondria is the powerhouse of the cell.' },
+    { id: 'p2', type: 'id', q: 'Which term is described? The control center of the cell', answer: 'Nucleus', exp: 'The nucleus is the control center of the cell.' }] });
+  vm.runInContext("quizView = null; localStorage.removeItem('reviewer_quiz_view');", ctx);
+  const wideMedia = sandbox.matchMedia;
+  sandbox.matchMedia = () => ({ matches: true }); // a phone-width screen
+  ctx.open(phoneR);
+  assert.strictEqual(vm.runInContext('viewMode()', ctx), 'one', 'the phone test runs in the one-question view');
+  const qText = screenText(appEl);
+  assert.ok(qText.indexOf('controls what enters') < qText.indexOf('Review due'), 'the question comes before "Review due" on a phone');
+  assert.ok(qText.indexOf('controls what enters') < qText.indexOf('More options'), 'the question comes before "More options" on a phone');
+  const optTexts = find(appEl, e => e.tagName === 'BUTTON' && String(e.className).split(' ').includes('opt')).map(screenText);
+  assert.ok(optTexts.length === 4 && optTexts.every(t => /^[A-D]\s*[A-Z]/.test(t.trim())), 'options start with a capital: ' + optTexts.join(' | '));
+  vm.runInContext("tab = 'id'; quizIndex = 0;", ctx);
+  ctx.quiz();
+  ctx.answer(phoneR.items[1], 'mitocondria');
+  assert.match(phoneR.ans.p1.exp, /you typed "mitocondria"/, 'the spelling note shows what was typed');
+  // "Show in my notes" stays open when the quiz redraws (a phone turning sideways redraws it).
+  const srcBtn = find(appEl, e => e.tagName === 'BUTTON' && /Show in my notes/.test(screenText(e)))[0];
+  srcBtn.onclick({ currentTarget: srcBtn });
+  ctx.quiz();
+  const srcWrap = find(appEl, e => e.attrs && e.attrs.id === 'src-p1')[0];
+  assert.ok(srcWrap && srcWrap.attrs.hidden === undefined, 'the notes panel is still open after a redraw');
+  sandbox.matchMedia = wideMedia;
+
   console.log('app smoke checks passed');
 })().catch(e => { console.error(e); process.exit(1); });

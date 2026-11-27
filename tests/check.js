@@ -397,6 +397,19 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
   for (let i = 0; i < 20; i++) generate(talk, [], { noTF: true }).forEach(q => talkAns.add(q.type === 'mc' ? q.options[q.answer] : q.answer));
   assert(![...talkAns].some(a => /\b(?:we|you|they)\b|^(?:Today|Tomorrow|Later)\b/.test(a)), 'classroom talk is not a term: ' + [...talkAns].join(' / '));
   assert(talkAns.has('US') || talkAns.has('US Constitution'), '"US" in a name is not the pronoun "us": ' + [...talkAns].join(' / '));
+  // A swapped-in term keeps the article its own note gives it: process names never get one ("An Exocytosis is…"),
+  // a countable noun still does ("A register is…").
+  const arts = ['Osmosis is the diffusion of water across a selectively permeable membrane.', 'Exocytosis is the release of materials from the cell in vesicles.',
+    'Endocytosis is the process by which the cell takes in large particles.', 'Photosynthesis is the process plants use to make food from light.',
+    'A register is a small storage location inside the processor.', 'A cache is a small fast memory placed close to the processor.',
+    'A router is a device that forwards packets between networks.'];
+  let falseTF = 0;
+  for (let i = 0; i < 150; i++) generate(arts).filter(q => /^True or false/.test(q.q) && q.answer === 1).forEach(q => {
+    falseTF++;
+    assert(!/^True or false: An? (?:Osmosis|Exocytosis|Endocytosis|Photosynthesis)\b/.test(q.q), 'no article before a process name: ' + q.q);
+    assert(!/^True or false: (?:Register|Cache|Router)\b/.test(q.q), 'a countable noun keeps its article: ' + q.q);
+  });
+  assert(falseTF > 0, 'false true/false items were made, so the article rule was exercised');
   // The objectives still rank: with room for one question, it is the one tied to them.
   for (let i = 0; i < 10; i++) {
     const top = generate(cellNotes, [], { max: 1, noTF: true })[0];

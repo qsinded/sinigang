@@ -10,7 +10,13 @@ const save = () => {
 };
 const STORAGE_NEAR = 'Storage is almost full. Use "Export all" to save a backup, then delete reviewers you no longer need.';
 const BACKUP_KEY = 'reviewer_gen_backup';
-const backupOld = () => { try { const t = Number(localStorage.getItem(BACKUP_KEY)); return !t || Date.now() - t > 14 * 864e5; } catch (e) { return false; } };
+// Never backed up: the clock starts at the oldest reviewer (its id is its creation time), not on the first day.
+const backupOld = () => {
+  try {
+    const since = Number(localStorage.getItem(BACKUP_KEY)) || Math.min(...R.map(r => Math.floor(Number(r.id) / 1000)).filter(Number.isFinite));
+    return Number.isFinite(since) && Date.now() - since > 14 * 864e5;
+  } catch (e) { return false; }
+};
 const warn = () => saveWarn && h('p', { class: 'err', role: 'alert' }, saveWarn);
 let R = load();
 let q = '', qSort = 'recent', qDue = false, optMax = 0, optMc = false, optNoTF = false, optNoEnum = false, pasteText = '', pending = null, cur = null, tab = null, quizIndex = 0, files = [], status = '', err = '', busy = false;
@@ -20,6 +26,8 @@ let optCap = 20;
 try { const c = Number(localStorage.getItem('reviewer_cap_v1')); if ([10, 20, 40, 0].includes(c)) optCap = c; } catch (e) { /* session default */ }
 const draft = {};
 let lastSkips = null; // why the last build made too few questions; shown under its error
+let moreOpen = false; // the quiz's More options panel stays open across redraws
+const srcOpen = new Set(); // items whose "Show in my notes" panel is open
 
 function h(tag, p, ...kids) {
   const e = document.createElement(tag);
@@ -341,10 +349,11 @@ function sourcePanel(r, it) {
     if (opening) wrap.removeAttribute('hidden'); else wrap.setAttribute('hidden', '');
     btn.setAttribute('aria-expanded', opening ? 'true' : 'false');
     btn.textContent = opening ? 'Hide my notes' : 'Show in my notes';
+    if (opening) srcOpen.add(it.id); else srcOpen.delete(it.id); // kept open when the quiz redraws
   };
-  return h('div', { class: 'src-wrap' },
-    h('button', { class: 'btn alt', 'aria-expanded': 'false', 'aria-controls': 'src-' + it.id, onclick: e => toggle(e.currentTarget) }, 'Show in my notes'),
-    wrap);
+  const btn = h('button', { class: 'btn alt', 'aria-expanded': 'false', 'aria-controls': 'src-' + it.id, onclick: e => toggle(e.currentTarget) }, 'Show in my notes');
+  if (srcOpen.has(it.id)) toggle(btn);
+  return h('div', { class: 'src-wrap' }, btn, wrap);
 }
 // Labels printed on a diagram image cannot be erased, so the author boxes them out instead. A cover
 // is a normalized rectangle on the reviewer, drawn over the image in practice, flashcards,
@@ -581,13 +590,15 @@ function savePending() {
   const tags = Array.isArray(p.tags) ? p.tags.slice(0, src.length) : [];
   const removed = (p.removed || []).slice(0, 200).map(cleanItem).filter(Boolean);
   const r = { id: newRid(), title: p.title, items: p.items, ans: {}, src, tags, opts: p.opts, plan: { exam: '', srs: {} }, flags: [], hidden: cleanHidden(p.hidden), removed };
-  pending = null; R.unshift(r); save(); open(r);
+  pending = null; pasteText = ''; R.unshift(r); save(); open(r); // a second Generate must not make a duplicate
 }
 // The skip report: which note lines made no question and why, so a student can reword them instead of hitting a
 // dead end. Lines that could become questions are listed by reason (worded in SKIP_REASONS); facts cut by the
 // question limit are counted; headings, objectives and instructions are skipped on purpose and only counted.
-const SKIP_ON_PURPOSE = new Set(['furniture', 'heading', 'objective', 'outline', 'instruction', 'question', 'short-list']);
+const SKIP_ON_PURPOSE = new Set(['furniture', 'heading', 'objective', 'outline', 'note', 'instruction', 'question', 'short-list']);
 const SKIP_CUT = new Set(['limit', 'type-off']);
+// "cell membrane" among "Exocytosis" and "Endocytosis": options are shown with a capital first letter.
+const capFirst = s => String(s).charAt(0).toUpperCase() + String(s).slice(1);
 const SKIP_SHOWN = 20; // lines listed per reason; the rest are counted
 const plural = (n, one, many) => n + ' ' + (n === 1 ? one : many);
 function skipReport(skipped, open) {
@@ -1193,9 +1204,17 @@ function home() {
     warn(),
     R.length > 0 && planCard(),
     R.length > 0 && backupOld() && h('p', { class: 'k', role: 'status' }, 'No backup in the last 14 days. Your reviewers live only in this browser, so use "Export all" below.'),
+    // A returning student comes for a saved reviewer, so the list comes before the form for a new one.
+    R.length > 0 && h('h2', { class: 'k' }, 'Saved reviewers'),
+    R.length > 2 && h('div', { class: 'row' },
+      h('input', { type: 'search', 'aria-label': 'Search saved reviewers', placeholder: 'Search saved reviewers', value: q, oninput: e => { q = e.target.value; fill(); } }),
+      h('label', null, 'Sort ', h('select', { onchange: e => { qSort = e.target.value; home(); } }, [['recent', 'Recently added'], ['due', 'Most due'], ['exam', 'Next exam'], ['title', 'Title']].map(([v, t]) => h('option', { value: v, selected: v === qSort ? '' : null }, t)))),
+      h('label', null, h('input', { type: 'checkbox', checked: qDue ? '' : null, onchange: e => { qDue = e.target.checked; home(); } }), 'Due only')),
+    list,
     h('div', { class: 'card' },
+      R.length > 0 && h('h2', { class: 'k' }, 'New reviewer'),
       h('input', { type: 'file', id: 'file', 'aria-label': 'Choose a PDF, PowerPoint, Word or text file', accept: '.pdf,.pptx,.ppt,.docx,.txt,.md,text/plain,application/pdf', multiple: '', onchange: e => { files = [...e.target.files]; home(); } }),
-      h('p', { class: 'k' }, files.length ? files.length + ' file(s): ' + files.map(f => f.name).join(', ') : 'No file chosen'),
+      files.length > 0 && h('p', { class: 'k' }, files.length + ' file(s): ' + files.map(f => f.name).join(', ')), // the browser already says "No file chosen"
       h('input', { type: 'text', id: 'title', 'aria-label': 'Reviewer title (optional)', placeholder: 'Reviewer title (optional)', value: tv }),
       h('textarea', { rows: 5, 'aria-label': 'Paste notes', placeholder: '…or paste your notes here (at least 200 characters)', oninput: e => { pasteText = e.target.value; } }, pasteText),
       h('div', { class: 'row' },
@@ -1215,13 +1234,7 @@ function home() {
       h('p', { class: 'k' }, 'Save your reviewers to a file to move them to another device or keep a copy.'),
       h('div', { class: 'row' }, h('button', { class: 'btn alt', disabled: R.length ? null : '', onclick: exportAll }, 'Export all'),
         h('label', null, 'Import a backup: ', h('input', { type: 'file', accept: '.json,application/json', onchange: e => { if (e.target.files[0]) importFile(e.target.files[0]); } }))),
-      n && h('p', { role: 'status' }, n)),
-    R.length > 0 && h('h2', { class: 'k' }, 'Saved reviewers'),
-    R.length > 2 && h('div', { class: 'row' },
-      h('input', { type: 'search', 'aria-label': 'Search saved reviewers', placeholder: 'Search saved reviewers', value: q, oninput: e => { q = e.target.value; fill(); } }),
-      h('label', null, 'Sort ', h('select', { onchange: e => { qSort = e.target.value; home(); } }, [['recent', 'Recently added'], ['due', 'Most due'], ['exam', 'Next exam'], ['title', 'Title']].map(([v, t]) => h('option', { value: v, selected: v === qSort ? '' : null }, t)))),
-      h('label', null, h('input', { type: 'checkbox', checked: qDue ? '' : null, onchange: e => { qDue = e.target.checked; home(); } }), 'Due only')),
-    list);
+      n && h('p', { role: 'status' }, n)));
   const match = r => (R.length <= 2 || r.title.toLowerCase().includes(q.trim().toLowerCase())) && (!qDue || dueCount(r) > 0);
   const fill = () => { const m = sortReviewers(R.filter(match)); list.replaceChildren(...(m.length || !R.length ? m.map(card) : [h('p', { class: 'k' }, 'No saved reviewer matches "' + q + '".')])); };
   const card = r => h('div', { class: 'card saved' },
@@ -1352,7 +1365,7 @@ function open(r) {
   // Drafts are keyed by item id, and item ids restart at id0 in every reviewer, so a half-typed answer
   // from another reviewer would appear here if they were kept.
   wipe();
-  cur = r; const ts = Object.keys(TABS).filter(k => r.items.some(i => i.type === k)); tab = ts[0]; quizIndex = 0;
+  cur = r; moreOpen = false; srcOpen.clear(); const ts = Object.keys(TABS).filter(k => r.items.some(i => i.type === k)); tab = ts[0]; quizIndex = 0;
   r.flashKnown ||= []; flashIndex = 0; flashRevealed = false; r.flashLearn ||= []; r.flags ||= [];
   r.plan = planOf(r); r.plan.srs ||= {};
   quiz();
@@ -1582,7 +1595,7 @@ function answer(it, val) {
   else if (it.type === 'id' || it.type === 'img') {
     // A slip is forgiven only when no other answer in this reviewer fits what was typed as well; the feedback says so.
     const g = gradeId(it.answer, val, cur.items.map(answerText));
-    ok = g.ok; exp = it.answer + (g.typo ? ' (accepted, but check the spelling)' : '');
+    ok = g.ok; exp = it.answer + (g.typo ? ' (accepted, but check the spelling: you typed "' + String(val).trim() + '")' : '');
   }
   else { const c = enumCheck(it.items, val); ok = c.ok; exp = it.items.join(', ') + (c.ok ? '' : ' (you missed: ' + c.missing.join(', ') + ')'); part = it.items.length ? c.got.length / it.items.length : 0; }
   lastUndo = snapshotAnswer(cur, it.id);
@@ -1628,7 +1641,7 @@ function quizItem(r, it, idx, one) {
       h('button', { class: 'btn alt', onclick: () => openItemEditor({ items: r.items, hidden: r.hidden || (r.hidden = []), reviewer: r, index: r.items.indexOf(it), back: quiz }) }, 'Edit')),
     h('div', { class: 'q', id: 'q-' + it.id }, it.q),
     it.type === 'mc'
-      ? h('div', { role: 'group', 'aria-labelledby': 'q-' + it.id }, it.options.map((o, oi) => h('button', { class: 'opt' + (a ? (oi === it.answer ? ' ok' : oi === a.val ? ' bad' : '') : ''), disabled: a || over ? '' : null, onclick: () => answer(it, oi) }, h('b', null, 'ABCD'[oi]), o, a && oi === it.answer && h('span', { class: 'mark' }, '✓ Correct answer'), a && oi === a.val && oi !== it.answer && h('span', { class: 'mark' }, '✗ Your answer'))))
+      ? h('div', { role: 'group', 'aria-labelledby': 'q-' + it.id }, it.options.map((o, oi) => h('button', { class: 'opt' + (a ? (oi === it.answer ? ' ok' : oi === a.val ? ' bad' : '') : ''), disabled: a || over ? '' : null, onclick: () => answer(it, oi) }, h('b', null, 'ABCD'[oi]), capFirst(o), a && oi === it.answer && h('span', { class: 'mark' }, '✓ Correct answer'), a && oi === a.val && oi !== it.answer && h('span', { class: 'mark' }, '✗ Your answer'))))
       : h('div', null,
         it.type === 'img' && imageBlock(it),
         // The labels are right there in front of the reader, so the way to hide them belongs here
@@ -1661,6 +1674,37 @@ function quiz() {
   const view = viewMode();
   quizIndex = Math.max(0, Math.min(quizIndex, Math.max(0, mine.length - 1)));
   const current = mine[quizIndex];
+  const tabs = h('div', { class: 'tabs' }, ts.map(k => h('button', { class: 'tab' + (k === tab ? ' on' : ''), 'aria-current': k === tab ? 'true' : null, onclick: () => { if (timed && timed.tab !== k) stopTimer(); tab = k; quizIndex = 0; quiz(); scrollTo(0, 0); } },
+      TABS[k] + ' ', h('span', { class: 'k' }, scoreText(good(r.items.filter(i => i.type === k))) + '/' + r.items.filter(i => i.type === k).length))),
+    h('button', { class: 'tab', onclick: () => startFlash('all') }, '✦ Flipcards'));
+  // Study tools. A phone shows one question at a time, so they go below it and the question starts near the top.
+  const tools = [
+      h('div', { class: 'row' },
+        h('button', { class: 'btn alt', disabled: dueCount(r) ? null : '', onclick: () => startFlash('due', optCap) }, 'Review due (' + dueCount(r) + ')'),
+        h('button', { class: 'btn', disabled: missed.length ? null : '', onclick: () => clear(missed) }, 'Retry missed (' + missed.length + ')')),
+      h('details', { class: 'more', open: running || moreOpen ? '' : null, ontoggle: e => { moreOpen = e.currentTarget.open; } }, h('summary', null,
+        h('span', null, h('b', null, 'More options'), h('span', { class: 'more-hint' }, 'Exam date, recite, timed, shuffle, print'))),
+      h('div', { class: 'row plan' },
+        h('label', null, 'Exam date ', h('input', { type: 'date', 'aria-label': 'Exam date for this reviewer', value: (r.plan && r.plan.exam) || '', onchange: e => {
+          const v = e.target.value;
+          r.plan = planOf(r);
+          r.plan.exam = validExamDate(v) ? v : '';
+          if (v && !validExamDate(v)) e.target.value = '';
+          save(); quiz();
+        } })),
+        examDaysLeft(r.plan && r.plan.exam) !== null && h('span', { class: 'k' }, examText(r.plan.exam))),
+      h('div', { class: 'row', style: 'margin-top:8px' },
+        h('button', { class: 'btn alt', onclick: () => clear(mine) }, 'Reset this part'),
+        h('button', { class: 'btn alt', onclick: openRecite }, '🎧 Recite'),
+        h('button', { class: 'btn alt', onclick: running ? () => { stopTimer(); quiz(); } : () => startTimed(mine) }, running ? 'Stop timer' : 'Timed practice (' + fmt(mine.length * 30000) + ')')),
+        h('div', { class: 'row' },
+          h('button', { class: 'btn alt', onclick: shuffleAll }, r.src ? 'Shuffle · new questions' : 'Shuffle'),
+          h('button', { class: 'btn alt', onclick: rename }, 'Rename'),
+          h('button', { class: 'btn alt', onclick: () => openItemEditor({ items: r.items, hidden: r.hidden || (r.hidden = []), reviewer: r, index: -1, back: quiz }) }, 'Add a question'),
+          (r.removed && r.removed.length) && h('button', { class: 'btn alt', onclick: () => removedScreen(r) }, 'Removed questions (' + r.removed.length + ')'),
+          ts.includes('img') && h('button', { class: 'btn alt', onclick: () => openCovers(r) }, r.masks && r.masks.length ? 'Edit label covers' : 'Hide printed labels'),
+          h('button', { class: 'btn alt', onclick: printPart }, 'Print this part')))
+  ];
   const node = h('div', null,
     h('div', { class: 'row quiz-head' },
       h('button', { class: 'btn alt', onclick: home }, '← Back'),
@@ -1670,41 +1714,18 @@ function quiz() {
     h('h1', null, r.title),
     view !== 'one' && h('p', { class: 'sub' }, 'Answer each item. You get the result and an explanation right away. Missed items stay marked so you can retry them.'),
     warn(),
+    // One question at a time: the part tabs (each with its own score) come first, then "Q n of m" for that part right
+    // above its question. An all-parts score there read as "Q 1 of 5 · 0/9 correct", two different totals.
+    view === 'one' && tabs,
     view === 'one'
       ? h('div', { class: 'row one-meta' }, h('span', { class: 'mono big' }, 'Q ' + (quizIndex + 1) + ' of ' + mine.length),
-          h('span', { class: 'k' }, scoreText(total) + '/' + n + ' correct'),
+          h('span', { class: 'k' }, TABS[tab]),
           bar(mine.length ? (quizIndex + 1) / mine.length * 100 : 0, 'Question position'))
       : h('div', { class: 'row' }, h('span', { class: 'mono big' }, scoreText(total) + '/' + n),
           h('span', { class: 'k' }, 'correct so far · ' + n + ' items'),
           bar(n ? total / n * 100 : 0, 'Correct answers')),
-    h('div', { class: 'tabs' }, ts.map(k => h('button', { class: 'tab' + (k === tab ? ' on' : ''), 'aria-current': k === tab ? 'true' : null, onclick: () => { if (timed && timed.tab !== k) stopTimer(); tab = k; quizIndex = 0; quiz(); scrollTo(0, 0); } },
-      TABS[k] + ' ', h('span', { class: 'k' }, scoreText(good(r.items.filter(i => i.type === k))) + '/' + r.items.filter(i => i.type === k).length))),
-      h('button', { class: 'tab', onclick: () => startFlash('all') }, '✦ Flipcards')),
-    h('div', { class: 'row' },
-      h('button', { class: 'btn alt', disabled: dueCount(r) ? null : '', onclick: () => startFlash('due', optCap) }, 'Review due (' + dueCount(r) + ')'),
-      h('button', { class: 'btn', disabled: missed.length ? null : '', onclick: () => clear(missed) }, 'Retry missed (' + missed.length + ')')),
-    h('details', { class: 'more', open: running ? '' : null }, h('summary', null,
-      h('span', null, h('b', null, 'More options'), h('span', { class: 'more-hint' }, 'Exam date, recite, timed, shuffle, print'))),
-    h('div', { class: 'row plan' },
-      h('label', null, 'Exam date ', h('input', { type: 'date', 'aria-label': 'Exam date for this reviewer', value: (r.plan && r.plan.exam) || '', onchange: e => {
-        const v = e.target.value;
-        r.plan = planOf(r);
-        r.plan.exam = validExamDate(v) ? v : '';
-        if (v && !validExamDate(v)) e.target.value = '';
-        save(); quiz();
-      } })),
-      examDaysLeft(r.plan && r.plan.exam) !== null && h('span', { class: 'k' }, examText(r.plan.exam))),
-    h('div', { class: 'row', style: 'margin-top:8px' },
-      h('button', { class: 'btn alt', onclick: () => clear(mine) }, 'Reset this part'),
-      h('button', { class: 'btn alt', onclick: openRecite }, '🎧 Recite'),
-      h('button', { class: 'btn alt', onclick: running ? () => { stopTimer(); quiz(); } : () => startTimed(mine) }, running ? 'Stop timer' : 'Timed practice (' + fmt(mine.length * 30000) + ')')),
-      h('div', { class: 'row' },
-        h('button', { class: 'btn alt', onclick: shuffleAll }, r.src ? 'Shuffle · new questions' : 'Shuffle'),
-        h('button', { class: 'btn alt', onclick: rename }, 'Rename'),
-        h('button', { class: 'btn alt', onclick: () => openItemEditor({ items: r.items, hidden: r.hidden || (r.hidden = []), reviewer: r, index: -1, back: quiz }) }, 'Add a question'),
-        (r.removed && r.removed.length) && h('button', { class: 'btn alt', onclick: () => removedScreen(r) }, 'Removed questions (' + r.removed.length + ')'),
-        ts.includes('img') && h('button', { class: 'btn alt', onclick: () => openCovers(r) }, r.masks && r.masks.length ? 'Edit label covers' : 'Hide printed labels'),
-        h('button', { class: 'btn alt', onclick: printPart }, 'Print this part'))),
+    view !== 'one' && tabs,
+    view !== 'one' && tools,
     tab === 'mc' && h('p', { class: 'k keys' }, 'Keys: 1–4 answer the ' + (view === 'one' ? 'current' : 'next') + ' question.'),
     running && h('p', { class: 'k' }, 'Time left: ', h('b', { id: 'clock', class: 'mono' }, fmt(timed.end - Date.now()))),
     view === 'one'
@@ -1716,8 +1737,9 @@ function quiz() {
             h('button', { class: 'btn alt jump', onclick: () => jumpScreen(r) }, (quizIndex + 1) + ' / ' + mine.length + ' · Jump'),
             h('button', { class: 'btn alt', disabled: quizIndex >= mine.length - 1 ? '' : null, onclick: nextQuiz }, 'Next →')))
       : h('div', { class: 'items' }, mine.map((it, idx) => quizItem(r, it, idx, false))),
+    view === 'one' && tools,
     (done || over) && h('div', { class: 'card done', role: 'status' }, h('b', null, (over && !done ? 'Time is up. ' : '') + 'Part score: ' + scoreText(partGood) + ' of ' + mine.length + ' correct (' + Math.round(partGood / mine.length * 100) + '%)'),
-      h('p', null, partGood === mine.length ? 'Perfect. Try another part or the flashcards.' : 'Use "Retry missed" at the top to practice the ones you got wrong.')),
+      h('p', null, partGood === mine.length ? 'Perfect. Try another part or the flashcards.' : 'Use "Retry missed" to practice the ones you got wrong.')),
     statsPanel(r));
   flashing = false;
   draw(node, 'quiz');
