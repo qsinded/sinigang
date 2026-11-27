@@ -118,6 +118,22 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
   const hist = ['The Katipunan was a secret society founded by Andres Bonifacio in 1892.', 'The Malolos Constitution was the first republican constitution in Asia.',
     'La Liga Filipina was a civic organization founded by Rizal to unite Filipinos.', 'The Treaty of Paris was the agreement that ended the Spanish-American War.'];
   assert(generate(hist).length >= 3, 'past-tense notes produce questions');
+  // A dated sentence is asked by its year, in the past tense too ("declared", "arrived"); a decade is never blanked.
+  const dated = ['Ferdinand Magellan arrived in Cebu in the Philippines in 1521.', 'Emilio Aguinaldo declared Philippine independence in Kawit, Cavite on June 12, 1898.',
+    'Miguel Lopez de Legazpi established the first Spanish settlement in Cebu in 1565.', 'Lapulapu defeated Magellan in the Battle of Mactan in 1521.',
+    'The first computers in the Philippines arrived in the 1960s at UP Diliman.'];
+  const blanked = new Set();
+  for (let i = 0; i < 20; i++) {
+    const blanks = generate(dated).filter(q => /^Fill in the blank:/.test(q.q));
+    blanks.forEach(q => {
+      blanked.add(q.q);
+      const a = q.type === 'mc' ? q.options[q.answer] : q.answer;
+      assert.match(a, /^\d{4}$/, 'the year is the blank: ' + q.q);
+      assert(!/1960s/.test(q.q), 'a decade sentence is not blanked: ' + q.q);
+      if (q.type === 'mc') q.options.forEach(o => assert.match(o, /^\d{4}$/, 'wrong options are years too: ' + q.q));
+    });
+  }
+  assert.strictEqual(blanked.size, 4, 'every dated sentence (not the decade one) becomes a fill-in-the-blank: ' + [...blanked].join(' / '));
   // An acronym and its spelled-out form are the same answer, so one is never a wrong option for the other.
   const osNotes = ['An operating system is software that manages hardware and software resources.', 'The OS was first developed in the 1950s at IBM.',
     'A process is a program that is currently running in memory.', 'The kernel is the core of the system that talks to the hardware.', 'A thread is the smallest unit of work the scheduler runs.'];

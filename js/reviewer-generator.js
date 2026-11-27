@@ -106,11 +106,13 @@ const LEAD_IN = /[:;,.]?\s*[-–—]\s*$|[:;,]\s*$/;                    // "... 
 const DEAD_END = /\b(?:is|are|was|were|be|to|of|the|a|an|and|or|by|for|with|from|in|on|at|as|that|which|such as|includes?|consists? of|following)\s*[.:]?$/i;
 // A claim needs a verb. Matching a fixed list missed the obvious forms ("move" but only "moves" was listed),
 // so words are reduced to a stem and checked against base forms; irregulars are listed separately.
-const VERB_IRREGULAR = new Set(('is are was were be been being has have had do does did can cannot could will would shall should may might must').split(' '));
+const VERB_IRREGULAR = new Set(('is are was were be been being has have had do does did can cannot could will would shall should may might must'
+  + ' began became fought won led wrote made took gave held tore sent built found left lost met rose fell broke chose drew ran sold bought brought taught came went').split(' ')); // past tense, for history notes
 const VERB_BASE = new Set(('move store hold keep run convert allow provide contain include carry execute fetch decode direct control manage take need send receive connect measure calculate read write give make perform process represent describe combine divide split sort filter forward translate compile interpret allocate return accept require support enable prevent detect reduce increase overlap schedule load save link join separate count compare match replace remove add set act work become remain appear occur mean refer use call create produce generate store transfer change define convert consist depend belong follow precede happen exist live grow die feed protect regulate maintain balance break build destroy absorb release emit reflect transmit receive deliver route determine choose select apply assign attach bind connect update delete insert modify handle operate drive enable disable start stop begin end finish continue spread flow pass enter leave reach touch point refer apply test show tell say see look find get put bring hold cause affect allow permit require include involve relate correspond equate differ vary range total equal exceed reach strive').split(' '));
 const stem = w => w.replace(/(?:ing|ed|es|s)$/i, '');
+// A lower-case "-ed" word is a past tense ("declared", "arrived"): no list can name every verb a history note uses.
 const verbIn = text => (String(text).match(/[A-Za-z]+/g) || []).some(w =>
-  VERB_IRREGULAR.has(w.toLowerCase()) || VERB_BASE.has(w.toLowerCase()) || VERB_BASE.has(stem(w).toLowerCase()));
+  VERB_IRREGULAR.has(w.toLowerCase()) || VERB_BASE.has(w.toLowerCase()) || VERB_BASE.has(stem(w).toLowerCase()) || /^[a-z]{3,}ed$/.test(w));
 function statementOk(text) {
   const t = String(text || '').trim();
   if (t.length < 25 || t.length > 240) return false;
@@ -227,12 +229,16 @@ function generate(rawLines, tags = [], o = {}) {
     if (used.has(s) || s.length < 40 || s.length > 220 || OUTLINE.test((ctxOf.get(s) || '').trim())) continue;
     if (objSet.has(s) || garbled(s) || QUESTION.test(s) || !statementOk(s)) continue; // a blank needs a sentence too
     if (instruction(s)) continue;
-    // Dates are trivia, and "EAX, EBX, ECX" is a list cut out of its heading, not a sentence to blank.
-    if (/\b(?:1\d|20)\d\d(?!\d)/.test(s) || /(?:^|\s)[A-Z][A-Z0-9]+\s*,\s*[A-Z][A-Z0-9]+\b/.test(s)) continue;
-    const mm = [...s.matchAll(/(?:^|[\s(])(\.?[A-Z][A-Z0-9_]{1,})\b/g)].map(x => x[1]).find(t => !STOP.has(t) && !ctoks.has(t));
+    // "EAX, EBX, ECX" is a list cut out of its heading, not a sentence to blank.
+    if (/(?:^|\s)[A-Z][A-Z0-9]+\s*,\s*[A-Z][A-Z0-9]+\b/.test(s)) continue;
+    // In a dated sentence the year is what history asks for, so it is the blank, never another word beside it
+    // ("The _____ was first developed in 1950"). A decade ("the 1950s") is too vague to ask, so it is skipped.
+    const yr = (s.match(/\b(?:1\d|20)\d\d\b/) || [])[0];
+    if (!yr && /\b(?:1\d|20)\d\d/.test(s)) continue;
+    const mm = yr || [...s.matchAll(/(?:^|[\s(])(\.?[A-Z][A-Z0-9_]{1,})\b/g)].map(x => x[1]).find(t => !STOP.has(t) && !ctoks.has(t));
     if (!mm) continue;
-    if (objWords.size && !score(mm)) continue; // with objectives, a loose sentence must tie to one or be repeated
-    ctoks.add(mm);
+    if (objWords.size && !yr && !score(mm)) continue; // with objectives, a loose sentence must tie to one or be repeated
+    if (!yr) ctoks.add(mm); // two events can share a year
     clozes.push({ kind: 'cloze', w: score(mm), term: mm, q: 'Fill in the blank: ' + clean(s).replace(mm, '_____'), src: s, ctx: ctxOf.get(s) || '' });
   }
 

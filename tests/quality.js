@@ -44,7 +44,8 @@ function check(q, bad) {
   if (stripped !== q.q && (stripped.replace(/_+/g, ' ').match(/[A-Za-z]{4,}/g) || []).length < 2) bad.emptyBlank++;
   if (q.type === 'enum' && /^Enumerate: (?:note|notes|example|examples|tips?|hints?|remember|summary|recap|review|questions?)$/i.test(q.q)) bad.labelEnum++;
   if (q.answer === 0 && /^True or false: An? /.test(q.q) && !/^An? /i.test(rawSrc(q))) bad.articleAdded++;
-  if (/^Fill in the blank:/.test(q.q) && (/\b(?:1\d|20)\d\d(?!\d)/.test(rawSrc(q)) || /(?:^|\s)[A-Z][A-Z0-9]+\s*,\s*[A-Z][A-Z0-9]+\b/.test(rawSrc(q)))) bad.blankTrivia++;
+  // In a dated sentence only the year itself is worth blanking; any other word beside it is trivia.
+  if (/^Fill in the blank:/.test(q.q) && ((/\b(?:1\d|20)\d\d(?!\d)/.test(rawSrc(q)) && !/^(?:1\d|20)\d\d$/.test(answerText(q))) || /(?:^|\s)[A-Z][A-Z0-9]+\s*,\s*[A-Z][A-Z0-9]+\b/.test(rawSrc(q)))) bad.blankTrivia++;
   // A question line from an exam ("Why is RAM volatile? (2 pts)"), or a leftover points mark, is not a fact.
   if (q.type !== 'enum' && (/\?/.test(rawSrc(q)) || /\(\s*\d+\s*(?:pts?|points?|marks?)\.?\s*\)/i.test(q.q + ' ' + (q.options || []).join(' ') + ' ' + q.answer))) bad.fromQuestion++;
   if (q.type === 'mc') {
