@@ -286,6 +286,35 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   assert.strictEqual(ctx.labelCovers([L('Left', 90, 100, 100, 160, 120), L('ventricle', 90, 158, 100, 260, 120)], 1000, 500, []).length, 1, 'touching boxes merge into one cover');
   assert.strictEqual(ctx.labelCovers([L('Aorta', 91, 100, 50, 200, 70)], 1000, 500, lineCovers).length, 0, 'a label already covered is not covered twice');
   assert.strictEqual(ctx.cleanMasks(Array.from({ length: 61 }, (_, i) => ({ x: 0, y: i / 100, w: 0.1, h: 0.01 }))).length, 60, 'a reviewer keeps up to 60 covers');
+  // The label finder. Tesseract is injected, so the real 7 MB engine never loads in tests.
+  const fakeT = { terminated: 0, opts: null, lines: [L('Aorta', 91, 100, 50, 200, 70)], createWorker: async (lang, oem, opts) => {
+    fakeT.opts = opts; opts.logger({ status: 'recognizing text', progress: 0.5 });
+    return { recognize: async () => ({ data: { blocks: [{ paragraphs: [{ lines: fakeT.lines }] }] } }), terminate: async () => { fakeT.terminated++; } };
+  } };
+  ctx.location = { href: 'https://example.com/app/', hash: '' };
+  ctx.imageSize = async () => ({ width: 1000, height: 500 });
+  const realLoad = ctx.loadTesseract;
+  ctx.loadTesseract = async () => fakeT;
+  const progress = [];
+  const labels = plain(await ctx.findLabels(new sandbox.Blob(), [], p => progress.push(p)));
+  assert.strictEqual(labels.length, 1, 'findLabels turns the text it reads into covers');
+  assert.strictEqual(fakeT.terminated, 1, 'the reader is shut down after each search');
+  assert.ok(progress.includes(0.5), 'progress is reported');
+  assert.strictEqual(fakeT.opts.corePath, 'https://example.com/app/vendor/tesseract', 'the engine comes from this app, never a CDN');
+  assert.ok(fakeT.opts.workerBlobURL === false && fakeT.opts.cacheMethod === 'none', 'the worker goes through the service worker, with no second copy in IndexedDB');
+  await assert.rejects(realLoad(), /label finder/, 'a failed download says so');
+  assert.ok(scripts.includes('./vendor/tesseract/tesseract.min.js'), 'the engine script is loaded from vendor/tesseract');
+  scripts.splice(scripts.indexOf('./vendor/tesseract/tesseract.min.js'), 1); // the PDF.js check below expects a clean list
+  ctx.Tesseract = fakeT;
+  assert.strictEqual(await realLoad(), fakeT, 'a failed load is tried again next time');
+  delete ctx.Tesseract;
+  ctx.setOcrConsent('no');
+  assert.strictEqual(ctx.ocrConsent(), 'no', 'the answer to the download question is remembered');
+  ctx.Worker = function Worker() {};
+  ctx.navigator = { serviceWorker: { controller: null } };
+  assert.strictEqual(ctx.ocrSupported(), false, 'not offered without the service worker, which keeps the download');
+  ctx.navigator.serviceWorker.controller = {};
+  assert.strictEqual(ctx.ocrSupported(), true, 'offered with a Worker and the service worker');
   assert.deepStrictEqual(plain(ctx.boxFromPoints({ x: 0.75, y: 0.75 }, { x: 0.25, y: 0.25 })), { x: 0.25, y: 0.25, w: 0.5, h: 0.5 }, 'a drag becomes a box in any direction');
   assert.strictEqual(ctx.boxFromPoints({ x: 0.5, y: 0.5 }, { x: 0.505, y: 0.5 }), null, 'a stray tap does not leave a sliver');
   assert.deepStrictEqual(plain(ctx.moveBox({ x: 0.7, y: 0.7, w: 0.2, h: 0.2 }, 0.5, 0)), { x: 0.8, y: 0.7, w: 0.2, h: 0.2 }, 'moving a cover keeps it inside the image');

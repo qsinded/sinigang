@@ -114,6 +114,49 @@ function loadPdfjs() {
   })().catch(e => { pdfjsLoading = null; throw e; });
   return pdfjsLoading;
 }
+// "Find printed labels": Tesseract (vendor/tesseract/, see NOTICE.md) reads the text printed on a diagram
+// so it can be covered. It is ~7 MB, so it is offered only where it downloads once: a real Worker and this
+// app's service worker, which keeps it in its own cache across updates. Phone HTML viewers and file://
+// have neither. The student is asked before the first download; the answer is remembered on the device.
+const OCR_KEY = 'reviewer_ocr_v1', OCR_DIR = './vendor/tesseract/';
+function ocrSupported() {
+  return typeof Worker === 'function' && typeof navigator !== 'undefined' && !!(navigator.serviceWorker && navigator.serviceWorker.controller);
+}
+function ocrConsent() { try { return localStorage.getItem(OCR_KEY) || ''; } catch (e) { return ''; } }
+function setOcrConsent(v) { try { localStorage.setItem(OCR_KEY, v); } catch (e) { /* asked again next visit */ } }
+let tesseractLoading = null;
+function loadTesseract() {
+  tesseractLoading ||= new Promise((ok, fail) => {
+    if (window.Tesseract) { ok(window.Tesseract); return; }
+    const s = document.createElement('script'); s.src = OCR_DIR + 'tesseract.min.js';
+    const failed = () => fail(new Error('Could not download the label finder. Check the connection and try again.'));
+    s.onload = () => (window.Tesseract ? ok(window.Tesseract) : failed());
+    s.onerror = failed;
+    document.head.append(s);
+  }).catch(e => { tesseractLoading = null; throw e; });
+  return tesseractLoading;
+}
+async function imageSize(blob) {
+  const bmp = await createImageBitmap(blob), size = { width: bmp.width, height: bmp.height };
+  if (bmp.close) bmp.close();
+  return size;
+}
+// One worker per search, shut down afterwards: a cheap phone needs that memory back.
+async function findLabels(blob, existing, onProgress) {
+  // Absolute, because the worker resolves paths against its own address; same folder as this page.
+  const T = await loadTesseract(), dir = location.href.replace(/[?#].*$/, '').replace(/[^/]*$/, '') + OCR_DIR.slice(2, -1);
+  const worker = await T.createWorker('eng', 1, {
+    workerPath: dir + '/worker.min.js', corePath: dir, langPath: dir, gzip: true,
+    workerBlobURL: false, cacheMethod: 'none', // requests go through the service worker; no second copy in IndexedDB
+    logger: m => { if (onProgress && m && typeof m.progress === 'number') onProgress(m.progress, m.status); }
+  });
+  try {
+    const { data } = await worker.recognize(blob, {}, { blocks: true });
+    const lines = (data.blocks || []).flatMap(b => (b.paragraphs || []).flatMap(p => p.lines || []));
+    const { width, height } = await imageSize(blob);
+    return labelCovers(lines, width, height, existing);
+  } finally { await worker.terminate(); }
+}
 async function pdfLines(pdfjs, buf, tags) {
   const doc = await pdfjs.getDocument({ data: buf, isEvalSupported: false }).promise, out = [];
   for (let p = 1; p <= doc.numPages; p++) {
