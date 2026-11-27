@@ -142,15 +142,47 @@ const titleCase = s => { const w = s.match(/[A-Za-z][A-Za-z'’]*/g) || []; retu
 const STOP = new Set(['AND', 'OR', 'THE', 'IF', 'IN', 'IS', 'IT', 'TO', 'OF', 'NOT', 'FOR', 'ON', 'AS', 'AT', 'BY']);
 // Visible caps, so the interface can say what "All" means instead of silently truncating.
 const ITEM_CAP = { mc: 30, id: 20, tf: 8, enum: 10 };
+// Why a note line produced no question (generate(...).skipped). Worded for the student, with a fix where one exists.
+const SKIP_REASONS = {
+  furniture: 'A page number, or a header or footer repeated on every page.',
+  heading: 'A heading: it names the section, it is not asked.',
+  objective: 'A learning objective: it ranks the questions, it is not asked.',
+  outline: 'An agenda, outline or example list, not a fact.',
+  'short-list': 'A list with fewer than 3 items, too short to enumerate.',
+  length: 'Too short or too long to make a clear question.',
+  garbled: 'Looks jumbled, often broken PDF text.',
+  question: 'A question, not a statement of fact.',
+  instruction: 'An exam instruction, or a line that already has blanks.',
+  'bad-term': 'The part before "is" is not a term (a clause, a heading or more than 5 words).',
+  repeated: 'Repeats a term or definition that is already asked.',
+  'empty-blank': 'Hiding the term would leave nothing to answer from.',
+  'no-claim': 'Not a complete statement with a verb.',
+  'cut-list': 'A list cut away from its heading.',
+  decade: 'Gives only a decade ("the 1950s"), too vague to ask.',
+  'no-pattern': 'Not written as "X is Y", and has no year or ACRONYM to ask about. Try writing it as "X is …".',
+  'same-term': 'Its key term is already asked from another sentence.',
+  'off-objectives': 'Not tied to the learning objectives.',
+  limit: 'Made a question, but it was cut by the question limit.',
+  'type-off': 'Made a question of a type that is turned off.',
+};
 
-// tags[i] (optional) names where rawLines[i] came from, e.g. "page 3"; it is shown with the source sentence.
-// o = { max: keep at most this many items (0 = all), mcOnly: multiple choice only }.
+/**
+ * Builds review questions from note lines. No network, no AI.
+ * @param {string[]} rawLines note text, one entry per line
+ * @param {string[]} [tags] tags[i] names where rawLines[i] came from, e.g. "page 3"; shown with the source sentence
+ * @param {{max?: number, mcOnly?: boolean, noTF?: boolean, noEnum?: boolean}} [o] max: keep at most this many (0 = all)
+ * @returns {object[] & {skipped: {text: string, reason: string}[]}} the questions; `.skipped` says why each other
+ *   line or sentence made none (codes in SKIP_REASONS). It is a property of the array, so JSON (storage) leaves it out.
+ */
 function generate(rawLines, tags = [], o = {}) {
   let lines = rawLines.map((l, i) => ({ t: l.replace(/\s+/g, ' ').trim(), g: tags[i] || '' })).filter(l => l.t);
   const cnt = {};
   lines.forEach(l => { cnt[l.t] = (cnt[l.t] || 0) + 1; });
+  // The first reason a text is skipped is kept: it is the most specific one.
+  const why = new Map(), skip = (t, r) => { if (!why.has(t)) why.set(t, r); return true; };
   // drop page numbers and running headers/footers
-  lines = lines.filter(l => !/^(page\s*)?\d+$/i.test(l.t) && !/^(module|unit|chapter|lesson|week|day|topic|session|lecture)\s*[\dIVX]+\s*[—–:-]/i.test(l.t) && !(cnt[l.t] >= 3 && l.t.length < 60));
+  const furniture = l => /^(page\s*)?\d+$/i.test(l.t) || /^(module|unit|chapter|lesson|week|day|topic|session|lecture)\s*[\dIVX]+\s*[—–:-]/i.test(l.t) || (cnt[l.t] >= 3 && l.t.length < 60);
+  lines = lines.filter(l => !(furniture(l) && skip(l.t, 'furniture')));
   const objSet = new Set(), objWords = new Set();
   lines.forEach((l, i) => {
     if (!OBJ_HEAD.test(l.t)) return;
@@ -174,7 +206,14 @@ function generate(rawLines, tags = [], o = {}) {
 
   const sents = [], enums = [];
   let para = '', paraTag = '', hdr = null, hdrTag = '', items = [];
-  const flushList = () => { if (hdr && items.length >= 3 && !OUTLINE.test(hdr.trim()) && !LOW.test(hdr.trim()) && !OBJ_HEAD.test(hdr.trim())) enums.push({ hdr, items: items.map(clean).filter(Boolean), src: note(hdr + ': ' + items.join(', '), hdrTag) }); hdr = null; items = []; };
+  const flushList = () => {
+    if (hdr) {
+      const h = hdr.trim(), src = items.length ? hdr + ': ' + items.join(', ') : hdr + ':';
+      const no = OBJ_HEAD.test(h) ? 'objective' : OUTLINE.test(h) || LOW.test(h) ? 'outline' : items.length < 3 ? 'short-list' : '';
+      if (no) skip(src, no); else enums.push({ hdr, items: items.map(clean).filter(Boolean), src: note(src, hdrTag) });
+    }
+    hdr = null; items = [];
+  };
   const flushPara = () => { if (para) para.split(/(?<=[.!?])\s+(?=[A-Z".])/).forEach(s => sents.push(note(s.trim(), paraTag))); para = ''; };
 
   // A long heading starts a sentence and is either Title Case or, in sentence case ("Spanish colonization and the
@@ -192,7 +231,7 @@ function generate(rawLines, tags = [], o = {}) {
     } else {
       flushList();
       if (l.endsWith(':') && l.length < 100) { flushPara(); hdr = l.slice(0, -1); hdrTag = g; sect = hdr; }
-      else if (!/[.!?:,;]$/.test(l) && (l.length < 50 || longHead(l, (lines[i + 1] || {}).t))) { flushPara(); sect = l; } // heading
+      else if (!/[.!?:,;]$/.test(l) && (l.length < 50 || longHead(l, (lines[i + 1] || {}).t))) { flushPara(); sect = l; skip(l, objSet.has(l) ? 'objective' : 'heading'); } // heading
       else {
         if (!para) paraTag = g;
         // Slides and PDFs often drop the full stop at the end of a line. Joining "…to recognize first"
@@ -205,10 +244,14 @@ function generate(rawLines, tags = [], o = {}) {
   flushList(); flushPara();
 
   const defs = [], seen = new Set(), seenBody = new Set(), used = new Set(), seenEnum = new Set();
+  // Reasons every sentence loop shares; returns the code, or '' when the sentence may be used.
+  const unfit = (s, min, max) => s.length < min || s.length > max ? 'length' : OUTLINE.test((ctxOf.get(s) || '').trim()) ? 'outline'
+    : objSet.has(s) ? 'objective' : instruction(s) ? 'instruction' // "II. Write TRUE if…" is a rubric; "____" lines are blanks
+    : garbled(s) ? 'garbled' : QUESTION.test(s) ? 'question' : '';
   for (const s of sents) {
-    if (used.has(s) || s.length < 25 || s.length > 260 || OUTLINE.test((ctxOf.get(s) || '').trim())) continue;
-    if (objSet.has(s) || garbled(s) || QUESTION.test(s)) continue;
-    if (instruction(s)) continue; // "II. Write TRUE if the statement is correct…" is a rubric, not a fact
+    if (used.has(s)) continue;
+    const no = unfit(s, 25, 260);
+    if (no) { skip(s, no); continue; }
     // inline list: "Registers: AX, BX, CX and DX."
     const m = s.match(/^(.{6,80}?):\s*(.+)$/);
     if (m) {
@@ -219,14 +262,18 @@ function generate(rawLines, tags = [], o = {}) {
     if (d) {
       const term = d[1].trim();
       const body = clean(d[2].replace(/[.;]$/, ''));
-      // skip headings posing as terms and repeated definitions
-      if (body.length >= 15 && term.split(' ').length <= 5 && !NOT_TERM.test(term) && !LOW.test(term) && !LABEL.test(term) && !seen.has(term.toLowerCase()) && !seenBody.has(norm(body))
+      // skip headings posing as terms ("Write TRUE if the statement", "surplus happens when quantity supplied" are
+      // clauses) and repeated definitions
+      const termOk = body.length >= 15 && term.split(' ').length <= 5 && !NOT_TERM.test(term) && !LOW.test(term) && !LABEL.test(term)
         && !instruction(term) && !/\b(?:is|are|was|were|be|do|does|did|will|can)\b/i.test(term)
-        && !/\b(?:when|whenever|where|while|if|because|since|that|which|who|whom|whose|than|until|unless)\b/i.test(term)) { // "surplus happens when quantity supplied" is a clause // "Write TRUE if the statement" is a clause, not a term
+        && !/\b(?:when|whenever|where|while|if|because|since|that|which|who|whom|whose|than|until|unless)\b/i.test(term);
+      if (!termOk) skip(s, 'bad-term');
+      else if (seen.has(term.toLowerCase()) || seenBody.has(norm(body))) skip(s, 'repeated');
+      else {
         seen.add(term.toLowerCase()); seenBody.add(norm(body));
         const mask = body.replace(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), '_____');
         // "The CPU is the CPU of the computer" leaves "The _____ of the computer": nothing to answer from.
-        if ((mask.replace(/_____/g, ' ').match(/[A-Za-z]{4,}/g) || []).length < 2) continue;
+        if ((mask.replace(/_____/g, ' ').match(/[A-Za-z]{4,}/g) || []).length < 2) { skip(s, 'empty-blank'); continue; }
         defs.push({ kind: 'def', w: score(term), term, body: cap1(body), q: 'Which term is described? ' + cap1(mask), src: s, ctx: ctxOf.get(s) || '' });
         used.add(s);
       }
@@ -235,18 +282,19 @@ function generate(rawLines, tags = [], o = {}) {
 
   const clozes = [], ctoks = new Set();
   for (const s of sents) {
-    if (used.has(s) || s.length < 40 || s.length > 220 || OUTLINE.test((ctxOf.get(s) || '').trim())) continue;
-    if (objSet.has(s) || garbled(s) || QUESTION.test(s) || !statementOk(s)) continue; // a blank needs a sentence too
-    if (instruction(s)) continue;
+    if (used.has(s)) continue;
+    const no = unfit(s, 40, 220) || (statementOk(s) ? '' : 'no-claim'); // a blank needs a sentence too
+    if (no) { skip(s, no); continue; }
     // "EAX, EBX, ECX" is a list cut out of its heading, not a sentence to blank.
-    if (/(?:^|\s)[A-Z][A-Z0-9]+\s*,\s*[A-Z][A-Z0-9]+\b/.test(s)) continue;
+    if (/(?:^|\s)[A-Z][A-Z0-9]+\s*,\s*[A-Z][A-Z0-9]+\b/.test(s)) { skip(s, 'cut-list'); continue; }
     // In a dated sentence the year is what history asks for, so it is the blank, never another word beside it
     // ("The _____ was first developed in 1950"). A decade ("the 1950s") is too vague to ask, so it is skipped.
     const yr = (s.match(/\b(?:1\d|20)\d\d\b/) || [])[0];
-    if (!yr && /\b(?:1\d|20)\d\d/.test(s)) continue;
-    const mm = yr || [...s.matchAll(/(?:^|[\s(])(\.?[A-Z][A-Z0-9_]{1,})\b/g)].map(x => x[1]).find(t => !STOP.has(t) && !ctoks.has(t));
-    if (!mm) continue;
-    if (objWords.size && !yr && !score(mm)) continue; // with objectives, a loose sentence must tie to one or be repeated
+    if (!yr && /\b(?:1\d|20)\d\d/.test(s)) { skip(s, 'decade'); continue; }
+    const caps = [...s.matchAll(/(?:^|[\s(])(\.?[A-Z][A-Z0-9_]{1,})\b/g)].map(x => x[1]).filter(t => !STOP.has(t));
+    const mm = yr || caps.find(t => !ctoks.has(t));
+    if (!mm) { skip(s, caps.length ? 'same-term' : 'no-pattern'); continue; }
+    if (objWords.size && !yr && !score(mm)) { skip(s, 'off-objectives'); continue; } // with objectives, a loose sentence must tie to one or be repeated
     if (!yr) ctoks.add(mm); // two events can share a year
     clozes.push({ kind: 'cloze', w: score(mm), term: mm, q: 'Fill in the blank: ' + clean(s).replace(mm, '_____'), src: s, ctx: ctxOf.get(s) || '' });
   }
@@ -343,13 +391,24 @@ function generate(rawLines, tags = [], o = {}) {
       nID++;
     }
   }
-  shuffle(enums).sort((a, b) => score(b.hdr) - score(a.hdr)).filter(e => !seenEnum.has(norm(e.hdr)) && seenEnum.add(norm(e.hdr))).slice(0, ITEM_CAP.enum).forEach(e =>
+  const firstList = e => { if (seenEnum.has(norm(e.hdr))) { skip(e.src, 'repeated'); return false; } seenEnum.add(norm(e.hdr)); return true; };
+  shuffle(enums).sort((a, b) => score(b.hdr) - score(a.hdr)).filter(firstList).slice(0, ITEM_CAP.enum).forEach(e =>
     out.push({ w: score(e.hdr), type: 'enum', q: 'Enumerate: ' + e.hdr, items: e.items, exp: ex(e.src) }));
   let res = o.mcOnly ? out.filter(x => x.type === 'mc') : out;
   if (o.noTF) res = res.filter(x => !/^True or false: /.test(x.q));
   if (o.noEnum) res = res.filter(x => x.type !== 'enum');
+  const typed = res;
   if (o.max > 0) res = shuffle(res).sort((a, b) => b.w - a.w).slice(0, o.max); // the most important ones
   res.forEach((x, i) => { x.id = x.type + i; });
+  // A fact that made a question but is not in the result was cut by a cap or the limit, or by a type turned off.
+  const exps = list => new Set(list.map(x => x.exp)), inOut = exps(out), inTyped = exps(typed), inRes = exps(res);
+  for (const c of [...defs, ...clozes, ...enums]) {
+    const e = ex(c.src);
+    if (inRes.has(e)) why.delete(c.src);
+    else if (inOut.has(e)) why.set(c.src, inTyped.has(e) ? 'limit' : 'type-off');
+    else skip(c.src, 'limit'); // a cap stopped it while building; an earlier reason (a repeated list) is kept
+  }
+  res.skipped = [...why].map(([text, reason]) => ({ text, reason }));
   return res;
 }
 
@@ -405,4 +464,4 @@ function carryProgress(oldItems, newItems, progress = {}) {
   return { ans, known, learn, srs, flags, kept };
 }
 
-if (typeof module !== 'undefined') module.exports = { generate, idOk, enumCheck, norm, itemKey, carryProgress, ITEM_CAP };
+if (typeof module !== 'undefined') module.exports = { generate, idOk, enumCheck, norm, itemKey, carryProgress, ITEM_CAP, SKIP_REASONS };

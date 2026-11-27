@@ -1,6 +1,6 @@
 // Run: node tests/check.js   (Node 18+, no packages). Checks the generator and the .pptx/.docx readers.
 const assert = require('assert'), zlib = require('zlib');
-const { generate, enumCheck, idOk, norm, itemKey, carryProgress, ITEM_CAP } = require('../js/reviewer-generator.js');
+const { generate, enumCheck, idOk, norm, itemKey, carryProgress, ITEM_CAP, SKIP_REASONS } = require('../js/reviewer-generator.js');
 
 // Professor logic: the learning objectives decide what matters; jumbled text is never asked.
 {
@@ -156,6 +156,33 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
   const wrapped = generate(['The Treaty of Paris was the agreement signed between Spain and', 'United States Of America To End The Spanish-American War', ...hist]);
   assert(wrapped.some(q => /Treaty of Paris/.test(q.exp) && /United States Of America/.test(q.exp)), 'a wrapped line stays in its sentence');
   assert.strictEqual(blanked.size, 4, 'every dated sentence (not the decade one) becomes a fill-in-the-blank: ' + [...blanked].join(' / '));
+  // Skip reasons: every note line that yields no question says why, so the notes (or the generator) can be fixed.
+  const skipNotes = ['Cell Biology Review', '12', 'Mitosis is the division of a nucleus into two identical nuclei.',
+    'Meiosis is a cell division that produces four haploid gametes.', 'Interphase is the stage where the cell grows and copies its DNA.',
+    'Ribosomes build proteins from amino acids.', 'Why is the cell membrane important to the cell?', 'Write TRUE if the statement is correct.',
+    'Dutch lens makers built the first microscopes in the 1590s.', 'Parts of a cell:', '- Nucleus', '- Ribosome',
+    'Organelles:', '- Mitochondria', '- Golgi body', '- Vacuole'];
+  const reasonFor = (out, text) => (out.skipped.find(s => s.text === text) || {}).reason;
+  for (let i = 0; i < 10; i++) {
+    const out = generate(skipNotes);
+    assert(Array.isArray(out.skipped), 'generate() reports what it skipped');
+    assert.strictEqual(reasonFor(out, 'Cell Biology Review'), 'heading');
+    assert.strictEqual(reasonFor(out, '12'), 'furniture');
+    assert.strictEqual(reasonFor(out, 'Ribosomes build proteins from amino acids.'), 'no-pattern');
+    assert.strictEqual(reasonFor(out, 'Why is the cell membrane important to the cell?'), 'question');
+    assert.strictEqual(reasonFor(out, 'Write TRUE if the statement is correct.'), 'instruction');
+    assert.strictEqual(reasonFor(out, 'Dutch lens makers built the first microscopes in the 1590s.'), 'decade');
+    assert.strictEqual(reasonFor(out, 'Parts of a cell: Nucleus, Ribosome'), 'short-list');
+    out.skipped.forEach(s => assert(SKIP_REASONS[s.reason], 'every reason is explained: ' + s.reason));
+    const asked = new Set(out.map(q => q.exp));
+    out.skipped.forEach(s => assert(!asked.has(s.text), 'a sentence that became a question is not listed as skipped: ' + s.text));
+    assert(!JSON.stringify(out).includes('skipped'), 'the report is not saved with the questions');
+  }
+  // A fact that made a question but was cut by the limit, or by a type the student turned off, says so.
+  const capped = generate(skipNotes, [], { max: 1 });
+  assert(capped.skipped.some(s => s.reason === 'limit'), 'items cut by the limit are reported');
+  const noLists = generate(skipNotes, [], { noEnum: true });
+  assert.strictEqual(reasonFor(noLists, 'Organelles: Mitochondria, Golgi body, Vacuole'), 'type-off');
   // An acronym and its spelled-out form are the same answer, so one is never a wrong option for the other.
   const osNotes = ['An operating system is software that manages hardware and software resources.', 'The OS was first developed in the 1950s at IBM.',
     'A process is a program that is currently running in memory.', 'The kernel is the core of the system that talks to the hardware.', 'A thread is the smallest unit of work the scheduler runs.'];

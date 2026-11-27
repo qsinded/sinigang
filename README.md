@@ -59,7 +59,8 @@ no account and no build step.
 
 - `index.html` — website entry point
 - `css/styles.css` — styles
-- `js/reviewer-generator.js` — rule-based question generator and answer grading (no network)
+- `js/reviewer-generator.js` — rule-based question generator and answer grading (no network); `generate()` also
+  returns `.skipped`, the reason each other line made no question (codes and wording in `SKIP_REASONS`)
 - `js/pptx-reader.js` — `.pptx`, `.docx` and old `.ppt` text extraction
 - `js/app.js` — interface, storage, study plan, diagrams, source panel, flashcards and recitation
 - `js/pdfjs-viewer-bundle.js`, `js/pdfjs-worker-bundle.js` — vendored PDF.js 3.11.174, loaded on demand
@@ -76,7 +77,7 @@ no account and no build step.
 ```sh
 npm test                    # all suites (Node 18+)
 npm run quality            # question-quality report on tests/corpus/ (fails if a bad-question count rises or coverage drops)
-npm run quality -- --missed # also list the note lines no question uses
+npm run quality -- --missed # also list the note lines no question uses, each with its skip reason
 node tests/check.js
 node tests/app-smoke.js
 node tests/offline.js

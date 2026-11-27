@@ -113,13 +113,15 @@ function check(q, bad) {
 const dir = path.join(__dirname, 'corpus'), bad = Object.fromEntries(Object.keys(BASELINE).map(k => [k, 0]));
 const examples = {};
 let total = 0;
-const coverage = [];
+const coverage = [], reasons = {}, showMissed = process.argv.includes('--missed');
 for (const f of fs.readdirSync(dir).filter(f => f.endsWith('.txt'))) {
   const lines = fs.readFileSync(path.join(dir, f), 'utf8').split(/\r?\n/);
   const types = {}, cited = new Set();
+  let skipped = [];
   for (let seed = 1; seed <= RUNS; seed++) {
     Math.random = seeded(seed);
     const out = generate(lines, lines.map(() => 'page 1')), seenQ = new Set();
+    skipped = out.skipped;
     out.forEach(q => {
       total++; types[q.type] = (types[q.type] || 0) + 1; cited.add(srcOf(q));
       const before = { ...bad }; check(q, bad);
@@ -131,8 +133,12 @@ for (const f of fs.readdirSync(dir).filter(f => f.endsWith('.txt'))) {
   const pct = facts.length ? Math.round(100 * (facts.length - missed.length) / facts.length) : 100;
   coverage.push({ f, pct, low: !(f in COVERAGE) || pct < COVERAGE[f] });
   console.log(f.padEnd(28), JSON.stringify(types), 'coverage:', (facts.length - missed.length) + '/' + facts.length + ' substantial lines = ' + pct + '%');
-  if (process.argv.includes('--missed')) missed.forEach(l => console.log('       missed: ' + l));
+  // Why each unused line was skipped (last seeded run), counted so the biggest gap is the next fix.
+  // A sentence that contains the whole line wins over a shorter text inside the line (its heading, a number).
+  const reasonOf = l => { const n = norm(l), t = x => norm(x.text); return ((skipped.find(x => t(x).includes(n)) || skipped.find(x => t(x).length >= 8 && n.includes(t(x)))) || {}).reason || 'unknown'; };
+  if (showMissed) missed.forEach(l => { const r = reasonOf(l); reasons[r] = (reasons[r] || 0) + 1; console.log('       missed [' + r + ']: ' + l); });
 }
+if (showMissed) console.log('\nmissed lines by reason:', Object.entries(reasons).sort((a, b) => b[1] - a[1]).map(([r, n]) => r + ' ' + n).join(', '));
 console.log('\nquestions checked:', total);
 let fail = false;
 for (const c of coverage) {

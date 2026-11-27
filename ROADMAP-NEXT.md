@@ -49,9 +49,11 @@ device. Every phase adds tests to `tests/check.js`, never raises a `tests/qualit
 2. **More ways English notes state a fact.** "X states that Y", "X is called Y" / "Y is known as
    X", "X consists of Y", "X happens when Y", "X occurs when Y". Each needs a question form
    ("Which law states that…?") and a quality-corpus line.
-3. **Skipped-line report.** Already planned in `ROADMAP-FIXES.md` Phase 3 but not built. When a
-   file yields few questions, list the skipped lines with the reason and a rewrite hint ("write it
-   as *Mitosis is …*"). The zero-question error becomes this report instead of a dead end.
+3. **Skipped-line report.** Backend done 2026-11-27: `generate()` returns `.skipped` with a reason code per
+   line, and `SKIP_REASONS` words each one for a student with a fix ("Try writing it as *X is …*").
+   Still to do (UI, paused): show it when a file yields few questions, instead of the dead-end error.
+   Today's gaps by reason (`npm run quality -- --missed`): no-pattern 13, no-claim 10 (all Filipino),
+   bad-term 7, then furniture the generator is right to skip.
 4. **Done 2026-11-27:** `tests/corpus/` has history, economics and Filipino notes, and `npm run quality`
    now gates *coverage* (share of note lines some question uses) per file, so a rule that stops reading a
    kind of sentence fails the run. Baselines: Filipino 0%, economics 54%, lecture 33%, biology 67%.
