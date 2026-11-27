@@ -133,6 +133,15 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
       if (q.type === 'mc') q.options.forEach(o => assert.match(o, /^\d{4}$/, 'wrong options are years too: ' + q.q));
     });
   }
+  // A long Title Case title is a heading, not the start of the first sentence under it.
+  for (let i = 0; i < 20; i++) {
+    const titled = generate(['Araling Panlipunan - Spanish Colonization and Revolution', ...dated, ...hist]);
+    titled.forEach(q => assert(!/Araling|Colonization/.test(q.q + ' ' + (q.options || []).join(' ') + ' ' + (q.answer || '')), 'the title leaked into: ' + q.q));
+    assert(titled.some(q => /Magellan arrived/.test(q.exp)), 'the first sentence under the title is still asked');
+  }
+  // A Title Case line in the middle of a sentence ("...between Spain and" / "United States Of America") still joins it.
+  const wrapped = generate(['The Treaty of Paris was the agreement signed between Spain and', 'United States Of America To End The Spanish-American War', ...hist]);
+  assert(wrapped.some(q => /Treaty of Paris/.test(q.exp) && /United States Of America/.test(q.exp)), 'a wrapped line stays in its sentence');
   assert.strictEqual(blanked.size, 4, 'every dated sentence (not the decade one) becomes a fill-in-the-blank: ' + [...blanked].join(' / '));
   // An acronym and its spelled-out form are the same answer, so one is never a wrong option for the other.
   const osNotes = ['An operating system is software that manages hardware and software resources.', 'The OS was first developed in the 1950s at IBM.',

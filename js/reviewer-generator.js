@@ -136,6 +136,9 @@ function garbled(s) {
   return !w.length || w.filter(x => /^[A-Za-z]$/.test(x) && !/^[aAI]$/.test(x)).length / w.length > 0.15
     || s.replace(/[A-Za-z0-9\s.,;:'"()\-\/%]/g, '').length / s.length > 0.15 || /(?:\b\d+(?:\.\d+)?\s+){3,}/.test(s + ' ');
 }
+// Title Case: every word capitalised except small joining words (English, and Filipino "ng", "sa", "mga", "at").
+const MINOR = /^(?:a|an|the|and|or|of|in|on|at|to|for|by|with|from|vs|ng|sa|mga)$/i;
+const titleCase = s => { const w = s.match(/[A-Za-z][A-Za-z'’]*/g) || []; return w.length >= 3 && w.every(x => MINOR.test(x) || /^[A-Z]/.test(x)); };
 const STOP = new Set(['AND', 'OR', 'THE', 'IF', 'IN', 'IS', 'IT', 'TO', 'OF', 'NOT', 'FOR', 'ON', 'AS', 'AT', 'BY']);
 // Visible caps, so the interface can say what "All" means instead of silently truncating.
 const ITEM_CAP = { mc: 30, id: 20, tf: 8, enum: 10 };
@@ -158,7 +161,7 @@ function generate(rawLines, tags = [], o = {}) {
   });
   // How much a professor would care about a term: named in the objectives, repeated through the notes, or a heading.
   const flat = lines.map(l => l.t).join('\n').toLowerCase();
-  const heads = lines.filter(l => l.t.length < 50 && !/[.!?:,;]$/.test(l.t)).map(l => l.t.toLowerCase());
+  const heads = lines.filter(l => (l.t.length < 50 || (l.t.length < 100 && titleCase(l.t))) && !/[.!?:,;]$/.test(l.t)).map(l => l.t.toLowerCase());
   const score = term => {
     const t = String(term).toLowerCase(), esc = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const times = (flat.match(new RegExp('\\b' + esc + '\\b', 'g')) || []).length;
@@ -184,7 +187,9 @@ function generate(rawLines, tags = [], o = {}) {
     } else {
       flushList();
       if (l.endsWith(':') && l.length < 100) { flushPara(); hdr = l.slice(0, -1); hdrTag = g; sect = hdr; }
-      else if (l.length < 50 && !/[.!?:,;]$/.test(l)) { flushPara(); sect = l; } // heading
+      // heading; a long one ("Araling Panlipunan - Spanish Colonization and Revolution") is Title Case and starts
+      // a sentence, so it is not glued onto the first sentence below it
+      else if (!/[.!?:,;]$/.test(l) && (l.length < 50 || (l.length < 100 && titleCase(l) && (!para || /[.!?]$/.test(para))))) { flushPara(); sect = l; }
       else {
         if (!para) paraTag = g;
         // Slides and PDFs often drop the full stop at the end of a line. Joining "…to recognize first"
