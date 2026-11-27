@@ -152,9 +152,11 @@ async function findLabels(blob, existing, onProgress) {
   });
   try {
     const { data } = await worker.recognize(blob, {}, { blocks: true });
-    const lines = (data.blocks || []).flatMap(b => (b.paragraphs || []).flatMap(p => p.lines || []));
+    // Words, not lines: a leader line touching a label is read as "\\" and joined to it, and the whole line
+    // then gets one huge box and low confidence. Each word keeps its own; touching words merge again.
+    const words = (data.blocks || []).flatMap(b => (b.paragraphs || []).flatMap(p => (p.lines || []).flatMap(l => l.words || [])));
     const { width, height } = await imageSize(blob);
-    return labelCovers(lines, width, height, existing);
+    return labelCovers(words, width, height, existing);
   } finally { await worker.terminate(); }
 }
 async function pdfLines(pdfjs, buf, tags) {
@@ -548,7 +550,7 @@ function moveBox(m, dx, dy) {
 function resizeBox(m, dw, dh) {
   return { x: m.x, y: m.y, w: Math.min(1 - m.x, Math.max(COVER_MIN, m.w + dw)), h: Math.min(1 - m.y, Math.max(COVER_MIN, m.h + dh)) };
 }
-// Text found on a diagram (Tesseract line boxes, in pixels) becomes covers. A line counts when the reader
+// Text found on a diagram (Tesseract word boxes, in pixels) becomes covers. A word counts when the reader
 // is fairly sure (confidence 60+) and it has 2+ letters or digits; that drops specks and diagram strokes
 // read as "|" or "—". Boxes are padded a little, touching ones merge into one cover, and a label that
 // an existing cover already hides (half its area or more) is skipped, so searching twice adds nothing.
@@ -1447,7 +1449,7 @@ function diagramSetup() {
 let coverFor = null, coverList = [], coverStart = null, coverIndex = -1;
 function openCovers(r) {
   if (!r || !r.items.some(i => i.type === 'img')) return;
-  coverFor = r; coverList = cleanMasks(r.masks); coverStart = null;
+  coverFor = r; coverList = cleanMasks(r.masks); coverStart = null; coverNote = '';
   coverIndex = coverList.length ? 0 : -1;
   coversScreen();
 }
@@ -1482,6 +1484,30 @@ function moveCoverKey(e, i) {
     e.preventDefault(); coverIndex = i; coversScreen(); focusCover(); return;
   } else return;
   coverIndex = i; coversScreen(); focusCover();
+}
+// "Find printed labels" in the cover editor: adds covers only for text not already covered; nothing is
+// saved until Save covers, so the student can check them first. Asked before the first download.
+let coverFinding = null, coverNote = '', coverStatusEl = null;
+async function findCovers() {
+  const r = coverFor, it = r && r.items.find(i => i.type === 'img');
+  if (!it || coverFinding) return;
+  if (ocrConsent() !== 'yes') { if (!(await ask(OCR_ASK, 'Download and find'))) return; setOcrConsent('yes'); }
+  coverFinding = { pct: 0, status: '' }; coverNote = ''; coversScreen();
+  try {
+    const blob = await idbGet(it.imageId);
+    if (!blob) throw new Error('The diagram image is not on this device.');
+    const add = await findLabels(blob, coverList, (pct, status) => {
+      coverFinding.pct = pct; coverFinding.status = status;
+      if (coverStatusEl) coverStatusEl.textContent = labelStatusText(coverFinding);
+    });
+    if (coverFor !== r) return;
+    coverList.push(...add.slice(0, Math.max(0, COVER_MAX - coverList.length)));
+    coverNote = add.length ? add.length + ' printed label' + (add.length === 1 ? '' : 's') + ' covered. Check them, then Save covers.'
+      : 'No printed labels found' + (coverList.length ? ' that are not already covered.' : '.');
+  } catch (e) {
+    coverNote = (e && e.message ? e.message : 'Could not look for printed labels.') + ' You can still cover them by hand.';
+  } finally { coverFinding = null; }
+  if (coverFor === r) { coversScreen(); say(coverNote); }
 }
 function coversScreen() {
   const r = coverFor; if (!r) return quiz();
@@ -1530,10 +1556,10 @@ function coversScreen() {
   };
   const saveCovers = () => {
     const n = applyCovers(r, coverList).length;
-    coverFor = null; coverList = []; coverIndex = -1; coverStart = null;
+    coverFor = null; coverList = []; coverIndex = -1; coverStart = null; coverNote = '';
     quiz(); say(n ? n + ' cover(s) saved.' : 'Covers removed.');
   };
-  const leave = () => { coverFor = null; coverList = []; coverIndex = -1; coverStart = null; quiz(); };
+  const leave = () => { coverFor = null; coverList = []; coverIndex = -1; coverStart = null; coverNote = ''; quiz(); };
   draw(h('div', null,
     h('div', { class: 'row' }, h('button', { class: 'btn alt', onclick: leave }, '← Back'), h('span', { class: 'k' }, 'PRINTED LABELS')),
     h('h1', null, 'Hide printed labels'),
@@ -1541,6 +1567,10 @@ function coversScreen() {
     warn(),
     h('div', { class: 'card' }, wrap,
       h('p', { class: 'k' }, coverList.length ? coverList.length + ' cover(s). Drag on the image to add another.' : 'Drag a box over any printed label. One box per block of text is usually enough.'),
+      ocrSupported()
+        ? h('p', null, h('button', { class: 'btn', disabled: coverFinding ? '' : null, onclick: findCovers }, 'Find printed labels'))
+        : h('p', { class: 'k' }, OCR_UNSUPPORTED),
+      (coverStatusEl = (coverFinding || coverNote) ? h('p', { class: 'k', role: 'status' }, coverFinding ? labelStatusText(coverFinding) : coverNote) : null),
       h('div', { class: 'row' },
         h('button', { class: 'btn alt', onclick: add }, 'Add cover'),
         coverList.length > 0 && h('button', { class: 'btn alt', onclick: () => { coverList = []; coverIndex = -1; coversScreen(); say('All covers cleared.'); } }, 'Clear all'))),

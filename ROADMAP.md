@@ -434,8 +434,9 @@ Decisions needed before starting R3:
 
 ## Out of scope
 
-- Automatic label or arrow detection in an uploaded image. The README already says labelling is
-  manual by design, and that stays true.
+- Arrow detection, or guessing which part a printed label names. Printed text itself is now found and
+  covered automatically (Tesseract, 2026-11-27, see `docs/superpowers/specs/2026-11-27-auto-cover-labels-design.md`);
+  naming parts stays manual.
 - Converting a typed reviewer into a diagram reviewer, or the reverse.
 - A drawing/annotation tool, colour-coded pins, or per-pin notes.
 - Cloud sync or accounts; reviewers stay local and exportable.

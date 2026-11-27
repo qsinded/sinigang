@@ -94,6 +94,7 @@ no account and no build step.
 - `js/reviewer-generator.js` — rule-based question generator and answer grading (no network); `generate()` also
   returns `.skipped`, the reason each other line made no question (codes and wording in `SKIP_REASONS`)
 - `js/pptx-reader.js` — `.pptx`, `.docx` and old `.ppt` text extraction
+- `vendor/tesseract/` — the label finder (Tesseract.js 7, English), loaded only after the student agrees
 - `js/app.js` — interface, storage, study plan, diagrams, source panel, flashcards and recitation
 - `js/pdfjs-viewer-bundle.js`, `js/pdfjs-worker-bundle.js` — vendored PDF.js 3.11.174, loaded on demand
 - `js/sw-register.js` — registers the offline cache (does nothing on `file://`)
@@ -164,8 +165,14 @@ deep link still opens. Reviewer data and images are untouched by the worker: the
 6. To read a small label, use **+** under the diagram: it zooms up to 400% on the marker, the pin stays
    the same size, and **Hide pin** shows what is under it. Drag to look around; with the diagram
    focused, **+**, **-**, **0** and the arrow keys do the same.
-7. If the image already has its labels printed on it, choose **Hide printed labels** on the practice
-   screen and drag a box over each block of text. Covers show while you practise, in flashcards and
+7. If the image already has its labels printed on it, the app can find and cover them for you. The
+   first time you pick a picture it asks: "Hide the printed labels automatically? This downloads about
+   7 MB once, then works offline." Say yes and every new picture is searched in the background while
+   you name the parts; the covers are saved with the reviewer (if the search is still running when you
+   choose **Create**, they are added as soon as it ends). For a reviewer you already have, open **Hide
+   printed labels** and choose **Find printed labels**. Found covers are ordinary covers: check them,
+   move or delete any, then **Save covers**. To cover text by hand, choose **Hide printed labels** on
+   the practice screen and drag a box over each block of text. Covers show while you practise, in flashcards and
    on printouts, but not while you label parts. Drag on the image to add one, or choose **Add cover**
    and use the arrow keys (Shift with arrows resizes, Delete removes).
 
@@ -174,8 +181,10 @@ an image id, a normalized hotspot, the label and any covers, so `localStorage` s
 embeds the images in `reviewers.json`, which makes backups portable but noticeably larger; covers
 are small enough to travel in the reviewer itself.
 
-Labeling is manual by design: on a textbook diagram the printed label sits next to an arrow, and only
-a person can say which part that arrow points to. Nothing is scanned or uploaded, and the app never
+Naming parts is manual by design: on a textbook diagram the printed label sits next to an arrow, and
+only a person can say which part that arrow points to. The label finder only hides printed text.
+It is Tesseract.js 7 (Apache-2.0, see `vendor/tesseract/NOTICE.md`), served from this app, never a
+CDN, and kept by the service worker in its own cache, so an app update does not download it again. Nothing is scanned or uploaded, and the app never
 needs a server to practice the result.
 
 ## Focus timer
@@ -226,9 +235,16 @@ image-only slides need OCR.
 - Diagram zoom is per part and resets when the reviewer is reopened; on phones the browser's own
   pinch-zoom of the page also still works.
 - Diagram reviewers need IndexedDB; private windows and some locked-down browsers block it, in which
-  case the setup screen explains that images cannot be stored. Labeling is manual — the app does not
-  detect labels or arrows in an uploaded image.
-- A cover is a box you place by hand: it hides printed text, not the arrows or leader lines next to
+  case the setup screen explains that images cannot be stored. Naming parts is manual — the app finds
+  printed text to cover, not arrows or which part a label belongs to.
+- **Find printed labels** is offered only in a normal browser or the installed app, where the service
+  worker keeps the ~7 MB engine; opened from `file://` or in a phone's HTML viewer it says to cover
+  labels by hand. It reads printed English best: handwriting, very small or faint text, text over a
+  busy picture and some Filipino words can be missed, so check the covers. Arrows and leader lines are
+  not covered.
+- A reviewer keeps up to 60 covers. A phone still running an older copy of the app keeps only the
+  first 24 of them when it imports a backup, until it updates.
+- A cover is a box (placed by hand or by **Find printed labels**): it hides printed text, not the arrows or leader lines next to
   it, and a label that sits inside the drawing needs its own small box. Covers are stored with the
   reviewer, so they apply to every question and every mode, and they are printed as solid blocks.
 - The focus timer is device-local and is not part of Export/Import. It follows the device clock: a

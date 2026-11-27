@@ -289,7 +289,7 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   // The label finder. Tesseract is injected, so the real 7 MB engine never loads in tests.
   const fakeT = { terminated: 0, opts: null, gate: Promise.resolve(), lines: [L('Aorta', 91, 100, 50, 200, 70)], createWorker: async (lang, oem, opts) => {
     fakeT.opts = opts; opts.logger({ status: 'recognizing text', progress: 0.5 });
-    return { recognize: async () => { await fakeT.gate; return { data: { blocks: [{ paragraphs: [{ lines: fakeT.lines }] }] } }; }, terminate: async () => { fakeT.terminated++; } };
+    return { recognize: async () => { await fakeT.gate; return { data: { blocks: [{ paragraphs: [{ lines: fakeT.lines.map(l => ({ ...l, words: l.words || [l] })) }] }] } }; }, terminate: async () => { fakeT.terminated++; } };
   } };
   ctx.location = { href: 'https://example.com/app/', hash: '' };
   ctx.imageSize = async () => ({ width: 1000, height: 500 });
@@ -298,7 +298,14 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   const progress = [];
   const labels = plain(await ctx.findLabels(new sandbox.Blob(), [], p => progress.push(p)));
   assert.strictEqual(labels.length, 1, 'findLabels turns the text it reads into covers');
-  assert.strictEqual(fakeT.terminated, 1, 'the reader is shut down after each search');
+  // Seen in Chrome: a leader line touching a label is read as a backslash and joined to it, and the whole
+  // line's confidence drops to 44. Words keep their own boxes and confidence, so the label is still covered.
+  const leader = { ...L('\\ Nucleus', 44, 224, 81, 813, 201), words: [L('\\', 30, 224, 150, 300, 201), L('Nucleus', 93, 720, 100, 813, 125)] };
+  fakeT.lines = [leader];
+  const nucleus = plain(await ctx.findLabels(new sandbox.Blob(), [], () => {}));
+  assert.ok(nucleus.length === 1 && near(nucleus[0].x, 0.715) && nucleus[0].w < 0.12, 'a label read together with its leader line is still covered, tightly');
+  fakeT.lines = [L('Aorta', 91, 100, 50, 200, 70)];
+  assert.strictEqual(fakeT.terminated, 2, 'the reader is shut down after each of the two searches');
   assert.ok(progress.includes(0.5), 'progress is reported');
   assert.strictEqual(fakeT.opts.corePath, 'https://example.com/app/vendor/tesseract', 'the engine comes from this app, never a CDN');
   assert.ok(fakeT.opts.workerBlobURL === false && fakeT.opts.cacheMethod === 'none', 'the worker goes through the service worker, with no second copy in IndexedDB');
@@ -636,6 +643,32 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   assert.strictEqual(imgReviewer.masks.length, 3, 'saving stores every drawn cover on the reviewer');
   const afterSave = find(appEl, e => String(e.className).split(' ')[0] === 'cover');
   assert.strictEqual(afterSave.length, imgReviewer.items.length * 3, 'practice draws the covers after saving');
+  // Find printed labels in the cover editor: asked once, adds only what is not covered yet, saved on Save covers.
+  localStorage.removeItem('reviewer_ocr_v1');
+  let asked = 0; ctx.ask = async () => { asked++; return true; };
+  fakeT.gate = Promise.resolve();
+  fakeT.lines = [L('Aorta', 91, 100, 50, 200, 70), L('Left ventricle', 88, 600, 300, 800, 330)];
+  const savedMasks = imgReviewer.masks;
+  imgReviewer.masks = [{ x: 0.01, y: 0.1, w: 0.2, h: 0.08 }]; // covers the Aorta label only
+  ctx.openCovers(imgReviewer);
+  const masksBefore = plain(imgReviewer.masks);
+  const findBtn = () => find(appEl, e => e.tagName === 'BUTTON' && screenText(e) === 'Find printed labels')[0];
+  assert.ok(findBtn(), 'the cover editor offers to find printed labels');
+  await findBtn().onclick(); await settle();
+  assert.strictEqual(asked, 1, 'the first search asks before downloading');
+  assert.strictEqual(ctx.ocrConsent(), 'yes', 'and remembers the yes');
+  assert.strictEqual(vm.runInContext('coverList.length', ctx), masksBefore.length + 1, 'a label already under a cover is not covered again');
+  assert.match(screenText(appEl), /1 printed label covered/, 'the editor says what it added');
+  assert.deepStrictEqual(plain(imgReviewer.masks), masksBefore, 'nothing is saved until Save covers');
+  await findBtn().onclick(); await settle();
+  assert.strictEqual(asked, 1, 'a yes is not asked again');
+  assert.strictEqual(vm.runInContext('coverList.length', ctx), masksBefore.length + 1, 'searching twice adds nothing');
+  assert.match(screenText(appEl), /No printed labels found that are not already covered/, 'and says so');
+  ctx.navigator.serviceWorker.controller = null; ctx.openCovers(imgReviewer);
+  assert.ok(!findBtn() && /hide them by hand here/.test(screenText(appEl)), 'without the service worker the button is replaced by a note');
+  ctx.navigator.serviceWorker.controller = {};
+  imgReviewer.masks = savedMasks;
+  ctx.open(imgReviewer);
 
   // 8b. Focus timer: pure transitions, then the bar's real start/pause/stop path.
   assert.strictEqual(vm.runInContext('focusClock(1500000)', ctx), '25:00', 'the clock shows 25 minutes');
