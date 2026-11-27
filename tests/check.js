@@ -178,6 +178,30 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
     out.skipped.forEach(s => assert(!asked.has(s.text), 'a sentence that became a question is not listed as skipped: ' + s.text));
     assert(!JSON.stringify(out).includes('skipped'), 'the report is not saved with the questions');
   }
+  // Filipino notes: "Ang X ay Y", "Si X ay Y" and "Si X ang Y" are definitions; a verb-first sentence with a year
+  // ("Itinatag ni … noong 1892") is a fill-in-the-blank; "Ito ay …" has no term.
+  const fil = ['Ang Katipunan ay isang lihim na samahan na itinatag ni Andres Bonifacio.', 'Si Jose Rizal ay binaril sa Bagumbayan noong Disyembre 30, 1896.',
+    'Si Andres Bonifacio ang tinaguriang Ama ng Katipunan.', 'Itinatag ni Andres Bonifacio ang Katipunan sa Tondo noong 1892.',
+    'Ang Kartilya ng Katipunan ay isinulat ni Emilio Jacinto.', 'Ang La Liga Filipina ay samahang itinatag ni Jose Rizal sa Maynila.',
+    'Ang Saligang Batas ng Malolos ay ang unang republikanong konstitusyon sa Asya.', 'Ito ay mahalagang pangyayari sa kasaysayan ng bansa.'];
+  const persons = ['Jose Rizal', 'Andres Bonifacio', 'Emilio Jacinto'];
+  const answersFil = new Set();
+  for (let i = 0; i < 30; i++) generate(fil).forEach(q => {
+    const a = q.type === 'mc' ? q.options[q.answer] : String(q.answer || '');
+    if (!/^(True|False)$/.test(a)) answersFil.add(a);
+    assert.notStrictEqual(a, 'Ito', '"Ito ay …" has no term');
+    const si = q.q.match(/^True or false: Si (.+?) (?:ay|ang) /), ang = q.q.match(/^True or false: Ang (.+?) ay /);
+    if (si) assert(persons.includes(si[1]), 'only a person follows "Si": ' + q.q);
+    if (ang) assert(!persons.includes(ang[1]), 'a person never follows "Ang": ' + q.q);
+  });
+  for (const a of ['Katipunan', 'Jose Rizal', 'Andres Bonifacio', 'Kartilya ng Katipunan', '1892'])
+    assert(answersFil.has(a), 'Filipino notes ask for "' + a + '"; got: ' + [...answersFil].join(' / '));
+  // English with a capitalised "Si" (silicon) is not a Filipino claim, so a verbless line stays a heading.
+  const si = generate(['Mining Si wafers and doping in modern chip factories', 'A wafer is a thin slice of silicon used to build chips.',
+    'Doping is the process of adding impurities to change how a semiconductor conducts.', 'Etching is the step that removes material to form circuit patterns.']);
+  assert.strictEqual((si.skipped.find(s => /Mining Si/.test(s.text)) || {}).reason, 'heading', 'a capitalised "Si" in English is not a Filipino marker');
+  assert.strictEqual(idOk('Katipunan', 'ang katipunan'), true, 'a leading "ang" is ignored');
+  assert.strictEqual(idOk('Jose Rizal', 'si Jose Rizal'), true, 'a leading "si" is ignored');
   // A fact that made a question but was cut by the limit, or by a type the student turned off, says so.
   const capped = generate(skipNotes, [], { max: 1 });
   assert(capped.skipped.some(s => s.reason === 'limit'), 'items cut by the limit are reported');

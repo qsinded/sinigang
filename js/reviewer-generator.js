@@ -2,9 +2,33 @@
 // ponytail: heuristics only (definitions, lists, caps-terms). Upgrade to a local LLM if quality is too low.
 function norm(s) { return String(s).toLowerCase().replace(/[^a-z0-9]/g, ''); }
 
+// Words that change with the language of the notes. To support a language, add an entry here; the patterns
+// below are built from these lists, so notes that mix languages (Taglish) work too.
+const LANGS = {
+  en: {
+    articles: ['The', 'A', 'An'],                     // before the term that starts a definition
+    copulas: ['is defined as', 'is used to', 'refers to', 'stands for', 'means', 'is', 'are', 'was', 'were'], // "X is Y"
+    answerArticles: ['the', 'a', 'an'],               // ignored at the start of a typed answer
+    notTerm: ['this', 'that', 'these', 'those', 'it', 'they', 'there', 'here', 'which', 'what', 'when', 'where', 'if', 'in', 'on',
+      'for', 'each', 'some', 'all', 'one', 'we', 'you', 'why', 'how', 'who', 'whom', 'whose'], // a sentence opener, never a term
+    termVerbs: ['is', 'are', 'was', 'were', 'be', 'do', 'does', 'did', 'will', 'can'], // a term containing one is a clause
+    clauseWords: ['when', 'whenever', 'where', 'while', 'if', 'because', 'since', 'that', 'which', 'who', 'whom', 'whose', 'than', 'until', 'unless'],
+  },
+  fil: {
+    articles: ['Ang mga', 'Ang', 'Sina', 'Si'],       // "Ang Katipunan ay …", "Si Rizal ay …"
+    copulas: ['ay'],
+    answerArticles: ['ang mga', 'ang', 'sina', 'si', 'mga'],
+    notTerm: ['ito', 'iyan', 'iyon', 'dito', 'doon', 'sila', 'siya', 'tayo', 'kami', 'kayo', 'ako', 'ikaw'],
+    termVerbs: ['ay'],
+    clauseWords: ['kung', 'kapag', 'dahil', 'habang', 'noong', 'nang', 'upang', 'sapagkat'],
+  },
+};
+const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const anyOf = key => Object.values(LANGS).flatMap(l => l[key]).map(esc).join('|');
+
 // Grading has to accept the answer the way a student actually types it, or a right answer reads as wrong.
 // Ignored: a leading article, punctuation, and the difference between "RAM" and "random access memory".
-const ART = /^\s*(?:the|a|an)\s+/i;
+const ART = new RegExp('^\\s*(?:' + anyOf('answerArticles') + ')\\s+', 'i');
 const bare = s => norm(String(s).replace(ART, ''));
 const wordsOf = s => String(s).match(/[A-Za-z0-9]+/g) || [];
 const isAcr = s => /^[A-Z0-9][A-Z0-9.\-]{1,9}$/.test(String(s).trim()); // RAM, CPU, IA-32
@@ -72,8 +96,12 @@ const shape = t => /^[A-Z][A-Z0-9_.\-]+$/.test(t) ? 'acronym' : /\d/.test(t) ? '
 const variant = (a, b) => { const x = norm(a), y = norm(b); return x === y || (x.length >= 3 && y.length >= 3 && (x.includes(y) || y.includes(x)))
   || (isAcr(a) !== isAcr(b) && abbreviates(isAcr(a) ? a : b, isAcr(a) ? b : a)); }; // "OS" is "operating system"
 const BUL = /^(?:[•●▪◦\-*–]|\d+[.)]|[a-z][.)])\s+/;
-const NOT_TERM = /^(this|that|these|those|it|they|there|here|which|what|when|where|if|in|on|for|each|some|all|one|we|you|why|how|who|whom|whose)\b/i;
-const DEF = /^(?:(?:The|A|An)\s+)?([A-Za-z0-9.][\w .\/\-]{0,38}?)\s+(?:is defined as|is used to|refers to|stands for|means|is|are|was|were)\s+(.{15,})$/; // was/were: history notes are past tense
+const NOT_TERM = new RegExp('^(?:' + anyOf('notTerm') + ')\\b', 'i');
+// "[The] X is Y" / "[Ang] X ay Y": an optional article, a short term, a linking verb from LANGS, then the description.
+const DEF = new RegExp('^(?:(?:' + anyOf('articles') + ')\\s+)?([A-Za-z0-9.][\\w .\\/\\-]{0,38}?)\\s+(?:' + anyOf('copulas') + ')\\s+(.{15,})$');
+// Filipino also puts a person first with "ang": "Si Andres Bonifacio ang tinaguriang Ama ng Katipunan."
+const SI_ANG = /^(?:Si|Sina)\s+([A-Z][\w .\-]{0,38}?)\s+ang\s+(.{15,})$/;
+const TERM_VERB = new RegExp('\\b(?:' + anyOf('termVerbs') + ')\\b', 'i'), CLAUSE = new RegExp('\\b(?:' + anyOf('clauseWords') + ')\\b', 'i');
 const COLON = /^([A-Za-z.][\w .\/\-]{0,38}?)\s*(?::|\s[–—-]\s)\s*(.{20,})$/;
 const LOW = /^(note|notes|example|examples|figure|table|chapter|slide|page|summary|objectives?|introduction|references?|agenda|tips?|hints?|remember|reminders?|recap|review|q&a|questions?)$/i; // headings, not terms
 // Exam-paper furniture: instructions, rubrics and answer keys describe the test, not the subject. A definition
@@ -111,7 +139,12 @@ const VERB_IRREGULAR = new Set(('is are was were be been being has have had do d
 const VERB_BASE = new Set(('move store hold keep run convert allow provide contain include carry execute fetch decode direct control manage take need send receive connect measure calculate read write give make perform process represent describe combine divide split sort filter forward translate compile interpret allocate return accept require support enable prevent detect reduce increase overlap schedule load save link join separate count compare match replace remove add set act work become remain appear occur mean refer use call create produce generate store transfer change define convert consist depend belong follow precede happen exist live grow die feed protect regulate maintain balance break build destroy absorb release emit reflect transmit receive deliver route determine choose select apply assign attach bind connect update delete insert modify handle operate drive enable disable start stop begin end finish continue spread flow pass enter leave reach touch point refer apply test show tell say see look find get put bring hold cause affect allow permit require include involve relate correspond equate differ vary range total equal exceed reach strive').split(' '));
 const stem = w => w.replace(/(?:ing|ed|es|s)$/i, '');
 // A lower-case "-ed" word is a past tense ("declared", "arrived"): no list can name every verb a history note uses.
-const verbIn = text => (String(text).match(/[A-Za-z]+/g) || []).some(w =>
+// A Filipino claim links with "ay" ("Ang Katipunan ay …"), or opens with an affixed verb and names its subject with
+// ang/si/ni/ng ("Itinatag ni Bonifacio ang Katipunan …", "Binaril si Rizal …"). English never has those markers.
+// Markers are lower case mid-sentence, so "Mining Si wafers…" (silicon) is not taken for Filipino.
+const FIL_VERB_FIRST = /^(?:[a-z]{0,3}(?:in|um)|nag|mag|pinag|ipinag|ipina|pina|na|ma|i)[a-z]{3,}\b/i, FIL_MARKER = /\s(?:ang|si|sina|ni|ng)\s/;
+const filClaim = t => /\say\s/.test(t) || (FIL_VERB_FIRST.test(t) && FIL_MARKER.test(t));
+const verbIn = text => filClaim(String(text)) || (String(text).match(/[A-Za-z]+/g) || []).some(w =>
   VERB_IRREGULAR.has(w.toLowerCase()) || VERB_BASE.has(w.toLowerCase()) || VERB_BASE.has(stem(w).toLowerCase()) || /^[a-z]{3,}ed$/.test(w));
 function statementOk(text) {
   const t = String(text || '').trim();
@@ -258,15 +291,14 @@ function generate(rawLines, tags = [], o = {}) {
       const its = m[2].replace(/\.$/, '').split(/,\s*(?:and\s+|or\s+)?|;\s*|\s+and\s+/).map(x => x.trim()).filter(Boolean);
       if (its.length >= 3 && its.every(x => x.split(' ').length <= 6) && !LOW.test(m[1].trim())) { enums.push({ hdr: m[1], items: its.map(clean).filter(Boolean), src: s }); used.add(s); continue; }
     }
-    const d = s.match(DEF) || s.match(COLON);
+    const d = s.match(DEF) || s.match(SI_ANG) || s.match(COLON);
     if (d) {
       const term = d[1].trim();
       const body = clean(d[2].replace(/[.;]$/, ''));
       // skip headings posing as terms ("Write TRUE if the statement", "surplus happens when quantity supplied" are
       // clauses) and repeated definitions
       const termOk = body.length >= 15 && term.split(' ').length <= 5 && !NOT_TERM.test(term) && !LOW.test(term) && !LABEL.test(term)
-        && !instruction(term) && !/\b(?:is|are|was|were|be|do|does|did|will|can)\b/i.test(term)
-        && !/\b(?:when|whenever|where|while|if|because|since|that|which|who|whom|whose|than|until|unless)\b/i.test(term);
+        && !instruction(term) && !TERM_VERB.test(term) && !CLAUSE.test(term);
       if (!termOk) skip(s, 'bad-term');
       else if (seen.has(term.toLowerCase()) || seenBody.has(norm(body))) skip(s, 'repeated');
       else {
@@ -346,10 +378,12 @@ function generate(rawLines, tags = [], o = {}) {
     }
     return before + newT + after;
   };
+  // "Si" names a person: a swap never puts a thing after it, or a person after "Ang".
+  const person = x => /^(?:Si|Sina)\s/.test(x.src);
   const tfText = (it, t) => {
     const swap = it.kind === 'def'
-      ? verifiedSwap(it, defs, x => x.src, x => x.term, x => x.body, o => plural(o.term) === subjectPlural(it))
-      : verifiedSwap(it, clozes, x => x.src, x => x.term, x => x.src, o => plural(o.term) === subjectPlural(it));
+      ? verifiedSwap(it, defs, x => x.src, x => x.term, x => x.body, o => plural(o.term) === subjectPlural(it) && person(o) === person(it))
+      : verifiedSwap(it, clozes, x => x.src, x => x.term, x => x.src, o => plural(o.term) === subjectPlural(it) && person(o) === person(it));
     // No candidate with the right number: skip this true/false rather than print "Chloroplasts is ...".
     if (!t && (!swap || plural(swap) !== subjectPlural(it))) return '';
     const st = (t ? clean(it.src) : replaceTerm(clean(it.src), it.term, swap)).replace(/\.$/, ''); // a true claim is the note's own sentence

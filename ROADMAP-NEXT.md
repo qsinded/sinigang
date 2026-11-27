@@ -46,6 +46,11 @@ device. Every phase adds tests to `tests/check.js`, never raises a `tests/qualit
    Rizal ay binaril…" a fact about a person. Add `noong <year>` to the date rule. Add
    `tests/corpus/filipino.txt` so `npm run quality` guards it.
    *Why first:* the app's audience is Filipino students, and today these notes produce nothing.
+   **Done 2026-11-27:** `LANGS` table (en, fil) drives articles, linking verbs, non-terms and clause words;
+   "Ang X ay Y", "Si X ay Y", "Si X ang Y" and verb-first sentences with a year work; true/false keeps
+   people after "Si". Filipino corpus coverage 0% → 90%, English output unchanged. Still to do: Filipino
+   question wording ("Ano ang tinutukoy?", "Tama o Mali"), Filipino learning objectives ("Layunin",
+   Bloom verbs like "Ipaliwanag"), and Filipino list headings ("Halimbawa", "Tandaan").
 2. **More ways English notes state a fact.** "X states that Y", "X is called Y" / "Y is known as
    X", "X consists of Y", "X happens when Y", "X occurs when Y". Each needs a question form
    ("Which law states that…?") and a quality-corpus line.

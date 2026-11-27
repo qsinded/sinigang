@@ -10,7 +10,7 @@ const RUNS = 25;
 // Coverage per corpus, in percent of its substantial lines that some question cites. The counts above only see bad
 // questions; a rule that silently stops reading a kind of sentence shows up here. It may only go up: raise the number
 // in the same commit as an improvement. A new corpus file needs an entry. `npm run quality -- --missed` lists unused lines.
-const COVERAGE = { 'biology.txt': 67, 'computer-architecture.txt': 47, 'economics.txt': 54, 'exam-paper.txt': 54, 'filipino.txt': 0, 'history.txt': 81, 'lecture.txt': 33, 'networking.txt': 88 };
+const COVERAGE = { 'biology.txt': 67, 'computer-architecture.txt': 47, 'economics.txt': 54, 'exam-paper.txt': 54, 'filipino.txt': 90, 'history.txt': 81, 'lecture.txt': 33, 'networking.txt': 88 };
 
 function seeded(seed) { // mulberry32
   return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
