@@ -177,7 +177,12 @@ function generate(rawLines, tags = [], o = {}) {
   const flushList = () => { if (hdr && items.length >= 3 && !OUTLINE.test(hdr.trim()) && !LOW.test(hdr.trim()) && !OBJ_HEAD.test(hdr.trim())) enums.push({ hdr, items: items.map(clean).filter(Boolean), src: note(hdr + ': ' + items.join(', '), hdrTag) }); hdr = null; items = []; };
   const flushPara = () => { if (para) para.split(/(?<=[.!?])\s+(?=[A-Z".])/).forEach(s => sents.push(note(s.trim(), paraTag))); para = ''; };
 
-  for (const { t: l, g } of lines) {
+  // A long heading starts a sentence and is either Title Case or, in sentence case ("Spanish colonization and the
+  // revolution"), has no verb, does not stop on "and"/"the", and the next line starts a new sentence. A line cut
+  // mid-sentence fails one of these, so it still joins the next line.
+  const longHead = (l, next) => l.length < 100 && (!para || /[.!?]$/.test(para))
+    && (titleCase(l) || (!verbIn(l) && !DEAD_END.test(l) && (!next || BUL.test(next) || /^[A-Z"“]/.test(next))));
+  for (const [i, { t: l, g }] of lines.entries()) {
     if (BUL.test(l)) {
       flushPara();
       const it = l.replace(BUL, '');
@@ -187,9 +192,7 @@ function generate(rawLines, tags = [], o = {}) {
     } else {
       flushList();
       if (l.endsWith(':') && l.length < 100) { flushPara(); hdr = l.slice(0, -1); hdrTag = g; sect = hdr; }
-      // heading; a long one ("Araling Panlipunan - Spanish Colonization and Revolution") is Title Case and starts
-      // a sentence, so it is not glued onto the first sentence below it
-      else if (!/[.!?:,;]$/.test(l) && (l.length < 50 || (l.length < 100 && titleCase(l) && (!para || /[.!?]$/.test(para))))) { flushPara(); sect = l; }
+      else if (!/[.!?:,;]$/.test(l) && (l.length < 50 || longHead(l, (lines[i + 1] || {}).t))) { flushPara(); sect = l; } // heading
       else {
         if (!para) paraTag = g;
         // Slides and PDFs often drop the full stop at the end of a line. Joining "…to recognize first"
@@ -218,7 +221,8 @@ function generate(rawLines, tags = [], o = {}) {
       const body = clean(d[2].replace(/[.;]$/, ''));
       // skip headings posing as terms and repeated definitions
       if (body.length >= 15 && term.split(' ').length <= 5 && !NOT_TERM.test(term) && !LOW.test(term) && !LABEL.test(term) && !seen.has(term.toLowerCase()) && !seenBody.has(norm(body))
-        && !instruction(term) && !/\b(?:is|are|was|were|be|do|does|did|will|can)\b/i.test(term)) { // "Write TRUE if the statement" is a clause, not a term
+        && !instruction(term) && !/\b(?:is|are|was|were|be|do|does|did|will|can)\b/i.test(term)
+        && !/\b(?:when|whenever|where|while|if|because|since|that|which|who|whom|whose|than|until|unless)\b/i.test(term)) { // "surplus happens when quantity supplied" is a clause // "Write TRUE if the statement" is a clause, not a term
         seen.add(term.toLowerCase()); seenBody.add(norm(body));
         const mask = body.replace(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), '_____');
         // "The CPU is the CPU of the computer" leaves "The _____ of the computer": nothing to answer from.
@@ -309,7 +313,7 @@ function generate(rawLines, tags = [], o = {}) {
   for (const it of all) {
     const dist = near(it.term, pool[it.kind].filter(o => fits(it, o)).map(o => o.term), prefer(it));
     // True/false. A "false" statement is only made when it is certainly false (see verifiedSwap), never by luck.
-    if (nTF < ITEM_CAP.tf && Math.random() < 0.2) {
+    if (!o.noTF && nTF < ITEM_CAP.tf && Math.random() < 0.2) { // with true/false off, the fact becomes a normal question instead of being dropped
       // Flipping is only worth it while "False" does not outnumber "True", and only once per sentence.
       let t = Math.random() < 0.5;
       if (!t && (falseSrc.has(it.src) || nTFalse >= nTTrue)) t = true;

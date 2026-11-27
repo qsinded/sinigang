@@ -139,6 +139,19 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
     titled.forEach(q => assert(!/Araling|Colonization/.test(q.q + ' ' + (q.options || []).join(' ') + ' ' + (q.answer || '')), 'the title leaked into: ' + q.q));
     assert(titled.some(q => /Magellan arrived/.test(q.exp)), 'the first sentence under the title is still asked');
   }
+  // The same in sentence case: no verb, the next line starts a new sentence.
+  for (let i = 0; i < 20; i++) generate(['Spanish colonization and the Philippine revolution of the century', ...dated, ...hist]).forEach(q =>
+    assert(!/colonization/.test(q.q + ' ' + (q.options || []).join(' ') + ' ' + (q.answer || '')), 'the sentence-case title leaked into: ' + q.q));
+  // A verbless line cut mid-sentence still joins when the next line carries on in lower case.
+  const cut = generate(['Ferdinand Magellan and his crew from Spain on their voyage around the world', 'arrived in Cebu in the Philippines in 1521.', ...hist], [], { noTF: true });
+  assert(cut.some(q => /voyage around the world arrived in Cebu/.test(q.exp)), 'a verbless wrapped line stays in its sentence');
+  // A clause before "is" is not a term: "A surplus happens when quantity supplied is greater…" must not answer "surplus happens when…".
+  const econ = ['A surplus happens when quantity supplied is greater than quantity demanded.', 'A shortage happens when quantity demanded is greater than quantity supplied.',
+    'Demand is the quantity of a good that consumers are willing and able to buy.', 'Supply is the quantity of a good that producers are willing to sell.', 'Inflation is a general increase in prices over time.'];
+  for (let i = 0; i < 20; i++) generate(econ).forEach(q => {
+    const a = q.type === 'mc' ? q.options[q.answer] : String(q.answer || '');
+    assert(!/\bwhen\b/.test(a) && !(q.options || []).some(o => /happens when/.test(o)), 'a clause became a term: ' + q.q + ' => ' + a);
+  });
   // A Title Case line in the middle of a sentence ("...between Spain and" / "United States Of America") still joins it.
   const wrapped = generate(['The Treaty of Paris was the agreement signed between Spain and', 'United States Of America To End The Spanish-American War', ...hist]);
   assert(wrapped.some(q => /Treaty of Paris/.test(q.exp) && /United States Of America/.test(q.exp)), 'a wrapped line stays in its sentence');
