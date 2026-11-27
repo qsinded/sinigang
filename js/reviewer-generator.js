@@ -666,7 +666,7 @@ function generate(rawLines, tags = [], o = {}) {
     const shown = isTrue ? it.term : swap, st = (isTrue ? clean(it.src) : replaceTerm(clean(it.src), it.term, swap)).replace(/\.$/, '');
     const marked = st.replace(new RegExp('\\b' + esc(shown) + '\\b', 'i'), m => '[' + m + ']');
     if (marked === st || !statementOk(st)) continue;
-    out.push({ w: it.w, type: 'mtf', q: 'Modified true or false: ' + cap1(marked) + '. Write TRUE if it is correct; if not, write the word that should replace the one in brackets.',
+    out.push({ w: it.w, type: 'mtf', q: 'Modified true or false: ' + cap1(marked) + '.', // the directions are shown once per part
       answer: isTrue ? 'TRUE' : it.term, exp: ex(it.src) });
     nMtf++; if (isTrue) nMtfTrue++;
   }

@@ -275,3 +275,10 @@ p.k,.card>.k:not(h2),.err+.k{font:inherit;text-transform:none;letter-spacing:0}
 /* Blurt results. */
 .blurt ul{padding-left:20px}
 .blurt li{margin:8px 0;overflow-wrap:anywhere}
+/* A matching set on a flashcard: one pair per line, left-aligned and readable instead of one centered paragraph. */
+.flip-card .pairs{display:block;text-align:left;font-size:1rem;font-weight:400;line-height:1.45}
+.flip-card .pair{display:block;margin:8px 0}
+/* Modified true or false: the part's directions, once. */
+.directions{border-left:3px solid var(--acc);padding:4px 0 4px 12px;margin:12px 0;max-width:65ch}
+/* Delete sits apart from the everyday buttons on a saved reviewer, in the warning colour. */
+.card.saved .danger{margin-left:auto;color:var(--bad);border-color:var(--bad)}

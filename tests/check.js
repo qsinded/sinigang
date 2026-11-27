@@ -427,7 +427,7 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
       assert.deepStrictEqual([...q.terms].sort(), q.pairs.map(p => p.term).sort(), 'the term list holds exactly the set\'s terms');
     }
     if (q.type === 'mtf') {
-      const m = q.q.match(/^Modified true or false: (.*)\[(.+?)\](.*?)\. Write TRUE/);
+      const m = q.q.match(/^Modified true or false: (.*)\[(.+?)\](.*?)\.$/);
       assert(m, 'the statement marks one term in brackets: ' + q.q);
       const own = (m[1] + m[2] + m[3]).replace(/^An? /, '');
       if (q.answer === 'TRUE') { sawMtfTrue++; assert(examNotes.some(s => s.startsWith(own)), 'a TRUE statement is the note\'s own sentence: ' + q.q); }
@@ -568,7 +568,7 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
     // "True or false: " and "Fill in the blank: … _____" are the app's own wording, not note text; the source sentence
     // (exp) is still checked, so a pre-blanked exam line ("1. ________ DB defines…") is still caught.
     each(x, s => assert(!RUBRIC_TEXT.test(String(s).replace(/^True or false: /, '').replace(/^Fill in the blank: (.*)_____/, '$1')
-      .replace(/^Modified true or false: (.*) Write TRUE if it is correct; if not, write the word that should replace the one in brackets\.$/, '$1')),
+      .replace(/^Modified true or false: /, '')),
     'no question is built from a rubric, an instruction or a blank line: ' + s));
     assert(!RUBRIC_TEXT.test(String(x.exp).replace(/^\([^)]*\)\s*/, '')), 'no question cites a rubric or a pre-blanked line: ' + x.exp);
     if (!/^True or false: /.test(x.q)) return;

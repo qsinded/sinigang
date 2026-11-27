@@ -956,5 +956,53 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   ctx.home();
   vm.runInContext('pasteText = ""', ctx);
 
+  // From the third student test.
+  // "Show in my notes" finds the question's own sentence even when the PDF split it over two lines, and never lands on
+  // an unrelated line that merely contains the answer word (an exam option "C. Saving files to storage").
+  const srcR = ctx.cleanReviewer({ ...base, title: 'Notes', src: ['C. Saving files to storage', '10. Which bus carries data between the CPU, memory, and input/output devices?',
+    'Data representation', 'Characters are stored as bytes using the directives', 'DB (Define Byte) and DW (Define Word) in assembly.'],
+    items: [{ id: 'n0', type: 'id', q: 'Which term is described? Stored as bytes using the directives DB and DW', answer: 'storage', exp: '(page 2) Characters are stored as bytes using the directives DB (Define Byte) and DW (Define Word) in assembly.' },
+      { id: 'n1', type: 'id', q: 'Which term is described? A missing line', answer: 'storage', exp: '(page 9) Memory storage keeps data while the power is on.' },
+      { id: 'n2', type: 'id', q: 'q', answer: 'x', exp: '' }] });
+  const found = ctx.sourceLine(srcR, srcR.items[0]);
+  assert.strictEqual(found && found.at, 3, 'the sentence split over two lines is found, not the option line');
+  assert.strictEqual(ctx.sourceLine(srcR, srcR.items[1]), null, 'a sentence that is not in the notes is not replaced by a line containing the answer');
+  vm.runInContext('R = [' + JSON.stringify(srcR) + ']; open(R[0]); R[0].ans.n1 = { val: "storage", ok: true, exp: "storage" }; quiz();', ctx);
+  vm.runInContext("quizView = 'list'; quiz();", ctx);
+  const n1Btn = find(appEl, e => e.tagName === 'BUTTON' && e.attrs['aria-controls'] === 'src-n1')[0];
+  n1Btn.onclick({ currentTarget: n1Btn });
+  const n1Text = screenText(find(appEl, e => e.attrs && e.attrs.id === 'src-n1')[0]);
+  assert.ok(n1Text.includes('Memory storage keeps data') && !n1Text.includes('Saving files'), 'it shows the question\'s own sentence instead: ' + n1Text);
+  // Modified true or false states its directions once for the part, like Test II of a paper, not on every item.
+  const mtfR = ctx.cleanReviewer({ ...base, title: 'MTF', items: [0, 1, 2].map(i => ({ id: 'f' + i, type: 'mtf', q: 'Modified true or false: [Osmosis] is statement ' + i + '.', answer: 'TRUE', exp: '' })) });
+  vm.runInContext('R = [' + JSON.stringify(mtfR) + ']; open(R[0]); quizView = "list"; quiz();', ctx);
+  const mtfScreen = screenText(appEl);
+  assert.strictEqual((mtfScreen.match(/Write TRUE/g) || []).length, 1, 'the directions appear once for the part');
+  const fresh = ctx.generate(['Mitosis is the division of a nucleus into two identical nuclei.', 'Meiosis is a cell division that produces four haploid gametes.',
+    'Osmosis is the diffusion of water across a membrane.', 'Diffusion is the movement of particles from high to low concentration.']).filter(q => q.type === 'mtf');
+  assert.ok(fresh.length && fresh.every(q => !/Write TRUE/.test(q.q)), 'generated items no longer repeat the directions');
+  // A matching set on a flashcard is a list of pairs, not one long paragraph, and the notes are not repeated under it.
+  vm.runInContext('R = [' + JSON.stringify(formatR) + ']; open(R[0]); startFlash("all"); flashIndex = flashOrder.indexOf(0); flashRevealed = true; flipcards();', ctx);
+  const pairList = find(appEl, e => String(e.className || '').split(' ').includes('pairs'));
+  assert.strictEqual(pairList.length, 1, 'the answer is one block of pairs');
+  assert.strictEqual(pairList[0].children.length, 3, 'one line per pair');
+  assert.ok(!screenText(appEl).includes('From your reviewer notes'), 'the notes are not repeated under the pairs');
+  // A periodical exam ends with one total score, and its setup does not redraw (and lose focus) on every tick.
+  const phys = mkR('Physics', 'p'), chem2 = mkR('Chemistry', 'q');
+  vm.runInContext('R = [' + JSON.stringify(phys) + ', ' + JSON.stringify(chem2) + ']; examPick = new Set();', ctx);
+  ctx.periodicalSetup();
+  const ticks = find(appEl, e => e.tagName === 'INPUT' && e.attrs.type === 'checkbox');
+  ticks[0].checked = true; ticks[0].onchange({ target: ticks[0] });
+  assert.ok(find(appEl, e => e === ticks[0]).length === 1, 'ticking a reviewer keeps the same screen (focus stays)');
+  const startBtn = find(appEl, e => e.tagName === 'BUTTON' && /Start exam/.test(screenText(e)))[0];
+  assert.strictEqual(startBtn.attrs.disabled, undefined, 'Start is enabled once a reviewer is ticked');
+  ctx.startPeriodical([vm.runInContext('R[0].id', ctx), vm.runInContext('R[1].id', ctx)], 0);
+  vm.runInContext('cur.items.forEach(it => answer(it, it.answer))', ctx);
+  assert.match(screenText(appEl), /Final score: 6 of 6/, 'the exam ends with one total score');
+  // Delete is set apart from the everyday buttons on a saved reviewer.
+  ctx.home();
+  const del = find(appEl, e => e.tagName === 'BUTTON' && screenText(e) === 'Delete')[0];
+  assert.ok(String(del.className).includes('danger'), 'Delete is styled apart');
+
   console.log('app smoke checks passed');
 })().catch(e => { console.error(e); process.exit(1); });

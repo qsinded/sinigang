@@ -28,7 +28,8 @@ const IMPERATIVE = /^(?:(?:instructions?|directions?|(?:mga )?panuto)\s*(?::|$)|
 const answerText = q => q.type === 'mc' ? q.options[q.answer] : q.type === 'id' || q.type === 'mtf' ? q.answer
   : q.type === 'match' ? (q.pairs || []).map(p => p.term).join(' ') : (q.items || []).join(' ');
 // A modified true or false item's statement, without the app's instruction around it.
-const MTF = /^Modified true or false: (.*) Write TRUE if it is correct; if not, write the word that should replace the one in brackets\.$/;
+// The directions are shown once per part now; reviewers saved earlier still carry them in each question.
+const MTF = /^Modified true or false: (.*?\.)(?: Write TRUE if it is correct; if not, write the word that should replace the one in brackets\.)?$/;
 // Share of the text's words that appear in the source sentence. Cleaning removes filler words, so exact matching would flag good questions.
 const covered = (text, src) => { const w = String(text).toLowerCase().match(/[a-z0-9]{3,}/g) || [], s = new Set(String(src).toLowerCase().match(/[a-z0-9]{3,}/g) || []); return w.length ? w.filter(x => s.has(x)).length / w.length : 1; };
 const rawSrc = q => String(q.exp).replace(/^\([^)]*\)\s*/, '');
@@ -135,7 +136,7 @@ function check(q, bad) {
   // The new exam formats are checked too: a modified true or false whose bracketed word is its own answer is a
   // mismatch, a TRUE one must be the note's sentence, and a matching pair must come from the notes it cites.
   const seesNew = (fixture, key) => { const before = b[key]; check(fixture, b); if (b[key] === before) throw new Error('quality check "' + key + '" misses a bad ' + fixture.type + ' item'); };
-  const mtfQ = st => 'Modified true or false: ' + st + ' Write TRUE if it is correct; if not, write the word that should replace the one in brackets.';
+  const mtfQ = st => 'Modified true or false: ' + st;
   seesNew({ type: 'mtf', q: mtfQ('[Osmosis] is the diffusion of water across a membrane.'), answer: 'Osmosis', exp: '(page 1) Osmosis is the diffusion of water across a membrane.' }, 'falseTrueMismatch');
   seesNew({ type: 'mtf', q: mtfQ('[Mitosis] is the diffusion of water across a membrane.'), answer: 'TRUE', exp: '(page 1) Osmosis is the diffusion of water across a membrane.' }, 'falseTrueMismatch');
   seesNew({ type: 'match', q: 'Matching type (set 1): match each description with the term it describes.', pairs: [{ term: 'Osmosis', desc: 'The release of hormones into blood' }],

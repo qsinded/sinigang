@@ -295,16 +295,28 @@ function openMistakes() { open(combined('My mistakes', 'mistakes', missedPicks()
 // Periodical exam: questions from the chosen reviewers, grouped by type into Test I, Test II, … like an exam paper.
 let examPick = new Set(), examPer = 10;
 function periodicalSetup() {
+  // Ticking a reviewer updates the choice and the Start button in place: a redraw would throw focus back to the top.
+  const start = h('button', { class: 'btn', disabled: examPick.size ? null : '', onclick: () => startPeriodical([...examPick], examPer) }, 'Start exam');
+  const tick = (id, on) => { if (on) examPick.add(id); else examPick.delete(id); if (examPick.size) start.removeAttribute('disabled'); else start.setAttribute('disabled', ''); };
   draw(h('div', null,
     h('button', { class: 'btn alt', onclick: () => home() }, '← Back'),
     h('h1', null, 'Periodical exam'),
     h('p', { class: 'sub' }, 'Pick the reviewers your exam covers. Their questions are mixed into one paper, Test I, Test II and so on by question type. Your answers also count in each reviewer.'),
     h('div', { class: 'card picks' }, R.map(r => h('label', { class: 'pick' },
-      h('input', { type: 'checkbox', checked: examPick.has(r.id) ? '' : null, onchange: e => { if (e.target.checked) examPick.add(r.id); else examPick.delete(r.id); periodicalSetup(); } }),
+      h('input', { type: 'checkbox', checked: examPick.has(r.id) ? '' : null, onchange: e => tick(r.id, e.target.checked) }),
       ' ' + r.title + ' (' + r.items.length + ' questions)'))),
     h('div', { class: 'row' }, h('label', null, 'Questions per test ',
       h('select', { onchange: e => { examPer = Number(e.target.value); } }, [[5, '5'], [10, '10'], [0, 'All']].map(([v, t]) => h('option', { value: v, selected: v === examPer ? '' : null }, t))))),
-    h('p', null, h('button', { class: 'btn', disabled: examPick.size ? null : '', onclick: () => startPeriodical([...examPick], examPer) }, 'Start exam'))), 'periodical');
+    h('p', null, start)), 'periodical');
+}
+// A periodical exam ends with one total, like a checked paper: the whole exam and each test.
+function examSummary(r, ts) {
+  const answered = r.items.filter(i => r.ans[i.id]).length, all = r.items.length, score = its => its.reduce((n, i) => n + credit(r.ans[i.id]), 0);
+  const got = score(r.items);
+  return h('div', { class: 'card done exam-total', role: 'status' },
+    h('b', null, answered < all ? 'Answered ' + answered + ' of ' + all + ' · score so far ' + scoreText(got)
+      : 'Final score: ' + scoreText(got) + ' of ' + all + ' (' + Math.round(got / all * 100) + '%)'),
+    h('ul', null, ts.map(k => { const its = r.items.filter(i => i.type === k); return h('li', null, tabName(r, ts, k) + ': ' + scoreText(score(its)) + ' of ' + its.length); })));
 }
 function startPeriodical(ids, per) {
   const picks = R.filter(r => ids.includes(r.id)).flatMap(r => r.items.map(it => ({ r, it })));
@@ -354,13 +366,18 @@ function sourceLine(r, it) {
   const want = plain(untag(it.exp)), needle = isTF(it) ? '' : norm(flashAnswer(it) || '');
   let at = want ? lines.findIndex(l => plain(l) === want) : -1;
   if (at < 0 && want) at = lines.findIndex(l => plain(l).includes(want.slice(0, Math.min(want.length, 60))));
-  if (at < 0 && want) { // a sentence cut across lines: take the line that shares most of its words
-    const ws = x => new Set(plain(x).match(/[a-z0-9]{3,}/g) || []), w = ws(want);
+  // An exam option or a question line shares words with many sentences but is never where an answer comes from.
+  const furniture = l => /^\s*(?:[A-Da-d]|\d+)[.)]\s/.test(l) || /\?\s*$/.test(l);
+  if (at < 0 && want) { // a sentence cut across lines: take the line that shares most of its content words
+    const ws = x => new Set(plain(x).match(/[a-z0-9]{4,}/g) || []), w = ws(want);
     let best = 0;
-    lines.forEach((l, i) => { const lw = ws(l); let n = 0; w.forEach(x => { if (lw.has(x)) n++; }); if (n / (w.size || 1) > best) { best = n / (w.size || 1); at = i; } });
+    lines.forEach((l, i) => { if (furniture(l)) return; const lw = ws(l); let n = 0; w.forEach(x => { if (lw.has(x)) n++; }); if (n / (w.size || 1) > best) { best = n / (w.size || 1); at = i; } });
     if (best < 0.4) at = -1;
   }
-  if (at < 0 && needle.length >= 3) at = lines.findIndex(l => norm(l).includes(needle));
+  // Only a question with no sentence of its own (added by hand) is looked up by its answer word, and never on an exam
+  // option ("C. Saving files to storage") or a question line: those contain the word but say nothing about it.
+  // A question that has its own sentence shows that sentence when the notes do not have it (sourcePanel's fallback).
+  if (at < 0 && !want && needle.length >= 3) at = lines.findIndex(l => !furniture(l) && norm(l).includes(needle));
   if (at < 0) return null;
   return { at, text: lines[at], tag: (r.tags && r.tags[at]) || '' };
 }
@@ -1484,11 +1501,16 @@ function home() {
         h('button', { class: 'btn alt', onclick: () => open(r) }, 'Open'),
         h('button', { class: 'btn alt', onclick: () => shareReviewer(r) }, 'Share'),
         h('button', { class: 'btn alt', onclick: () => exportAll(r) }, 'Save file'),
-        h('button', { class: 'btn alt', onclick: async () => { if (await ask('Delete "' + r.title + '"?', 'Delete')) deleteReviewer(r); } }, 'Delete')));
+        h('button', { class: 'btn alt danger', onclick: async () => { if (await ask('Delete "' + r.title + '"?', 'Delete')) deleteReviewer(r); } }, 'Delete')));
   fill(); cur = null; draw(node, 'home'); if (n) say(n);
   const nt = document.getElementById('title'); if (nt) nt.value = tv;
 }
 
+// Modified true or false: the directions are stated once for the part. Reviewers saved before this carry them in every
+// question, so that copy is trimmed when a question is shown.
+const MTF_DIRECTIONS = 'Directions: Write TRUE if the statement is correct. If it is not, write the word that should replace the one in [brackets].';
+const OLD_MTF_DIRECTIONS = ' Write TRUE if it is correct; if not, write the word that should replace the one in brackets.';
+const shownQ = it => (String(it.q).endsWith(OLD_MTF_DIRECTIONS) ? String(it.q).slice(0, -OLD_MTF_DIRECTIONS.length) : String(it.q));
 const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI'];
 // A periodical exam names its parts like the paper: "Test I. Multiple choice".
 const tabName = (r, ts, k) => (r.virtual === 'exam' ? 'Test ' + ROMAN[ts.indexOf(k)] + '. ' : '') + TABS[k];
@@ -1656,8 +1678,13 @@ function flipcards() {
   const mark = isKnown => { known[isKnown ? 'add' : 'delete'](it.id); learn[isKnown ? 'delete' : 'add'](it.id); r.flashKnown = [...known]; r.flashLearn = [...learn]; reviewItem(r, it.id, isKnown); save(); };
   // Spans, not divs: a <button> may only contain phrasing content. CSS makes them flex/block.
   const face = flashRevealed
-    ? h('span', { class: 'flip-face answer-face' }, h('span', { class: 'k' }, 'ANSWER'), it.type === 'img' && imageBlock(it, true), h('span', { class: 'flip-copy' }, flashAnswer(it)), h('span', { class: 'flip-source' }, it.exp ? 'From your reviewer notes: ' + it.exp : ''))
-    : h('span', { class: 'flip-face question-face' }, h('span', { class: 'k' }, 'QUESTION · TAP TO FLIP'), it.type === 'img' && imageBlock(it), h('span', { class: 'flip-copy' }, it.q));
+    ? h('span', { class: 'flip-face answer-face' }, h('span', { class: 'k' }, 'ANSWER'), it.type === 'img' && imageBlock(it, true),
+      // A matching set is one pair per line (spans: a card is a button, so no list inside it), without the notes again.
+      it.type === 'match'
+        ? h('span', { class: 'pairs' }, it.pairs.map(p => h('span', { class: 'pair' }, h('b', null, p.term), ' — ' + p.desc)))
+        : h('span', { class: 'flip-copy' }, flashAnswer(it)),
+      it.type !== 'match' && h('span', { class: 'flip-source' }, it.exp ? 'From your reviewer notes: ' + it.exp : ''))
+    : h('span', { class: 'flip-face question-face' }, h('span', { class: 'k' }, 'QUESTION · TAP TO FLIP'), it.type === 'img' && imageBlock(it), h('span', { class: 'flip-copy' }, shownQ(it)));
   const node = h('div', null,
     h('div', { class: 'row' }, h('button', { class: 'btn alt', onclick: () => { home(); } }, '← Back'), h('span', { class: 'k' }, 'FLASHCARDS')),
     h('h1', null, r.title),
@@ -1685,7 +1712,7 @@ let reciteRate = 1, reciteThink = 4000, reciteAnswers = true, reciteAuto = true;
 function ttsReady() { return 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined'; }
 function reciteQuestion(it) {
   if (it.type === 'img') return 'Look at the diagram. Identify the part marked.';
-  const q = it.q.replace(/_{3,}/g, 'blank');
+  const q = shownQ(it).replace(/_{3,}/g, 'blank') + (it.type === 'mtf' ? ' Say true, or the word that should replace the one in brackets.' : '');
   if (it.type === 'match') return q + ' ' + it.pairs.map((p, i) => (i + 1) + '. ' + p.desc).join('. ') + '. The terms are: ' + it.terms.join(', ') + '.';
   if (it.type !== 'mc') return q;
   return q + ' Options: ' + it.options.map((o, i) => 'ABCD'[i] + '. ' + o).join('. ') + '.';
@@ -1901,7 +1928,7 @@ function quizItem(r, it, idx, one) {
     h('div', { class: 'k' }, 'Q' + (idx + 1) + (a ? ' · ' : ''), a && h('span', { class: a.ok ? 'good' : 'miss' }, a.ok ? 'correct' : 'missed'),
       h('button', { class: 'btn alt flag-btn', 'aria-pressed': flagged ? 'true' : 'false', onclick: () => toggleFlag(r, it) }, flagged ? '⚑ Flagged' : '⚑ Flag'),
       !['match', 'mtf'].includes(it.type) && !r.virtual && h('button', { class: 'btn alt', onclick: () => openItemEditor({ items: r.items, hidden: r.hidden || (r.hidden = []), reviewer: r, index: r.items.indexOf(it), back: quiz }) }, 'Edit')),
-    h('div', { class: 'q', id: 'q-' + it.id }, it.q),
+    h('div', { class: 'q', id: 'q-' + it.id }, shownQ(it)),
     it.type === 'mc'
       ? h('div', { role: 'group', 'aria-labelledby': 'q-' + it.id }, it.options.map((o, oi) => h('button', { class: 'opt' + (a ? (oi === it.answer ? ' ok' : oi === a.val ? ' bad' : '') : ''), disabled: a || over ? '' : null, onclick: () => answer(it, oi) }, h('b', null, 'ABCD'[oi]), capFirst(o), a && oi === it.answer && h('span', { class: 'mark' }, '✓ Correct answer'), a && oi === a.val && oi !== it.answer && h('span', { class: 'mark' }, '✗ Your answer'))))
       : h('div', null,
@@ -2000,6 +2027,7 @@ function quiz() {
           bar(n ? total / n * 100 : 0, 'Correct answers')),
     view !== 'one' && tabs,
     view !== 'one' && tools,
+    tab === 'mtf' && h('p', { class: 'directions' }, MTF_DIRECTIONS), // once for the part, like Test II of a paper
     tab === 'mc' && h('p', { class: 'k keys' }, 'Keys: 1–4 answer the ' + (view === 'one' ? 'current' : 'next') + ' question.'),
     running && h('p', { class: 'k' }, 'Time left: ', h('b', { id: 'clock', class: 'mono' }, fmt(timed.end - Date.now()))),
     view === 'one'
@@ -2014,6 +2042,7 @@ function quiz() {
     view === 'one' && tools,
     (done || over) && h('div', { class: 'card done', role: 'status' }, h('b', null, (over && !done ? 'Time is up. ' : '') + 'Part score: ' + scoreText(partGood) + ' of ' + mine.length + ' correct (' + Math.round(partGood / mine.length * 100) + '%)'),
       h('p', null, partGood === mine.length ? 'Perfect. Try another part or the flashcards.' : 'Use "Retry missed" to practice the ones you got wrong.')),
+    r.virtual === 'exam' && examSummary(r, ts),
     statsPanel(r));
   flashing = false;
   draw(node, 'quiz');
