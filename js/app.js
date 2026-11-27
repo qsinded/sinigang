@@ -142,7 +142,7 @@ async function imageSize(blob) {
   return size;
 }
 // One worker per search, shut down afterwards: a cheap phone needs that memory back.
-async function findLabels(blob, existing, onProgress) {
+async function findLabels(blob, existing, onProgress, onWorker) {
   // Absolute, because the worker resolves paths against its own address; same folder as this page.
   const T = await loadTesseract(), dir = location.href.replace(/[?#].*$/, '').replace(/[^/]*$/, '') + OCR_DIR.slice(2, -1);
   const worker = await T.createWorker('eng', 1, {
@@ -150,6 +150,7 @@ async function findLabels(blob, existing, onProgress) {
     workerBlobURL: false, cacheMethod: 'none', // requests go through the service worker; no second copy in IndexedDB
     logger: m => { if (onProgress && m && typeof m.progress === 'number') onProgress(m.progress, m.status); }
   });
+  if (onWorker) onWorker(worker); // lets a dropped search stop it early
   try {
     const { data } = await worker.recognize(blob, {}, { blocks: true });
     // Words, not lines: a leader line touching a label is read as "\\" and joined to it, and the whole line
@@ -157,7 +158,7 @@ async function findLabels(blob, existing, onProgress) {
     const words = (data.blocks || []).flatMap(b => (b.paragraphs || []).flatMap(p => (p.lines || []).flatMap(l => l.words || [])));
     const { width, height } = await imageSize(blob);
     return labelCovers(words, width, height, existing);
-  } finally { await worker.terminate(); }
+  } finally { try { await worker.terminate(); } catch (e) { /* already stopped */ } }
 }
 async function pdfLines(pdfjs, buf, tags) {
   const doc = await pdfjs.getDocument({ data: buf, isEvalSupported: false }).promise, out = [];
@@ -1174,15 +1175,33 @@ function labelStatusText(s) {
   if (s.masks) return s.masks.length ? 'Found ' + s.masks.length + ' printed label' + (s.masks.length === 1 ? '' : 's') + '. They will be hidden when you practise; adjust them under Hide printed labels.' : 'No printed labels found.';
   return s.status === 'recognizing text' ? 'Looking for printed labels… ' + Math.round(s.pct * 100) + '%' : 'Getting the label finder ready…';
 }
+// A dropped search (new picture, Cancel) is stopped: a cheap phone cannot hold two engines at once. One
+// handed to a reviewer by Create keeps running.
+function dropLabelSearch() {
+  const s = labelSearch;
+  labelSearch = null;
+  if (s && !s.reviewerId) { s.dropped = true; if (s.worker) s.worker.terminate(); }
+}
 function startLabelSearch(blob) {
-  const s = labelSearch = { pct: 0, status: '', masks: null, error: '', reviewerId: null, imageId: null };
-  const show = () => { if (labelSearch === s && labelStatusEl) labelStatusEl.textContent = labelStatusText(s); }; // in place: never steal focus from a part name
-  findLabels(blob, [], (pct, status) => { s.pct = pct; s.status = status; show(); }).then(masks => {
+  dropLabelSearch();
+  const s = labelSearch = { pct: 0, status: '', masks: null, error: '', reviewerId: null, imageId: null, worker: null, dropped: false };
+  // Progress is shown in place, never as a live region (a screen reader would read every tick) and never by
+  // a redraw (it would steal focus from a part name); the result is announced once.
+  const show = final => {
+    if (labelSearch !== s) return;
+    if (labelStatusEl) labelStatusEl.textContent = labelStatusText(s);
+    if (final) say(labelStatusText(s));
+  };
+  const onWorker = w => { s.worker = w; if (s.dropped) w.terminate(); };
+  findLabels(blob, [], (pct, status) => { s.pct = pct; s.status = status; show(false); }, onWorker).then(masks => {
     s.masks = masks;
-    if (s.reviewerId) attachLabels(s); else show();
+    if (s.reviewerId) attachLabels(s); else show(true);
   }, e => {
     s.error = e && e.message ? e.message : 'Could not look for printed labels.';
-    if (s.reviewerId && labelSearch === s) labelSearch = null; else show();
+    if (!s.reviewerId) { show(true); return; }
+    if (labelSearch === s) labelSearch = null;
+    const r = R.find(x => x.id === s.reviewerId); // the student left the maker: say it, or they practise with the answers showing
+    if (r) say('Could not find printed labels for "' + r.title + '". Open Hide printed labels to try again.');
   });
 }
 function attachLabels(s) {
@@ -1193,12 +1212,16 @@ function attachLabels(s) {
   if (!add.length) return;
   r.masks = cleanMasks([...(r.masks || []), ...add]);
   save();
+  if (coverFor === r) { // the editor works on its own copy, and Save covers would replace these with it
+    coverList = cleanMasks([...coverList, ...freshCovers(add, coverList)]);
+    if (lastScreen === 'covers') coversScreen();
+  }
   if (cur === r && lastScreen === 'quiz') quiz();
   say(add.length + ' printed label' + (add.length === 1 ? '' : 's') + ' hidden on "' + r.title + '".');
 }
 function clearDiagram() {
   diagToken++;
-  if (labelSearch && !labelSearch.reviewerId) labelSearch = null;
+  if (labelSearch && !labelSearch.reviewerId) dropLabelSearch();
   if (diagURL && diagBlob) URL.revokeObjectURL(diagURL);
   diagBlob = null; diagURL = ''; diagTitleText = ''; diagParts = []; diagPending = null; diagNameText = ''; diagBusy = false; diagErr = ''; diagEditing = null;
 }
@@ -1304,7 +1327,7 @@ async function pickDiagram(file) {
     // Hotspots are fractions of the picture, so an edited reviewer keeps its parts on a new copy of it.
     if (!diagEditing) { diagParts = []; diagPending = null; diagNameText = ''; }
     // A replaced picture in Edit parts is not searched: its hand-made covers may already be right.
-    if (!diagEditing) { labelSearch = null; if (ocrSupported() && ocrConsent() === 'yes') startLabelSearch(blob); }
+    if (!diagEditing) { dropLabelSearch(); if (ocrSupported() && ocrConsent() === 'yes') startLabelSearch(blob); }
     if (!diagTitleText) diagTitleText = file.name.replace(/\.[^.]+$/, '').slice(0, 120);
   } catch (e) { if (token === diagToken) diagErr = e && e.message ? e.message : 'Could not read that image.'; }
   if (token !== diagToken) return;
@@ -1390,7 +1413,7 @@ function labelFinderNote() {
       h('button', { class: 'btn', onclick: () => { setOcrConsent('yes'); if (diagBlob) startLabelSearch(diagBlob); diagramSetup(); } }, 'Yes, find labels'),
       h('button', { class: 'btn alt', onclick: () => { setOcrConsent('no'); diagramSetup(); say('Labels will not be searched. You can hide them by hand.'); } }, 'No thanks')));
   if (!labelSearch) return null;
-  labelStatusEl = h('p', { class: 'k', role: 'status' }, labelStatusText(labelSearch));
+  labelStatusEl = h('p', { class: 'k' }, labelStatusText(labelSearch)); // not a live region: results go through say()
   return labelStatusEl;
 }
 function diagramSetup() {
@@ -1570,7 +1593,7 @@ function coversScreen() {
       ocrSupported()
         ? h('p', null, h('button', { class: 'btn', disabled: coverFinding ? '' : null, onclick: findCovers }, 'Find printed labels'))
         : h('p', { class: 'k' }, OCR_UNSUPPORTED),
-      (coverStatusEl = (coverFinding || coverNote) ? h('p', { class: 'k', role: 'status' }, coverFinding ? labelStatusText(coverFinding) : coverNote) : null),
+      (coverStatusEl = (coverFinding || coverNote) ? h('p', { class: 'k' }, coverFinding ? labelStatusText(coverFinding) : coverNote) : null), // result announced by say()
       h('div', { class: 'row' },
         h('button', { class: 'btn alt', onclick: add }, 'Add cover'),
         coverList.length > 0 && h('button', { class: 'btn alt', onclick: () => { coverList = []; coverIndex = -1; coversScreen(); say('All covers cleared.'); } }, 'Clear all'))),

@@ -571,6 +571,8 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   assert.ok(state('labelSearch'), 'agreeing starts the search on this picture');
   release(); await settle();
   assert.match(statusText(), /Found 1 printed label/, 'the maker says what it found, without a redraw');
+  assert.ok(!vm.runInContext('labelStatusEl.hasAttribute("role")', ctx), 'progress is not a live region: a screen reader would read every tick');
+  assert.match(vm.runInContext('live.textContent', ctx), /Found 1 printed label/, 'the result is announced once');
   // Agreed once: the next picture is searched by itself. Create does not wait for a search still running.
   ctx.clearDiagram();
   release = hold();
@@ -604,6 +606,36 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   const deleted = vm.runInContext('R.shift()', ctx);
   release(); await settle();
   assert.ok(!vm.runInContext('R', ctx).includes(deleted) && deleted.masks.length === 0, 'a deleted reviewer gets nothing');
+  // A dropped search is stopped, not left running: a cheap phone cannot hold two engines at once.
+  ctx.clearDiagram();
+  hold();
+  await ctx.pickDiagram({ name: 'a.png', type: 'image/png' }); await settle();
+  const stoppedBefore = fakeT.terminated;
+  hold();
+  await ctx.pickDiagram({ name: 'b.png', type: 'image/png' }); await settle();
+  assert.strictEqual(fakeT.terminated, stoppedBefore + 1, 'picking another picture stops the first search');
+  btnNamed('← Cancel').onclick();
+  assert.strictEqual(fakeT.terminated, stoppedBefore + 2, 'leaving the maker stops the search');
+  // A late result also reaches an open cover editor, so Save covers does not throw it away.
+  release = hold();
+  await ctx.pickDiagram({ name: 'late.png', type: 'image/png' });
+  vm.runInContext(threeParts, ctx);
+  await ctx.createDiagram();
+  const late = vm.runInContext('R[0]', ctx);
+  ctx.openCovers(late);
+  release(); await settle();
+  assert.strictEqual(vm.runInContext('coverList.length', ctx), 1, 'the open cover editor gets the late covers');
+  find(appEl, e => e.tagName === 'BUTTON' && screenText(e) === 'Save covers')[0].onclick();
+  assert.strictEqual(late.masks.length, 1, 'and Save covers keeps them');
+  // A search that fails after Create is said out loud, not dropped.
+  let fail; fakeT.gate = new Promise((_, no) => { fail = no; }); fakeT.gate.catch(() => {});
+  await ctx.pickDiagram({ name: 'offline.png', type: 'image/png' });
+  vm.runInContext(threeParts, ctx);
+  await ctx.createDiagram();
+  fail(new Error('Network error')); await settle();
+  assert.match(vm.runInContext('live.textContent', ctx), /Could not find printed labels for "/, 'a failure after Create is announced');
+  fakeT.gate = Promise.resolve();
+  vm.runInContext("R = R.filter(r => r !== R[0] && r !== R[1])", ctx); // the two reviewers made just above
   // Editing a saved reviewer never searches by itself; a browser without the service worker is told why.
   await ctx.editDiagram(made);
   await ctx.pickDiagram({ name: 'clearer.png', type: 'image/png' });
@@ -659,6 +691,7 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   assert.strictEqual(ctx.ocrConsent(), 'yes', 'and remembers the yes');
   assert.strictEqual(vm.runInContext('coverList.length', ctx), masksBefore.length + 1, 'a label already under a cover is not covered again');
   assert.match(screenText(appEl), /1 printed label covered/, 'the editor says what it added');
+  assert.ok(!vm.runInContext('coverStatusEl.hasAttribute("role")', ctx), 'the editor status is not a live region either');
   assert.deepStrictEqual(plain(imgReviewer.masks), masksBefore, 'nothing is saved until Save covers');
   await findBtn().onclick(); await settle();
   assert.strictEqual(asked, 1, 'a yes is not asked again');

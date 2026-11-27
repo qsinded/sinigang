@@ -62,7 +62,8 @@ self.addEventListener('fetch', event => {
       const res = await fetch(req);
       // Keep what a later offline visit may need: the shell's own files, including a PDF.js bundle
       // loaded on demand, and anything the manifest names.
-      if (res.ok && res.type === 'basic') await cache.put(key, res.clone());
+      // A full phone cannot store it, but the file itself arrived: use it rather than report "offline".
+      if (res.ok && res.type === 'basic') await cache.put(key, res.clone()).catch(() => {});
       return res;
     } catch (e) {
       // Offline and not cached: a page load still gets the app, a missing file gets a plain 504.

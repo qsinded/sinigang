@@ -13,7 +13,7 @@ const SHELL = listOf('SHELL'), OPTIONAL = listOf('OPTIONAL');
 
 // A world: one origin, a set of files the fake network can answer, and a cache per version.
 function world(scope) {
-  const caches = new Map(), net = new Set(), broken = new Set(), hits = { net: 0 };
+  const caches = new Map(), net = new Set(), broken = new Set(), hits = { net: 0 }, disk = { full: false };
   const res = body => ({ ok: true, type: 'basic', body, clone: () => res(body) });
   const store = name => {
     if (!caches.has(name)) caches.set(name, new Map());
@@ -22,7 +22,7 @@ function world(scope) {
       addAll: async urls => { for (const u of urls) { if (!net.has(u)) throw new Error('404 ' + u); m.set(u, res(u)); } },
       add: async u => { if (!net.has(u) || broken.has(u)) throw new Error('404 ' + u); m.set(u, res(u)); },
       match: async k => m.get(k),
-      put: async (k, r) => { m.set(k, r); }
+      put: async (k, r) => { if (disk.full) throw new Error('QuotaExceededError'); m.set(k, r); }
     };
   };
   const listeners = {};
@@ -65,7 +65,7 @@ function world(scope) {
     url: new URL(url, scope).href,
     headers: { get: () => (opts.page ? 'text/html' : '') }
   });
-  return { caches, net, broken, hits, fire, request, cacheName, ocrName, store: () => caches.get(cacheName) };
+  return { caches, net, broken, hits, disk, fire, request, cacheName, ocrName, store: () => caches.get(cacheName) };
 }
 
 (async () => {
@@ -127,6 +127,11 @@ function world(scope) {
     w.net.delete(engine);
     const offline = await w.fire('fetch', { request: w.request(at('vendor/tesseract/worker.min.js')) });
     assert.strictEqual(offline && offline.body, engine, 'the engine works offline after an update');
+    // A full phone: a file that loads but cannot be stored is still used, not turned into "offline".
+    w.disk.full = true;
+    w.net.add('./vendor/tesseract/eng.traineddata.gz');
+    const unstored = await w.fire('fetch', { request: w.request(at('vendor/tesseract/eng.traineddata.gz')) });
+    assert.strictEqual(unstored && unstored.body, './vendor/tesseract/eng.traineddata.gz', 'a full phone still gets the file from the network');
   }
 
   // Every precached path must exist in the repository, or the install fails on a real phone.
