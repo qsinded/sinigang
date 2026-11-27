@@ -1025,10 +1025,55 @@ function removedScreen(r) {
 
 // Diagram reviewer: one image, tap the parts, name each one, then practice naming them offline.
 let diagBlob = null, diagURL = '', diagTitleText = '', diagParts = [], diagPending = null, diagNameText = '', diagBusy = false, diagErr = '', diagToken = 0;
+// diagEditing = the saved reviewer being edited. Its image URL belongs to imageURL()'s cache and other
+// screens may show it, so the editor must never revoke it.
+let diagEditing = null;
 function clearDiagram() {
   diagToken++;
-  if (diagURL) URL.revokeObjectURL(diagURL);
-  diagBlob = null; diagURL = ''; diagTitleText = ''; diagParts = []; diagPending = null; diagNameText = ''; diagBusy = false; diagErr = '';
+  if (diagURL && !diagEditing) URL.revokeObjectURL(diagURL);
+  diagBlob = null; diagURL = ''; diagTitleText = ''; diagParts = []; diagPending = null; diagNameText = ''; diagBusy = false; diagErr = ''; diagEditing = null;
+}
+async function editDiagram(r) {
+  const saved = r ? r.items.filter(i => i.type === 'img') : [];
+  if (!saved.length) return;
+  clearDiagram();
+  const token = diagToken, url = await imageURL(saved[0].imageId);
+  if (token !== diagToken) return;
+  diagEditing = r; diagURL = url; diagTitleText = r.title;
+  diagParts = saved.map(it => ({ x: it.hotspot.x, y: it.hotspot.y, name: it.answer, id: it.id }));
+  if (!url) diagErr = 'The diagram image is not on this device, so its parts cannot be edited.';
+  diagramSetup();
+}
+// Names can be fixed in the parts list, so they are checked on save: none empty, no two the same.
+function partNames() {
+  const names = diagParts.map(p => p.name.trim().replace(/\s+/g, ' ').slice(0, 80));
+  const bad = names.some(n => !n) ? 'Every part needs a name.' : new Set(names.map(n => n.toLowerCase())).size < names.length ? 'Two parts have the same name.' : '';
+  if (bad) { diagErr = bad; diagramSetup(); return null; }
+  return names;
+}
+// Saving keeps every id, so answers, cards and the plan stay with their part. A removed part goes
+// through removeItem(): its progress is pruned and it can be restored from Removed questions.
+function saveDiagramEdit() {
+  const r = diagEditing;
+  if (!R.includes(r)) { diagErr = 'This reviewer was deleted.'; diagramSetup(); return; }
+  const names = diagParts.length >= 3 && partNames(); if (!names) return;
+  const old = new Map(r.items.filter(i => i.type === 'img').map(i => [i.id, i]));
+  const imageId = [...old.values()][0].imageId;
+  const parts = diagParts.map((p, k) => {
+    const was = p.id && old.get(p.id), hotspot = { x: p.x, y: p.y };
+    if (!was) return { id: newItemId(), type: 'img', q: 'Identify the part marked on the diagram.', answer: names[k], imageId, hotspot, exp: '' };
+    // A renamed part keeps its schedule, but the stored answer was graded against the old label.
+    if (was.answer !== names[k]) delete r.ans[was.id];
+    return { ...was, answer: names[k], hotspot };
+  });
+  const kept = new Set(parts.map(p => p.id)), gone = [...old.values()].filter(i => !kept.has(i.id));
+  r.items = [...parts, ...r.items.filter(i => i.type !== 'img'), ...gone];
+  gone.forEach(it => removeItem(r, it));
+  const live = new Set(r.items.map(itemKey)); // a part removed and added back must not stay hidden from Shuffle
+  r.hidden = (r.hidden || []).filter(k => !live.has(k));
+  r.title = (diagTitleText.trim() || r.title).slice(0, 120);
+  save(); clearDiagram(); open(r);
+  say('Changes saved.');
 }
 function loadImage(url) {
   return new Promise((resolve, reject) => {
@@ -1090,7 +1135,9 @@ function addPart() {
   say(name + ' added. ' + diagParts.length + ' parts labeled.');
 }
 async function createDiagram() {
+  if (diagEditing) return saveDiagramEdit();
   if (!diagBlob || diagParts.length < 3 || diagBusy) return;
+  const names = partNames(); if (!names) return;
   const token = ++diagToken;
   diagBusy = true; diagErr = ''; diagramSetup();
   try {
@@ -1098,7 +1145,7 @@ async function createDiagram() {
     await idbPut(imageId, diagBlob);
     if (token !== diagToken) { dropImage(imageId); return; }
     const title = (diagTitleText.trim() || 'Diagram').slice(0, 120);
-    const items = diagParts.map((p, i) => ({ id: 'img' + i, type: 'img', q: 'Identify the part marked on the diagram.', answer: p.name, imageId, hotspot: { x: p.x, y: p.y }, exp: '' }));
+    const items = diagParts.map((p, i) => ({ id: 'img' + i, type: 'img', q: 'Identify the part marked on the diagram.', answer: names[i], imageId, hotspot: { x: p.x, y: p.y }, exp: '' }));
     const r = { id: newRid(), title, items, ans: {}, src: undefined, tags: undefined, opts: { max: 0, mcOnly: false }, plan: { exam: '', srs: {} }, flags: [], masks: [] };
     R.unshift(r); save(); clearDiagram(); open(r);
   } catch (e) {
@@ -1148,7 +1195,7 @@ function marker(p, i, img) {
   return el;
 }
 function diagramSetup() {
-  const canCreate = !!diagBlob && diagParts.length >= 3 && !diagBusy;
+  const editing = !!diagEditing, canCreate = (!!diagBlob || editing) && diagParts.length >= 3 && !diagBusy;
   const img = diagURL && h('img', { src: diagURL, alt: 'Diagram to label. Tap a part to place a marker, or use the Place a marker button.', onclick: e => {
     const pt = pointInRect(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect());
     if (!pt) return;
@@ -1160,13 +1207,14 @@ function diagramSetup() {
   if (diagPending) pins.push(marker(diagPending, -1, img));
   diagFocus = null;
   draw(h('div', null,
-    h('button', { class: 'btn alt', onclick: () => { clearDiagram(); home(); } }, '← Cancel'),
-    h('h1', null, 'Diagram reviewer'),
-    h('p', { class: 'sub' }, 'Upload a diagram, tap each part you want to learn, and type its name. Each label becomes an identification question that works offline.'),
+    h('button', { class: 'btn alt', onclick: () => { clearDiagram(); if (editing && cur) quiz(); else home(); } }, '← Cancel'),
+    h('h1', null, editing ? 'Edit diagram reviewer' : 'Diagram reviewer'),
+    h('p', { class: 'sub' }, editing ? 'Fix a label, move a marker, add or remove parts. Parts you keep keep their progress.' : 'Upload a diagram, tap each part you want to learn, and type its name. Each label becomes an identification question that works offline.'),
     warn(),
     h('div', { class: 'card' },
       h('h2', { class: 'k' }, '1 · Image'),
-      h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp', 'aria-label': 'Choose a diagram image', onchange: e => pickDiagram(e.target.files[0]) }),
+      // shortcut: editing keeps the saved image; a different picture means a new reviewer (ROADMAP R2.1 item 6).
+      !editing && h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp', 'aria-label': 'Choose a diagram image', onchange: e => pickDiagram(e.target.files[0]) }),
       diagURL
         ? h('span', { class: 'diagram' }, img, pins)
         : h('p', { class: 'k' }, diagBusy ? 'Preparing the image…' : 'No image chosen yet. PNG, JPEG or WebP.'),
@@ -1177,8 +1225,8 @@ function diagramSetup() {
       diagParts.length
         ? h('div', null, diagParts.map((p, i) => h('div', { class: 'part row' },
             h('span', { class: 'mono' }, String(i + 1)),
-            h('span', { style: 'flex:1' }, p.name),
-            h('button', { class: 'btn alt', 'aria-label': 'Remove part ' + (i + 1) + ': ' + p.name, onclick: () => { diagParts.splice(i, 1); diagramSetup(); say(p.name + ' removed.'); } }, 'Remove'))))
+            h('input', { type: 'text', style: 'flex:1;min-width:0', 'aria-label': 'Name of part ' + (i + 1), value: p.name, oninput: e => { p.name = e.target.value; } }),
+            h('button', { class: 'btn alt', style: 'flex:0 0 auto', 'aria-label': 'Remove part ' + (i + 1) + ': ' + p.name, onclick: () => { diagParts.splice(i, 1); diagramSetup(); say(p.name + ' removed.'); } }, 'Remove'))))
         : h('p', { class: 'k' }, 'No parts labeled yet.'),
       h('div', { class: 'row' },
         h('input', { type: 'text', id: 'part-name', 'aria-label': 'Name of the marked part', placeholder: diagPending ? 'Name the marked part' : 'Tap the image first', value: diagNameText, oninput: e => {
@@ -1190,7 +1238,7 @@ function diagramSetup() {
     diagURL && h('div', { class: 'card' },
       h('h2', { class: 'k' }, '3 · Name and practice'),
       h('input', { type: 'text', 'aria-label': 'Reviewer title', placeholder: 'Reviewer title (for example: Parts of the heart)', value: diagTitleText, oninput: e => { diagTitleText = e.target.value; } }),
-      h('p', null, h('button', { class: 'btn', disabled: canCreate ? null : '', onclick: createDiagram }, diagBusy ? 'Saving…' : 'Create diagram reviewer')),
+      h('p', null, h('button', { class: 'btn', disabled: canCreate ? null : '', onclick: createDiagram }, diagBusy ? 'Saving…' : editing ? 'Save changes' : 'Create diagram reviewer')),
       diagParts.length < 3 && h('p', { class: 'k' }, 'Add at least 3 parts first.')),
     diagErr && h('p', { class: 'err', role: 'alert' }, diagErr)), 'diagram');
 }
@@ -2040,6 +2088,7 @@ function quiz() {
           !r.virtual && h('button', { class: 'btn alt', onclick: () => openItemEditor({ items: r.items, hidden: r.hidden || (r.hidden = []), reviewer: r, index: -1, back: quiz }) }, 'Add a question'),
           (r.removed && r.removed.length) && h('button', { class: 'btn alt', onclick: () => removedScreen(r) }, 'Removed questions (' + r.removed.length + ')'),
           !r.virtual && ts.includes('img') && h('button', { class: 'btn alt', onclick: () => openCovers(r) }, r.masks && r.masks.length ? 'Edit label covers' : 'Hide printed labels'),
+          !r.virtual && ts.includes('img') && h('button', { class: 'btn alt', onclick: () => editDiagram(r) }, 'Edit parts'),
           h('button', { class: 'btn alt', onclick: printPart }, 'Print this part')))
   ];
   const node = h('div', null,

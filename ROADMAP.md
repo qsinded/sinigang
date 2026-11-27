@@ -4,7 +4,13 @@ Seven reports about diagram reviewers, ordered into three releases. Each item na
 current behaviour, the cause in the code, the smallest change that fixes it, how to test it,
 and what would count as done.
 
-Status: Release 1 (R1.1–R1.3) shipped in sw.js v30. Releases 2 and 3 are still planned.
+Status: Release 1 (R1.1–R1.3) shipped in sw.js v30; Release 2 (R2.1) in v31. Release 3 is still planned.
+
+Release 2 as built: `editDiagram(r)` loads the saved parts (with ids) into the same editor; `diagEditing`
+holds the reviewer and stops `clearDiagram()` revoking the cached image URL. `saveDiagramEdit()` keeps ids,
+gives new parts `newItemId()`, clears `ans` only for renamed parts, and sends removed parts through
+`removeItem()` (pruned, restorable), then un-hides keys of parts still present. Names are editable in the
+parts list for new and saved reviewers and checked by `partNames()`. Not done: image replacement (item 6).
 
 Release 1 as built: the session order is a shuffle of the `img` items inside `r.items` in `open()`
 (not a separate `diagOrder`), so quiz, flashcards and recitation agree with no extra state. The

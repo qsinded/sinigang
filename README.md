@@ -151,7 +151,11 @@ deep link still opens. Reviewer data and images are untouched by the worker: the
 3. Name the reviewer and choose **Create diagram reviewer**, then practice naming the marked part.
    The parts come in a new order every time you open the reviewer, so the answer is the part, not the
    pin's place in the list.
-4. If the image already has its labels printed on it, choose **Hide printed labels** on the practice
+4. To fix a typo or a misplaced pin later, choose **More options → Edit parts** on the reviewer. You can
+   rename parts in the list, drag or nudge markers, add parts and remove them (at least 3 stay). Parts
+   you keep keep their progress; a renamed part keeps its schedule but its last answer is cleared, and a
+   removed part goes to **Removed questions**, where it can be restored.
+5. If the image already has its labels printed on it, choose **Hide printed labels** on the practice
    screen and drag a box over each block of text. Covers show while you practise, in flashcards and
    on printouts, but not while you label parts. Drag on the image to add one, or choose **Add cover**
    and use the arrow keys (Shift with arrows resizes, Delete removes).
@@ -208,6 +212,7 @@ image-only slides need OCR.
   wrong. It breaks results down by question type, not by page or slide section yet.
 - Paste and OCR: text can be pasted directly, but a scanned handout or a photo of a page still needs
   OCR before it can be read; the app does not bundle it.
+- Editing a diagram reviewer keeps its image. To use a different picture, make a new diagram reviewer.
 - Diagram reviewers need IndexedDB; private windows and some locked-down browsers block it, in which
   case the setup screen explains that images cannot be stored. Labeling is manual — the app does not
   detect labels or arrows in an uploaded image.
