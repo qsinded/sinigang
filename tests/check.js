@@ -347,6 +347,15 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
     assert.strictEqual(reasonFor(outL, 'Isulat ang TAMA kung wasto ang pahayag at MALI kung hindi.'), 'instruction', 'a Filipino rubric is an exam instruction');
     assert(outL.some(q => q.type === 'enum' && /Mga layunin ng Katipunan/.test(q.q)), '"Mga layunin ng Katipunan:" is still content');
   }
+  // Verbs outside the word list are found by their form: after a singular subject, an "-s" word followed by a
+  // determiner is a verb ("The enzyme catalyzes the breakdown…"). A plural noun before "of" is not ("The class sizes of…").
+  const morph = ['The enzyme catalyzes the breakdown of starch into simple sugars.', 'The hypothalamus coordinates the nervous and endocrine systems.',
+    'Insulin lowers the level of glucose in the blood.', 'The thyroid gland secretes a hormone that controls metabolism.',
+    'The class sizes of each school changed every single year.', 'Ribosomes build proteins from amino acids.'];
+  const morphAns = new Set();
+  for (let i = 0; i < 25; i++) generate(morph, [], { noTF: true }).forEach(q => morphAns.add(q.type === 'mc' ? q.options[q.answer] : q.answer));
+  for (const a of ['enzyme', 'hypothalamus', 'Insulin', 'thyroid gland']) assert(morphAns.has(a), 'a verb outside the list is found for "' + a + '"; got: ' + [...morphAns].join(' / '));
+  assert(!morphAns.has('class'), 'a plural noun before "of" is not a verb');
   // A fact that made a question but was cut by the limit, or by a type the student turned off, says so.
   const capped = generate(skipNotes, [], { max: 1 });
   assert(capped.skipped.some(s => s.reason === 'limit'), 'items cut by the limit are reported');

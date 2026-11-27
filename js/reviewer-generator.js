@@ -9,6 +9,8 @@ const LANGS = {
     articles: ['The', 'A', 'An'],                     // before the term that starts a definition
     copulas: ['is defined as', 'is used to', 'refers to', 'stands for', 'means', 'is', 'are', 'was', 'were'], // "X is Y"
     be: ['is', 'are', 'was', 'were'],
+    determiners: ['the', 'a', 'an', 'its', 'their', 'his', 'her', 'our', 'your', 'this', 'these', 'those', 'all', 'each', 'every', 'both', 'some',
+      'many', 'most', 'several'], // after a verb: "catalyzes the …"
     called: ['called', 'known as', 'termed', 'referred to as', 'named'], // "… is called Y": Y is the term
     answerArticles: ['the', 'a', 'an'],               // ignored at the start of a typed answer
     notTerm: ['this', 'that', 'these', 'those', 'it', 'they', 'there', 'here', 'which', 'what', 'when', 'where', 'if', 'in', 'on',
@@ -40,6 +42,7 @@ const LANGS = {
     articles: ['Ang mga', 'Ang', 'Sina', 'Si'],       // "Ang Katipunan ay …", "Si Rizal ay …"
     copulas: ['ay'],
     be: ['ay'],
+    determiners: [], // Filipino claims are found by filClaim instead
     called: ['tinatawag na', 'kilala bilang'],
     answerArticles: ['ang mga', 'ang', 'sina', 'si', 'mga'],
     notTerm: ['ito', 'iyan', 'iyon', 'dito', 'doon', 'sila', 'siya', 'tayo', 'kami', 'kayo', 'ako', 'ikaw'],
@@ -255,7 +258,18 @@ const isVerb = w => {
 // Markers are lower case mid-sentence, so "Mining Si wafers…" (silicon) is not taken for Filipino.
 const FIL_VERB_FIRST = /^(?:[a-z]{0,3}(?:in|um)|nag|mag|pinag|ipinag|ipina|pina|na|ma|i)[a-z]{3,}\b/i, FIL_MARKER = /\s(?:ang|si|sina|ni|ng)\s/;
 const filClaim = t => /\say\s/.test(t) || (FIL_VERB_FIRST.test(t) && FIL_MARKER.test(t));
-const verbIn = text => filClaim(String(text)) || (String(text).match(/[A-Za-z]+/g) || []).some(isVerb);
+// A verb outside the list is found by its form: after a singular subject, a present-tense verb ends in "-s" and is
+// usually followed by a determiner ("The enzyme catalyzes the breakdown…", "secretes a hormone"). A plural noun is
+// followed by "of" or a verb instead ("The class sizes of…"), so all three signs are required.
+const DETERMINER = new RegExp('^(?:' + anyOf('determiners') + ')$', 'i');
+const manyWord = w => /[^su]s$/i.test(w) && !/(?:ss|is|us|osis)$/i.test(w);
+const sVerb = (words, i) => i >= 1 && /^[a-z]{3,}[^su]s$/.test(words[i]) && !/(?:ous|ss|is|us)$/.test(words[i])
+  && !manyWord(words[i - 1]) && DETERMINER.test(words[i + 1] || '');
+const verbAt = (words, i) => isVerb(words[i]) || sVerb(words, i);
+const verbIn = text => {
+  const words = String(text).match(/[A-Za-z][A-Za-z'’\-]*/g) || [];
+  return filClaim(String(text)) || words.some((w, i) => verbAt(words, i));
+};
 function statementOk(text) {
   const t = String(text || '').trim();
   if (t.length < 25 || t.length > 240) return false;
@@ -462,7 +476,8 @@ function generate(rawLines, tags = [], o = {}) {
     if (used.has(s) || clozed.has(s) || /\b(?:1\d|20)\d\d/.test(s) || unfit(s, 25, 220) || !statementOk(s)) continue;
     const c = clean(s), art = (c.match(/^(?:The|A|An)\s+/) || [''])[0], words = c.slice(art.length).split(' ');
     // The subject ends at the first verb (1–4 words in); a verb is lower case mid-sentence. "is"/"are" belong to DEF.
-    const k = words.findIndex((w, i) => i >= 1 && /^[a-z]/.test(w) && isVerb(w.replace(/[,;:.]$/, '')));
+    const plainWords = words.map(w => w.replace(/[,;:.]$/, ''));
+    const k = plainWords.findIndex((w, i) => i >= 1 && /^[a-z]/.test(w) && verbAt(plainWords, i));
     if (k < 1 || k > 4 || /^(?:is|are|was|were|be|been|being)$/.test(words[k])) continue;
     const term = words.slice(0, k).join(' '), rest = words.slice(k).join(' ');
     if (!termFine(term) || /[^\w\s\-]/.test(term)) { refine(s, 'bad-term'); continue; }
