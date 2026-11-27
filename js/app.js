@@ -555,8 +555,6 @@ function resizeBox(m, dw, dh) {
 const LABEL_PAD = 0.005, LABEL_MIN_CONFIDENCE = 60;
 function labelCovers(lines, width, height, existing) {
   if (!width || !height) return [];
-  const area = b => b.w * b.h;
-  const overlap = (a, b) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
   const touches = (a, b) => a.x <= b.x + b.w && b.x <= a.x + a.w && a.y <= b.y + b.h && b.y <= a.y + a.h;
   const union = (a, b) => { const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y); return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y }; };
   let boxes = (lines || []).filter(l => l && l.bbox && l.confidence >= LABEL_MIN_CONFIDENCE && (String(l.text).match(/[\p{L}\p{N}]/gu) || []).length >= 2).map(l => {
@@ -569,7 +567,12 @@ function labelCovers(lines, width, height, existing) {
       if (touches(boxes[i], boxes[j])) { boxes[i] = union(boxes[i], boxes[j]); boxes.splice(j, 1); merged = true; break; }
     }
   }
-  return boxes.filter(b => b.w >= COVER_MIN && b.h >= COVER_MIN && !(existing || []).some(m => overlap(b, m) >= area(b) / 2));
+  return freshCovers(boxes.filter(b => b.w >= COVER_MIN && b.h >= COVER_MIN), existing);
+}
+// The boxes an existing cover does not already hide (half a box's area or more counts as hidden).
+function freshCovers(boxes, existing) {
+  const overlap = (a, b) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+  return (boxes || []).filter(b => !(existing || []).some(m => overlap(b, m) >= (b.w * b.h) / 2));
 }
 function coverSpans(masks, quiet) {
   return (masks || []).map(m => h('span', { class: 'cover', 'aria-hidden': quiet ? 'true' : null, style: coverStyle(m) }));
@@ -1157,8 +1160,43 @@ function imagesInUse() {
   R.forEach(x => [...x.items, ...(x.removed || [])].forEach(it => { if (it.type === 'img' && it.imageId) used.add(it.imageId); }));
   return used;
 }
+// The label search for the maker's picture runs in the background while parts are named. A new picture or
+// leaving the maker drops it, unless Create handed it to the new reviewer (reviewerId), which then gets the
+// covers when it ends, provided it still exists and still shows that picture.
+let labelSearch = null, labelStatusEl = null;
+const OCR_ASK = 'Hide the printed labels automatically? This downloads about 7 MB once, then works offline.';
+const OCR_UNSUPPORTED = 'Finding labels automatically needs the installed app or a normal browser; hide them by hand here.';
+function labelStatusText(s) {
+  if (!s) return '';
+  if (s.error) return s.error + ' You can still hide labels by hand after creating the reviewer.';
+  if (s.masks) return s.masks.length ? 'Found ' + s.masks.length + ' printed label' + (s.masks.length === 1 ? '' : 's') + '. They will be hidden when you practise; adjust them under Hide printed labels.' : 'No printed labels found.';
+  return s.status === 'recognizing text' ? 'Looking for printed labels… ' + Math.round(s.pct * 100) + '%' : 'Getting the label finder ready…';
+}
+function startLabelSearch(blob) {
+  const s = labelSearch = { pct: 0, status: '', masks: null, error: '', reviewerId: null, imageId: null };
+  const show = () => { if (labelSearch === s && labelStatusEl) labelStatusEl.textContent = labelStatusText(s); }; // in place: never steal focus from a part name
+  findLabels(blob, [], (pct, status) => { s.pct = pct; s.status = status; show(); }).then(masks => {
+    s.masks = masks;
+    if (s.reviewerId) attachLabels(s); else show();
+  }, e => {
+    s.error = e && e.message ? e.message : 'Could not look for printed labels.';
+    if (s.reviewerId && labelSearch === s) labelSearch = null; else show();
+  });
+}
+function attachLabels(s) {
+  if (labelSearch === s) labelSearch = null;
+  const r = R.find(x => x.id === s.reviewerId);
+  if (!r || !r.items.some(i => i.type === 'img' && i.imageId === s.imageId)) return; // deleted, or its picture replaced
+  const add = freshCovers(s.masks, r.masks || []);
+  if (!add.length) return;
+  r.masks = cleanMasks([...(r.masks || []), ...add]);
+  save();
+  if (cur === r && lastScreen === 'quiz') quiz();
+  say(add.length + ' printed label' + (add.length === 1 ? '' : 's') + ' hidden on "' + r.title + '".');
+}
 function clearDiagram() {
   diagToken++;
+  if (labelSearch && !labelSearch.reviewerId) labelSearch = null;
   if (diagURL && diagBlob) URL.revokeObjectURL(diagURL);
   diagBlob = null; diagURL = ''; diagTitleText = ''; diagParts = []; diagPending = null; diagNameText = ''; diagBusy = false; diagErr = ''; diagEditing = null;
 }
@@ -1263,6 +1301,8 @@ async function pickDiagram(file) {
     diagBlob = blob; diagURL = url;
     // Hotspots are fractions of the picture, so an edited reviewer keeps its parts on a new copy of it.
     if (!diagEditing) { diagParts = []; diagPending = null; diagNameText = ''; }
+    // A replaced picture in Edit parts is not searched: its hand-made covers may already be right.
+    if (!diagEditing) { labelSearch = null; if (ocrSupported() && ocrConsent() === 'yes') startLabelSearch(blob); }
     if (!diagTitleText) diagTitleText = file.name.replace(/\.[^.]+$/, '').slice(0, 120);
   } catch (e) { if (token === diagToken) diagErr = e && e.message ? e.message : 'Could not read that image.'; }
   if (token !== diagToken) return;
@@ -1290,7 +1330,9 @@ async function createDiagram() {
     if (token !== diagToken) { dropImage(imageId); return; }
     const title = (diagTitleText.trim() || 'Diagram').slice(0, 120);
     const items = diagParts.map((p, i) => ({ id: 'img' + i, type: 'img', q: 'Identify the part marked on the diagram.', answer: names[i], imageId, hotspot: { x: p.x, y: p.y }, exp: '' }));
-    const r = { id: newRid(), title, items, ans: {}, src: undefined, tags: undefined, opts: { max: 0, mcOnly: false }, plan: { exam: '', srs: {} }, flags: [], masks: [] };
+    const s = labelSearch, found = s && s.masks ? cleanMasks(s.masks) : [];
+    const r = { id: newRid(), title, items, ans: {}, src: undefined, tags: undefined, opts: { max: 0, mcOnly: false }, plan: { exam: '', srs: {} }, flags: [], masks: found };
+    if (s && !s.masks && !s.error) { s.reviewerId = r.id; s.imageId = imageId; } // still running: Create never waits
     R.unshift(r); save(); clearDiagram(); open(r);
   } catch (e) {
     if (token !== diagToken) return;
@@ -1338,6 +1380,17 @@ function marker(p, i, img) {
   if (diagFocus === i) setTimeout(() => el.focus()); // after draw(), which focuses the heading on a new screen
   return el;
 }
+function labelFinderNote() {
+  labelStatusEl = null;
+  if (!ocrSupported()) return h('p', { class: 'k' }, OCR_UNSUPPORTED);
+  if (!ocrConsent()) return h('div', { class: 'card ocr-ask' }, h('p', null, OCR_ASK),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn', onclick: () => { setOcrConsent('yes'); if (diagBlob) startLabelSearch(diagBlob); diagramSetup(); } }, 'Yes, find labels'),
+      h('button', { class: 'btn alt', onclick: () => { setOcrConsent('no'); diagramSetup(); say('Labels will not be searched. You can hide them by hand.'); } }, 'No thanks')));
+  if (!labelSearch) return null;
+  labelStatusEl = h('p', { class: 'k', role: 'status' }, labelStatusText(labelSearch));
+  return labelStatusEl;
+}
 function diagramSetup() {
   const editing = !!diagEditing, canCreate = (!!diagBlob || editing) && diagParts.length >= 3 && !diagBusy;
   const img = diagURL && h('img', { src: diagURL, alt: 'Diagram to label. Tap a part to place a marker, or use the Place a marker button.', onclick: e => {
@@ -1363,6 +1416,7 @@ function diagramSetup() {
         ? h('span', { class: 'diagram' }, img, pins)
         : h('p', { class: 'k' }, diagBusy ? 'Preparing the image…' : 'No image chosen yet. PNG, JPEG or WebP.'),
       diagURL && h('p', null, h('button', { class: 'btn alt', onclick: placeMarker }, 'Place a marker at the centre')),
+      diagURL && !editing && labelFinderNote(),
       diagURL && h('p', { class: 'k' }, 'Tap the image to place a marker, then drag it or use the arrow keys to fine-tune. ' + (editing ? 'Nothing changes until you save; images' : 'Choosing another image starts over; images') + ' are resized to 1600 px and stay on this device.')),
     diagURL && h('div', { class: 'card' },
       h('h2', { class: 'k' }, '2 · Parts'),

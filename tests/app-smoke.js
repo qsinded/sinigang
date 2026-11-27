@@ -287,9 +287,9 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   assert.strictEqual(ctx.labelCovers([L('Aorta', 91, 100, 50, 200, 70)], 1000, 500, lineCovers).length, 0, 'a label already covered is not covered twice');
   assert.strictEqual(ctx.cleanMasks(Array.from({ length: 61 }, (_, i) => ({ x: 0, y: i / 100, w: 0.1, h: 0.01 }))).length, 60, 'a reviewer keeps up to 60 covers');
   // The label finder. Tesseract is injected, so the real 7 MB engine never loads in tests.
-  const fakeT = { terminated: 0, opts: null, lines: [L('Aorta', 91, 100, 50, 200, 70)], createWorker: async (lang, oem, opts) => {
+  const fakeT = { terminated: 0, opts: null, gate: Promise.resolve(), lines: [L('Aorta', 91, 100, 50, 200, 70)], createWorker: async (lang, oem, opts) => {
     fakeT.opts = opts; opts.logger({ status: 'recognizing text', progress: 0.5 });
-    return { recognize: async () => ({ data: { blocks: [{ paragraphs: [{ lines: fakeT.lines }] }] } }), terminate: async () => { fakeT.terminated++; } };
+    return { recognize: async () => { await fakeT.gate; return { data: { blocks: [{ paragraphs: [{ lines: fakeT.lines }] }] } }; }, terminate: async () => { fakeT.terminated++; } };
   } };
   ctx.location = { href: 'https://example.com/app/', hash: '' };
   ctx.imageSize = async () => ({ width: 1000, height: 500 });
@@ -541,6 +541,74 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   assert.strictEqual(zoomedPin.hidden, true, 'the pin can be hidden to read what is under it');
   zoomBtn('Fit the diagram').onclick();
   assert.match(layer().style.transform, /scale\(1\)/, 'Fit returns to 100%');
+  // Auto-cover in the diagram maker: asked once, then each new picture is searched in the background.
+  localStorage.removeItem('reviewer_ocr_v1');
+  ctx.loadTesseract = async () => fakeT;
+  ctx.prepareImage = async () => ({ blob: new sandbox.Blob(['labelled diagram']), url: 'blob:p' });
+  const hold = () => { let open; fakeT.gate = new Promise(r => { open = r; }); return open; };
+  const settle = () => new Promise(r => setTimeout(r, 10));
+  const btnNamed = label => find(appEl, e => e.tagName === 'BUTTON' && screenText(e) === label)[0];
+  const statusText = () => vm.runInContext('labelStatusEl ? labelStatusEl.textContent : ""', ctx);
+  const threeParts = "diagParts = [{ x: 0.1, y: 0.1, name: 'A' }, { x: 0.5, y: 0.5, name: 'B' }, { x: 0.9, y: 0.9, name: 'C' }];";
+  ctx.clearDiagram();
+  await ctx.pickDiagram({ name: 'heart.png', type: 'image/png' });
+  assert.match(screenText(appEl), /downloads about 7 MB once/, 'the first picture asks before downloading anything');
+  btnNamed('No thanks').onclick();
+  assert.strictEqual(ctx.ocrConsent(), 'no', 'a no is remembered');
+  assert.strictEqual(state('labelSearch'), null, 'declining starts nothing');
+  assert.doesNotMatch(screenText(appEl), /7 MB/, 'and the question goes away');
+  localStorage.removeItem('reviewer_ocr_v1'); ctx.diagramSetup();
+  let release = hold();
+  btnNamed('Yes, find labels').onclick();
+  assert.strictEqual(ctx.ocrConsent(), 'yes', 'a yes is remembered');
+  assert.ok(state('labelSearch'), 'agreeing starts the search on this picture');
+  release(); await settle();
+  assert.match(statusText(), /Found 1 printed label/, 'the maker says what it found, without a redraw');
+  // Agreed once: the next picture is searched by itself. Create does not wait for a search still running.
+  ctx.clearDiagram();
+  release = hold();
+  await ctx.pickDiagram({ name: 'cell.png', type: 'image/png' });
+  assert.ok(state('labelSearch'), 'a new picture is searched automatically');
+  vm.runInContext(threeParts, ctx);
+  await ctx.createDiagram();
+  const made = vm.runInContext('R[0]', ctx);
+  assert.strictEqual(made.masks.length, 0, 'Create does not wait for the search');
+  release(); await settle();
+  assert.strictEqual(made.masks.length, 1, 'the covers reach the saved reviewer when the search ends');
+  assert.match(JSON.parse(store.get('reviewer_gen_v1'))[0].masks.length ? 'saved' : '', /saved/, 'and are saved');
+  // A search for a picture that is no longer there lands nowhere.
+  ctx.clearDiagram();
+  const first = hold();
+  await ctx.pickDiagram({ name: 'one.png', type: 'image/png' });
+  const firstSearch = vm.runInContext('labelSearch', ctx);
+  const second = hold();
+  await ctx.pickDiagram({ name: 'two.png', type: 'image/png' });
+  first(); await settle();
+  assert.strictEqual(firstSearch.masks === null || vm.runInContext('labelSearch', ctx) !== firstSearch, true, 'a replaced picture\'s search is dropped');
+  assert.doesNotMatch(statusText(), /Found/, 'and its result is not shown for the new picture');
+  btnNamed('← Cancel').onclick();
+  assert.strictEqual(state('labelSearch'), null, 'leaving the maker drops the search');
+  second(); await settle();
+  // The reviewer was deleted before its search ended: nothing breaks, nothing is saved for it.
+  release = hold();
+  await ctx.pickDiagram({ name: 'gone.png', type: 'image/png' });
+  vm.runInContext(threeParts, ctx);
+  await ctx.createDiagram();
+  const deleted = vm.runInContext('R.shift()', ctx);
+  release(); await settle();
+  assert.ok(!vm.runInContext('R', ctx).includes(deleted) && deleted.masks.length === 0, 'a deleted reviewer gets nothing');
+  // Editing a saved reviewer never searches by itself; a browser without the service worker is told why.
+  await ctx.editDiagram(made);
+  await ctx.pickDiagram({ name: 'clearer.png', type: 'image/png' });
+  assert.strictEqual(state('labelSearch'), null, 'a replaced picture is not searched automatically');
+  ctx.clearDiagram();
+  ctx.navigator.serviceWorker.controller = null;
+  await ctx.pickDiagram({ name: 'x.png', type: 'image/png' });
+  assert.match(screenText(appEl), /hide them by hand here/, 'without the service worker the maker says to cover by hand');
+  assert.strictEqual(state('labelSearch'), null, 'and searches nothing');
+  ctx.navigator.serviceWorker.controller = {};
+  ctx.clearDiagram();
+  vm.runInContext("R = R.filter(r => r.title !== 'cell' && r.title !== 'gone')", ctx);
   ctx.open(imgReviewer); // the cover editor is opened from the reviewer on screen
   ctx.openCovers(imgReviewer);
   assert.match(screenText(appEl), /Hide printed labels/, 'the label-cover editor renders');
