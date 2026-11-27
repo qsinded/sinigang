@@ -50,6 +50,9 @@ const themeBtn = h('button', { class: 'btn alt', onclick: () => {
   try { localStorage.setItem(THEME, root.dataset.theme); } catch (e) { /* kept for this visit only */ }
   themeBtn.textContent = themeLabel();
 } }, themeLabel());
+// A phone can switch to dark by itself (at sunset); with no choice made in the app, the button follows it.
+function syncTheme() { themeBtn.replaceChildren(themeLabel()); }
+if (typeof matchMedia === 'function') { const mq = matchMedia('(prefers-color-scheme: dark)'); if (mq && mq.addEventListener) mq.addEventListener('change', syncTheme); }
 app.tabIndex = -1; // lets the skip link move focus into the page
 app.before(h('header', { class: 'site' }, h('a', { class: 'skip', href: '#app' }, 'Skip to content'), h('nav', { 'aria-label': 'Main' }, h('button', { class: 'btn alt', onclick: () => home() }, 'Home'), themeBtn), live));
 app.after(h('footer', { class: 'site' }, 'Works offline. Progress is saved on this device only. ',
@@ -459,7 +462,8 @@ function planCard() {
     h('h2', { class: 'k' }, 'Today'),
     h('p', null, due ? due + ' item' + (due === 1 ? '' : 's') + ' due in ' + withDue + ' reviewer' + (withDue === 1 ? '' : 's') + '.' : 'Nothing is due today — study ahead if you like.'),
     h('p', null, h('b', null, streakNow(readStreak(), todayNumber()) ? streakNow(readStreak(), todayNumber()) + '-day streak' : 'Start a streak today'), streakNow(readStreak(), todayNumber()) && readStreak().last !== todayNumber() ? ' · study today to keep it' : ''),
-    h('p', { class: 'k' }, 'Next 7 days (today first): ' + R.reduce((acc, r) => forecast(r).map((n, i) => acc[i] + n), new Array(7).fill(0)).join(' · ')),
+    (() => { const week = R.reduce((acc, r) => forecast(r).map((n, i) => acc[i] + n), new Array(7).fill(0));
+      return h('p', { class: 'k' }, 'Coming up: ' + week[0] + ' today, ' + week[1] + ' tomorrow, ' + week.slice(2).reduce((a, b) => a + b, 0) + ' later this week.'); })(),
     h('label', null, 'Daily limit ', h('select', { 'aria-label': 'Items to study each day', onchange: e => { optCap = Number(e.target.value); try { localStorage.setItem('reviewer_cap_v1', String(optCap)); } catch (_) { /* this visit only */ } home(); } }, [[10, '10'], [20, '20'], [40, '40'], [0, 'All']].map(([v, t]) => h('option', { value: v, selected: v === optCap ? '' : null }, t)))),
     due > 0 && h('p', null, h('button', { class: 'btn', onclick: () => studyToday(firstDue()) }, 'Study today (' + due + ' due)')),
     next && h('p', null, h('b', null, next.r.title), ' · ' + examText(next.r.plan.exam)),
@@ -853,7 +857,9 @@ const SAMPLES = {
     'Si Andres Bonifacio ang tinaguriang Ama ng Katipunan.', 'Ang La Liga Filipina ay samahang itinatag ni Jose Rizal noong 1892.'].join('\n') },
 };
 let pasteTitle = '';
-function trySample(key) { const s = SAMPLES[key]; pasteText = s.text; pasteTitle = s.title; files = []; return run(); }
+// A sample is there to show the app in seconds, so it skips the check step and opens straight into practice.
+let sampleRun = false;
+async function trySample(key) { const s = SAMPLES[key]; pasteText = s.text; pasteTitle = s.title; files = []; sampleRun = true; try { await run(); } finally { sampleRun = false; } }
 // Share a reviewer in a group chat with no server: the reviewer (questions and notes, never the sharer's answers,
 // schedule, flags or exam date) is compressed into the link itself. Opening the link asks, then imports it through
 // the same validation as a backup file.
@@ -964,7 +970,8 @@ async function run() {
     }
     const titleEl = document.getElementById('title');
     const title = (titleEl && titleEl.value.trim()) || pasteTitle || (files[0] ? files[0].name.replace(/\.[^.]+$/, '') : 'Pasted notes');
-    pending = { title, items, src: lines, tags, opts, hidden: [], removed: [] }; files = []; preview(); // saved only after the student checks the questions
+    pending = { title, items, src: lines, tags, opts, hidden: [], removed: [] }; files = [];
+    if (sampleRun) savePending(); else preview(); // own notes are saved only after the student checks the questions
   } catch (e) { err = String(e.message || e); }
   busy = false; status = ''; if (!cur && !pending) home();
 }
@@ -1018,10 +1025,12 @@ function preview() {
       h('button', { class: 'btn alt', onclick: () => openItemEditor({ items: p.items, hidden: p.hidden, removed: p.removed, index: -1, back: preview }) }, 'Add a question'),
       few && h('span', { class: 'err' }, 'Keep at least 3 questions.')),
     h('div', { class: 'items' }, p.items.map((it, i) => h('div', { class: 'card' },
-      h('div', { class: 'k' }, TABS[it.type]), h('div', { class: 'q' }, it.q), h('p', null, 'Answer: ' + flashAnswer(it)),
+      h('div', { class: 'k' }, kindName(it)), h('div', { class: 'q' }, it.q), h('p', null, 'Answer: ' + flashAnswer(it)),
       h('div', { class: 'row' },
         h('button', { class: 'btn alt', onclick: () => openItemEditor({ items: p.items, hidden: p.hidden, removed: p.removed, index: i, back: preview }) }, 'Edit'),
-        h('button', { class: 'btn alt rm', 'aria-label': 'Remove question ' + (i + 1), onclick: () => { p.hidden = cleanHidden([...(p.hidden || []), itemKey(it)]); p.removed = [...(p.removed || []), it]; p.items.splice(i, 1); removedAt = i; preview(); say('Removed. ' + p.items.length + ' questions left.'); } }, 'Remove')))))), 'preview');
+        h('button', { class: 'btn alt rm', 'aria-label': 'Remove question ' + (i + 1), onclick: () => { p.hidden = cleanHidden([...(p.hidden || []), itemKey(it)]); p.removed = [...(p.removed || []), it]; p.items.splice(i, 1); removedAt = i; preview(); say('Removed. ' + p.items.length + ' questions left.'); } }, 'Remove'))))),
+    // The list is long on a phone; whoever reads to the end can save there instead of scrolling back up.
+    p.items.length > 3 && h('p', null, h('button', { class: 'btn', disabled: few ? '' : null, onclick: savePending }, 'Save reviewer (' + p.items.length + ' questions)'))), 'preview');
   // The removed card is gone; put focus on the Remove button that took its place.
   const rm = app.querySelectorAll('.rm'); if (rm.length && removedAt !== null) rm[Math.min(removedAt, rm.length - 1)].focus();
   removedAt = null;
@@ -1874,6 +1883,8 @@ const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI'];
 // A periodical exam names its parts like the paper: "Test I. Multiple choice".
 const tabName = (r, ts, k) => (r.virtual === 'exam' ? 'Test ' + ROMAN[ts.indexOf(k)] + '. ' : '') + TABS[k];
 const TABS = { mc: 'Multiple choice', mtf: 'Modified true or false', match: 'Matching type', id: 'Identification', enum: 'Enumeration', img: 'Diagram' };
+// What one item is called. A true-or-false item lives in the multiple-choice part but is not multiple choice to a student.
+function kindName(it) { return it && it.type === 'mc' && Array.isArray(it.options) && it.options.length === 2 && it.options[0] === 'True' && it.options[1] === 'False' ? 'True or false' : TABS[it && it.type] || 'Question'; }
 // A partial enumeration answer earns its fraction; every other type is all or nothing.
 const credit = a => (a && typeof a.part === 'number' ? a.part : a && a.ok ? 1 : 0);
 const scoreText = n => String(Math.round(n * 10) / 10);
@@ -2049,7 +2060,7 @@ function flipcards() {
         ? h('span', { class: 'pairs' }, it.pairs.map(p => h('span', { class: 'pair' }, h('b', null, p.term), ' — ' + p.desc)))
         : h('span', { class: 'flip-copy' }, flashAnswer(it)),
       it.type !== 'match' && h('span', { class: 'flip-source' }, it.exp ? 'From your reviewer notes: ' + it.exp : ''))
-    : h('span', { class: 'flip-face question-face' }, h('span', { class: 'k' }, 'QUESTION · TAP TO FLIP'), it.type === 'img' && imageBlock(it), h('span', { class: 'flip-copy' }, shownQ(it)));
+    : h('span', { class: 'flip-face question-face' }, h('span', { class: 'k' }, 'QUESTION'), it.type === 'img' && imageBlock(it), h('span', { class: 'flip-copy' }, shownQ(it)));
   const node = h('div', null,
     h('div', { class: 'row' }, h('button', { class: 'btn alt', onclick: () => { home(); } }, '← Back'), h('span', { class: 'k' }, 'FLASHCARDS')),
     h('h1', null, r.title),
@@ -2057,7 +2068,7 @@ function flipcards() {
     warn(),
     h('div', { class: 'flip-progress-row' }, h('span', { class: 'mono' }, (flashIndex + 1) + ' / ' + items.length), h('span', { class: 'k' }, (r.items.length - nKnown - nLearn) + ' new · ' + nLearn + ' learning · ' + nKnown + ' known'), bar(nKnown / r.items.length * 100, 'Cards known')),
     h('p', null, h('button', { class: 'btn alt', onclick: () => startFlash(flashMode === 'unknown' ? 'all' : 'unknown') }, flashMode === 'unknown' ? 'Study all cards' : 'Study only cards not known yet (' + (r.items.length - nKnown) + ')')),
-    h('button', { class: 'flip-card' + (flashRevealed ? ' revealed' : ''), onclick: () => { flashRevealed = !flashRevealed; flipcards(); } }, face, h('span', { class: 'flip-hint' }, flashRevealed ? 'Click to see question' : 'Click to reveal answer')),
+    h('button', { class: 'flip-card' + (flashRevealed ? ' revealed' : ''), onclick: () => { flashRevealed = !flashRevealed; flipcards(); } }, face, h('span', { class: 'flip-hint' }, flashRevealed ? 'Tap the card to see the question' : 'Tap the card to see the answer')),
     h('div', { class: 'row flip-actions' },
       h('button', { class: 'btn alt', disabled: flashIndex === 0 ? '' : null, onclick: () => { flashIndex--; flashRevealed = false; flipcards(); } }, '← Previous'),
       h('button', { class: 'btn alt', onclick: () => { flashRevealed = !flashRevealed; flipcards(); } }, flashRevealed ? 'Show question' : 'Reveal answer'),
@@ -2187,7 +2198,7 @@ function recite() {
     !ttsReady() && h('p', { class: 'err', role: 'alert' }, 'This browser has no speech voice available, so questions cannot be read aloud here.'),
     h('div', { class: 'flip-progress-row' }, h('span', { class: 'mono' }, (idx + 1) + ' / ' + items.length), h('span', { class: 'k', role: 'status' }, label), bar((idx + 1) / items.length * 100, 'Recitation progress')),
     h('div', { class: 'recite-card' },
-      h('div', { class: 'k' }, TABS[it.type] + (showAnswer ? ' · ANSWER' : ' · QUESTION')),
+      h('div', { class: 'k' }, kindName(it) + (showAnswer ? ' · ANSWER' : ' · QUESTION')),
       it.type === 'img' && imageBlock(it, showAnswer),
       h('p', { class: 'recite-text' }, showAnswer ? flashAnswer(it) : it.q),
       showAnswer && it.exp && h('p', { class: 'k' }, it.exp)),
@@ -2369,6 +2380,13 @@ function quiz() {
         h('button', { class: 'btn', disabled: missed.length ? null : '', onclick: () => clear(missed) }, 'Retry missed (' + missed.length + ')')),
       h('details', { class: 'more', open: running || moreOpen ? '' : null, ontoggle: e => { moreOpen = e.currentTarget.open; } }, h('summary', null,
         h('span', null, h('b', null, 'More options'), h('span', { class: 'more-hint' }, r.virtual ? 'Recite, blurt, quiz bee, timed, print' : 'Exam date, recite, blurt, quiz bee, timed, shuffle'))),
+      h('h3', { class: 'k opt-group' }, 'Practise'),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn alt', onclick: openRecite }, '🎧 Recite'),
+        h('button', { class: 'btn alt', onclick: blurt }, '📝 Blurt'),
+        h('button', { class: 'btn alt', onclick: beeSetup }, '🔔 Quiz Bee'),
+        h('button', { class: 'btn alt', onclick: running ? () => { stopTimer(); quiz(); } : () => startTimed(mine) }, running ? 'Stop timer' : '⏱ Timed practice (' + fmt(mine.length * 30000) + ')')),
+      h('h3', { class: 'k opt-group' }, 'This reviewer'),
       !r.virtual && h('div', { class: 'row plan' },
         h('label', null, 'Exam date ', h('input', { type: 'date', 'aria-label': 'Exam date for this reviewer', value: (r.plan && r.plan.exam) || '', onchange: e => {
           const v = e.target.value;
@@ -2378,20 +2396,15 @@ function quiz() {
           save(); quiz();
         } })),
         examDaysLeft(r.plan && r.plan.exam) !== null && h('span', { class: 'k' }, examText(r.plan.exam))),
-      h('div', { class: 'row', style: 'margin-top:8px' },
-        h('button', { class: 'btn alt', onclick: () => clear(mine) }, 'Reset this part'),
-        h('button', { class: 'btn alt', onclick: openRecite }, '🎧 Recite'),
-        h('button', { class: 'btn alt', onclick: blurt }, '📝 Blurt'),
-        h('button', { class: 'btn alt', onclick: beeSetup }, '🔔 Quiz Bee'),
-        h('button', { class: 'btn alt', onclick: running ? () => { stopTimer(); quiz(); } : () => startTimed(mine) }, running ? 'Stop timer' : 'Timed practice (' + fmt(mine.length * 30000) + ')')),
-        h('div', { class: 'row' },
+        h('div', { class: 'row', style: 'margin-top:8px' },
           !r.virtual && h('button', { class: 'btn alt', onclick: shuffleAll }, r.src ? 'Shuffle · new questions' : 'Shuffle'),
           !r.virtual && h('button', { class: 'btn alt', onclick: rename }, 'Rename'),
           !r.virtual && h('button', { class: 'btn alt', onclick: () => openItemEditor({ items: r.items, hidden: r.hidden || (r.hidden = []), reviewer: r, index: -1, back: quiz }) }, 'Add a question'),
           r.removed && r.removed.length > 0 && h('button', { class: 'btn alt', onclick: () => removedScreen(r) }, 'Removed questions (' + r.removed.length + ')'),
           !r.virtual && ts.includes('img') && h('button', { class: 'btn alt', onclick: () => openCovers(r) }, r.masks && r.masks.length ? 'Edit label covers' : 'Hide printed labels'),
           !r.virtual && ts.includes('img') && h('button', { class: 'btn alt', onclick: () => editDiagram(r) }, 'Edit parts'),
-          h('button', { class: 'btn alt', onclick: printPart }, 'Print this part')),
+          h('button', { class: 'btn alt', onclick: printPart }, 'Print this part'),
+          h('button', { class: 'btn alt', onclick: () => clear(mine) }, 'Reset this part')),
         !r.virtual && ts.includes('img') && h('div', { class: 'row', style: 'margin-top:8px' }, h('span', { class: 'k', id: 'diag-answer' }, 'Diagram answers'),
           h('div', { class: 'seg', role: 'group', 'aria-labelledby': 'diag-answer' }, [['type', 'Type the name'], ['choice', 'Choose from labels']].map(([mode, label]) => {
             const on = (mode === 'choice') === choiceMode(r);
@@ -2416,7 +2429,7 @@ function quiz() {
     view === 'one' && tabs,
     view === 'one'
       ? h('div', { class: 'row one-meta' }, h('span', { class: 'mono big' }, 'Q ' + (quizIndex + 1) + ' of ' + mine.length),
-          h('span', { class: 'k' }, tabName(r, ts, tab)),
+          h('span', { class: 'k' }, current && kindName(current) === 'True or false' ? 'True or false' : tabName(r, ts, tab)),
           bar(mine.length ? (quizIndex + 1) / mine.length * 100 : 0, 'Question position'))
       : h('div', { class: 'row' }, h('span', { class: 'mono big' }, scoreText(total) + '/' + n),
           h('span', { class: 'k' }, 'correct so far · ' + n + ' items'),

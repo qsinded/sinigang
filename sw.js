@@ -1,7 +1,7 @@
 // Offline cache. The app is static, so the whole shell is precached on install and served from the
 // cache first; the network is only used for files this list does not name.
 // Bump VERSION when a shipped file changes, or phones keep running the old copy.
-const VERSION = 'v35';
+const VERSION = 'v36';
 const CACHE = 'reviewer-' + VERSION;
 // The OCR engine for "Find printed labels" (~7 MB) is never precached. It is kept on first use in a
 // cache named after the engine version, which app updates leave alone, so it downloads once per

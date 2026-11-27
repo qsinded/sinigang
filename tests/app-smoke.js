@@ -1409,10 +1409,42 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   const sampleBtn = find(appEl, e => e.tagName === 'BUTTON' && /Biology sample/.test(screenText(e)))[0];
   assert.ok(sampleBtn, 'a first-time visitor is offered sample notes');
   await sampleBtn.onclick();
-  assert.match(screenText(appEl), /Check your questions/, 'the sample builds a reviewer to check');
-  assert.ok(vm.runInContext('pending.items.length', ctx) >= 8, 'the sample makes a real set of questions');
+  assert.doesNotMatch(screenText(appEl), /Check your questions/, 'a sample opens straight into practice: "see it in seconds" has no check step');
+  assert.strictEqual(vm.runInContext('R.length', ctx), 1, 'the sample is saved as a reviewer');
+  assert.ok(vm.runInContext('R[0].items.length', ctx) >= 8, 'the sample makes a real set of questions');
+  // More options is grouped: practice modes, then managing this reviewer (Reset sits with the managing buttons).
+  const optsText = screenText(appEl);
+  assert.ok(optsText.indexOf('Practise') >= 0 && optsText.indexOf('Practise') < optsText.indexOf('Recite'), 'a Practise group holds the study modes');
+  assert.ok(optsText.indexOf('This reviewer') >= 0 && optsText.indexOf('This reviewer') < optsText.indexOf('Shuffle') && optsText.indexOf('This reviewer') < optsText.indexOf('Reset this part'), 'a This reviewer group holds Shuffle, Reset and the rest');
+  // Flashcards speak phone: one "tap" hint, no "click".
+  ctx.startFlash('all');
+  assert.ok(!/Click/.test(screenText(appEl)) && /Tap the card/.test(screenText(appEl)), 'the flashcard hint says tap, once');
+  // Home: the week ahead in words.
   ctx.home();
-  vm.runInContext('pasteText = ""', ctx);
+  assert.match(screenText(appEl), /Coming up: \d+ today, \d+ tomorrow, \d+ later this week/, 'the forecast reads as words, not "17 · 1 · 0 · 0"');
+  // Your own notes still get the check step, with Save at the top and at the bottom of the long list.
+  vm.runInContext("pasteText = SAMPLES.bio.text; pasteTitle = 'Mine'; files = [];", ctx);
+  await ctx.run();
+  assert.match(screenText(appEl), /Check your questions/, 'own notes are checked before saving');
+  assert.strictEqual(find(appEl, e => e.tagName === 'BUTTON' && /^Save reviewer/.test(screenText(e))).length, 2, 'Save is at the top and at the bottom of the list');
+  // A true-or-false item is called that, not "Multiple choice".
+  assert.strictEqual(ctx.kindName({ type: 'mc', options: ['True', 'False'] }), 'True or false');
+  assert.strictEqual(ctx.kindName({ type: 'mc', options: ['a', 'b', 'c'] }), 'Multiple choice');
+  const tfR = ctx.cleanReviewer({ title: 'TF', items: [{ id: 't0', type: 'mc', q: 'Mitosis makes two nuclei.', options: ['True', 'False'], answer: 0, exp: '' }, ...base.items] });
+  vm.runInContext("quizView = 'one'", ctx);
+  ctx.open(tfR);
+  const meta = find(appEl, e => String(e.className).includes('one-meta'))[0];
+  assert.ok(meta && /True or false/.test(screenText(meta)), 'one-question view labels a true-or-false item as such');
+  vm.runInContext("quizView = null", ctx);
+  // The theme button follows the phone when it switches to dark by itself (and no choice was made in the app).
+  const realMM = sandbox.matchMedia;
+  vm.runInContext('delete root.dataset.theme', ctx);
+  sandbox.matchMedia = q => ({ matches: /dark/.test(q) });
+  ctx.syncTheme();
+  assert.match(screenText(vm.runInContext('themeBtn', ctx)), /Light mode/, 'the button offers light mode once the phone is dark');
+  sandbox.matchMedia = realMM; ctx.syncTheme();
+  ctx.home();
+  vm.runInContext('pasteText = ""; pending = null', ctx);
 
   // From the third student test.
   // "Show in my notes" finds the question's own sentence even when the PDF split it over two lines, and never lands on
