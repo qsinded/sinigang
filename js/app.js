@@ -559,6 +559,142 @@ async function exportAll(only) {
   note = 'Saved ' + list.length + ' reviewer(s)' + (nImg ? ' with ' + nImg + ' diagram image(s)' : '') + ' to reviewers.json. Check your Downloads.';
   home();
 }
+// Quiz Bee: 2–4 players pass one phone. Each turn starts with "Pass the phone to …" so nobody sees the next question
+// early, a countdown runs, and a right answer scores 1. It is a game for a study group, so it never changes the
+// owner's answers or schedule.
+let bee = null, beeTick = null;
+function beeStop() { clearInterval(beeTick); beeTick = null; bee = null; }
+function beeSetup() {
+  const r = cur;
+  const inputs = [0, 1, 2, 3].map(i => h('input', { type: 'text', 'aria-label': 'Player ' + (i + 1) + ' name', placeholder: 'Player ' + (i + 1) + (i < 2 ? '' : ' (optional)') }));
+  const rounds = h('select', { 'aria-label': 'Questions per player' }, [3, 5, 10].map(v => h('option', { value: v }, v + ' questions each')));
+  const secs = h('select', { 'aria-label': 'Seconds per question' }, [10, 20, 30].map(v => h('option', { value: v, selected: v === 20 ? '' : null }, v + ' seconds each')));
+  draw(h('div', null,
+    h('button', { class: 'btn alt', onclick: () => quiz() }, '← Back'),
+    h('h1', null, 'Quiz Bee'),
+    h('p', { class: 'sub' }, 'Pass one phone around your group. Each player answers their own question before time runs out. Scores are for fun: they do not change the progress of "' + r.title + '".'),
+    h('div', { class: 'card bee-names' }, inputs),
+    h('div', { class: 'row' }, rounds, secs),
+    h('p', null, h('button', { class: 'btn', onclick: () => beeStart(inputs.map((x, i) => x.value.trim() || (i < 2 ? 'Player ' + (i + 1) : '')).filter(Boolean), Number(rounds.value), Number(secs.value)) }, 'Start'))), 'bee');
+}
+function beeStart(names, rounds, secs) {
+  const players = names.slice(0, 4).map(name => ({ name, score: 0 }));
+  if (players.length < 2) return;
+  // Multiple choice is the quickest to answer on a passed phone; typed questions fill in when there are too few.
+  const pool = [...shuffle(cur.items.filter(i => i.type === 'mc')), ...shuffle(cur.items.filter(i => ['id', 'mtf'].includes(i.type)))];
+  const queue = pool.length ? Array.from({ length: players.length * rounds }, (_, i) => pool[i % pool.length]) : [];
+  beeStop();
+  bee = { players, queue, turn: 0, secs, phase: queue.length ? 'ready' : 'end', last: null };
+  beeDraw();
+}
+const beePlayer = () => bee.players[bee.turn % bee.players.length];
+function beeReady() {
+  if (!bee || bee.phase !== 'ready') return;
+  bee.phase = 'ask'; bee.endsAt = Date.now() + bee.secs * 1000;
+  beeTick = setInterval(() => {
+    const left = Math.max(0, Math.ceil((bee.endsAt - Date.now()) / 1000)), el = document.getElementById('bee-clock');
+    if (el) el.textContent = left + 's';
+    if (left <= 0) beeTimeout();
+  }, 250);
+  beeDraw();
+}
+function beeAnswer(val) {
+  if (!bee || bee.phase !== 'ask') return;
+  clearInterval(beeTick);
+  const it = bee.queue[bee.turn];
+  const ok = it.type === 'mc' ? val === it.answer : gradeId(it.answer, val, cur.items.map(answerText)).ok;
+  if (ok) beePlayer().score++;
+  bee.last = { ok, timeout: false, answer: flashAnswer(it) }; bee.phase = 'result';
+  beeDraw(); say(ok ? 'Correct.' : 'Not quite. Answer: ' + flashAnswer(it));
+}
+function beeTimeout() {
+  if (!bee || bee.phase !== 'ask') return;
+  clearInterval(beeTick);
+  bee.last = { ok: false, timeout: true, answer: flashAnswer(bee.queue[bee.turn]) }; bee.phase = 'result';
+  beeDraw(); say('Time is up.');
+}
+function beeNext() {
+  if (!bee) return;
+  bee.turn++; bee.phase = bee.turn >= bee.queue.length ? 'end' : 'ready';
+  beeDraw();
+}
+function beeDraw() {
+  const b = bee, p = beePlayer(), it = b.queue[b.turn];
+  const board = h('ol', { class: 'bee-board' }, [...b.players].sort((x, y) => y.score - x.score).map(x => h('li', null, h('b', null, x.name), ' ', plural(x.score, 'point', 'points'))));
+  let body;
+  if (b.phase === 'ready') body = [h('p', { class: 'bee-pass' }, 'Pass the phone to ', h('b', null, p.name)), h('p', null, h('button', { class: 'btn wide', onclick: beeReady }, "I'm " + p.name + ', show my question'))];
+  else if (b.phase === 'ask') body = [h('div', { class: 'row one-meta' }, h('b', null, p.name), h('span', { class: 'mono big', id: 'bee-clock', role: 'timer' }, b.secs + 's')),
+    h('div', { class: 'q', id: 'bee-q' }, it.q),
+    it.type === 'mc'
+      ? h('div', { role: 'group', 'aria-labelledby': 'bee-q' }, it.options.map((o, oi) => h('button', { class: 'opt', onclick: () => beeAnswer(oi) }, h('b', null, 'ABCD'[oi]), capFirst(o))))
+      : (() => { const inp = h('input', { type: 'text', 'aria-labelledby': 'bee-q', placeholder: 'Your answer', onkeydown: e => { if (e.key === 'Enter') beeAnswer(inp.value); } }); return [inp, h('p', null, h('button', { class: 'btn', onclick: () => beeAnswer(inp.value) }, 'Answer'))]; })()];
+  else if (b.phase === 'result') {
+    const next = b.turn + 1 < b.queue.length ? b.players[(b.turn + 1) % b.players.length].name : null;
+    body = [h('div', { class: 'fb' + (b.last.ok ? '' : ' bad'), role: 'status' }, h('b', null, b.last.timeout ? 'Time is up.' : b.last.ok ? 'Correct! +1 for ' + p.name : 'Not quite.'), h('div', null, 'Answer: ' + b.last.answer + '.')),
+      board, h('p', null, h('button', { class: 'btn wide', onclick: beeNext }, next ? 'Next: pass to ' + next : 'See the results'))];
+  } else {
+    const top = Math.max(...b.players.map(x => x.score)), winners = b.players.filter(x => x.score === top).map(x => x.name);
+    body = [h('h2', null, winners.length === 1 ? winners[0] + ' wins!' : 'A tie between ' + winners.join(' and ') + '!'), board,
+      h('div', { class: 'row' }, h('button', { class: 'btn', onclick: beeSetup }, 'Play again'), h('button', { class: 'btn alt', onclick: () => { beeStop(); quiz(); } }, 'Back to the reviewer'))];
+  }
+  draw(h('div', { class: 'bee' }, h('button', { class: 'btn alt', onclick: () => { beeStop(); quiz(); } }, '← Stop the game'), h('h1', null, 'Quiz Bee'),
+    b.phase !== 'end' && h('p', { class: 'k' }, 'Question ' + (b.turn + 1) + ' of ' + b.queue.length), body), 'bee');
+}
+// Blurt: write everything you remember about a reviewer, then see which key terms you recalled and which you missed,
+// each missed one with the note it comes from. A spelling slip still counts as recalled (the grading rule).
+function blurtTerms(r) {
+  const termOf = it => {
+    if (it.type === 'mc') { const named = it.q.match(/^Which statement describes "(.+)"\?$/); return named ? named[1] : /^True or false/.test(it.q) ? '' : it.options[it.answer]; }
+    return it.answer === 'TRUE' ? '' : it.answer || '';
+  };
+  const seen = new Set();
+  return r.items.flatMap(it => (it.type === 'enum' ? it.items : it.type === 'match' ? it.pairs.map(p => p.term) : [termOf(it)]).map(term => ({ term, it })))
+    .filter(x => x.term && !seen.has(norm(x.term)) && seen.add(norm(x.term)));
+}
+let blurtResult = null;
+function blurt() { blurtResult = null; drawBlurt(''); }
+function blurtCheck(text) {
+  const words = String(text).match(/[A-Za-z0-9'’-]+/g) || [];
+  const said = term => { const n = (term.match(/[A-Za-z0-9]+/g) || []).length || 1; for (let i = 0; i + n <= words.length; i++) if (gradeId(term, words.slice(i, i + n).join(' ')).ok) return true; return false; };
+  const all = blurtTerms(cur), got = all.filter(x => said(x.term)), miss = all.filter(x => !said(x.term));
+  blurtResult = { recalled: got.map(x => x.term), missed: miss.map(x => x.term), missedItems: [...new Set(miss.map(x => x.it))] , missedTerms: miss };
+  drawBlurt(text);
+  return blurtResult;
+}
+function drawBlurt(text) {
+  const r = cur, res = blurtResult, total = res ? res.recalled.length + res.missed.length : 0;
+  const box = h('textarea', { rows: 8, 'aria-label': 'Everything you remember', placeholder: 'Write everything you remember: terms, definitions, lists. Do not look at your notes.' }, text);
+  draw(h('div', null,
+    h('button', { class: 'btn alt', onclick: () => quiz() }, '← Back'),
+    h('h1', null, 'Blurt: ' + r.title),
+    h('p', { class: 'sub' }, 'Write down everything you remember about this topic, without looking. Then check which key terms you recalled.'),
+    box,
+    h('p', null, h('button', { class: 'btn', onclick: () => blurtCheck(box.value) }, res ? 'Check again' : 'Check')),
+    res && h('div', { class: 'card blurt', role: 'status' },
+      h('h2', null, 'You recalled ' + res.recalled.length + ' of ' + total + ' key terms'),
+      res.recalled.length > 0 && h('p', null, h('b', null, 'Recalled: '), res.recalled.join(', ')),
+      res.missed.length > 0 && [h('p', null, h('b', null, 'Missed:')),
+        h('ul', null, res.missedTerms.map(x => h('li', null, h('b', null, x.term), x.it.exp ? ' — ' + untag(x.it.exp) : ''))),
+        h('p', null, h('button', { class: 'btn', onclick: () => { flashMode = 'missed'; flashIndex = 0; flashRevealed = false; flashOrder = res.missedItems.map(it => r.items.indexOf(it)).sort((a, b) => a - b); flipcards(); } }, 'Study the missed ones'))])), 'blurt');
+}
+// First visit: one tap builds a reviewer from bundled sample notes, so the app shows what it does in seconds.
+const SAMPLES = {
+  bio: { title: 'Sample: Cell Division and Transport', text: ['General Biology – Cell Division and Transport',
+    'Mitosis is the division of a nucleus into two identical nuclei.', 'Meiosis is a cell division that produces four haploid gametes.',
+    'Interphase is the stage where the cell grows and copies its DNA.', 'Cytokinesis is the division of the cytoplasm after mitosis.',
+    'Stages of mitosis:', '- Prophase', '- Metaphase', '- Anaphase', '- Telophase',
+    'Osmosis is the diffusion of water across a selectively permeable membrane.', 'Diffusion is the movement of particles from high to low concentration.',
+    'Ribosomes build proteins from amino acids.', 'The cell membrane controls what enters and leaves the cell.',
+    'Active transport requires energy in the form of ATP to move substances against their concentration gradient.',
+    'The sodium-potassium pump moves three sodium ions out and two potassium ions into the cell.'].join('\n') },
+  ap: { title: 'Halimbawa: Ang Katipunan', text: ['Araling Panlipunan - Ang Katipunan',
+    'Ang Katipunan ay isang lihim na samahan na itinatag ni Andres Bonifacio noong 1892.', 'Ang Kartilya ng Katipunan ay isinulat ni Emilio Jacinto.',
+    'Si Jose Rizal ay binaril sa Bagumbayan noong Disyembre 30, 1896.', 'Ang Sigaw sa Pugad Lawin ay naganap noong Agosto 1896.',
+    'Ang Kasunduan sa Biak-na-Bato ay nilagdaan noong 1897.', 'Ang Saligang Batas ng Malolos ay ang unang republikanong konstitusyon sa Asya.',
+    'Si Andres Bonifacio ang tinaguriang Ama ng Katipunan.', 'Ang La Liga Filipina ay samahang itinatag ni Jose Rizal noong 1892.'].join('\n') },
+};
+let pasteTitle = '';
+function trySample(key) { const s = SAMPLES[key]; pasteText = s.text; pasteTitle = s.title; files = []; return run(); }
 // Share a reviewer in a group chat with no server: the reviewer (questions and notes, never the sharer's answers,
 // schedule, flags or exam date) is compressed into the link itself. Opening the link asks, then imports it through
 // the same validation as a backup file.
@@ -669,7 +805,7 @@ async function run() {
         : ' Notes written as full sentences ("X is …", "X does …") work best.'));
     }
     const titleEl = document.getElementById('title');
-    const title = (titleEl && titleEl.value.trim()) || (files[0] ? files[0].name.replace(/\.[^.]+$/, '') : 'Pasted notes');
+    const title = (titleEl && titleEl.value.trim()) || pasteTitle || (files[0] ? files[0].name.replace(/\.[^.]+$/, '') : 'Pasted notes');
     pending = { title, items, src: lines, tags, opts, hidden: [], removed: [] }; files = []; preview(); // saved only after the student checks the questions
   } catch (e) { err = String(e.message || e); }
   busy = false; status = ''; if (!cur && !pending) home();
@@ -681,7 +817,7 @@ function savePending() {
   const tags = Array.isArray(p.tags) ? p.tags.slice(0, src.length) : [];
   const removed = (p.removed || []).slice(0, 200).map(cleanItem).filter(Boolean);
   const r = { id: newRid(), title: p.title, items: p.items, ans: {}, src, tags, opts: p.opts, plan: { exam: '', srs: {} }, flags: [], hidden: cleanHidden(p.hidden), removed };
-  pending = null; pasteText = ''; R.unshift(r); save(); open(r); // a second Generate must not make a duplicate
+  pending = null; pasteText = ''; pasteTitle = ''; R.unshift(r); save(); open(r); // a second Generate must not make a duplicate
 }
 // The skip report: which note lines made no question and why, so a student can reword them instead of hitting a
 // dead end. Lines that could become questions are listed by reason (worded in SKIP_REASONS); facts cut by the
@@ -1283,6 +1419,7 @@ function sortReviewers(list) {
 }
 function home() {
   pending = null;
+  if (bee) beeStop(); // leaving the game stops its clock
   if (reciteActive) stopVoice();
   if (lastScreen === 'diagram') clearDiagram();
   const list = h('div', { class: 'list' });
@@ -1306,6 +1443,11 @@ function home() {
       h('label', null, 'Sort ', h('select', { onchange: e => { qSort = e.target.value; home(); } }, [['recent', 'Recently added'], ['due', 'Most due'], ['exam', 'Next exam'], ['title', 'Title']].map(([v, t]) => h('option', { value: v, selected: v === qSort ? '' : null }, t)))),
       h('label', null, h('input', { type: 'checkbox', checked: qDue ? '' : null, onchange: e => { qDue = e.target.checked; home(); } }), 'Due only')),
     list,
+    R.length === 0 && h('div', { class: 'card today' },
+      h('h2', { class: 'k' }, 'New here?'),
+      h('p', null, 'See what the app does in seconds: build a reviewer from sample notes, then try it with your own.'),
+      h('div', { class: 'row' }, h('button', { class: 'btn', disabled: busy ? '' : null, onclick: () => trySample('bio') }, 'Try the Biology sample'),
+        h('button', { class: 'btn alt', disabled: busy ? '' : null, onclick: () => trySample('ap') }, 'Subukan: Araling Panlipunan'))),
     h('div', { class: 'card' },
       R.length > 0 && h('h2', { class: 'k' }, 'New reviewer'),
       h('input', { type: 'file', id: 'file', 'aria-label': 'Choose a PDF, PowerPoint, Word or text file', accept: '.pdf,.pptx,.ppt,.docx,.txt,.md,text/plain,application/pdf', multiple: '', onchange: e => { files = [...e.target.files]; home(); } }),
@@ -1813,7 +1955,7 @@ function quiz() {
         !r.virtual && h('button', { class: 'btn alt', disabled: dueCount(r) ? null : '', onclick: () => startFlash('due', optCap) }, 'Review due (' + dueCount(r) + ')'),
         h('button', { class: 'btn', disabled: missed.length ? null : '', onclick: () => clear(missed) }, 'Retry missed (' + missed.length + ')')),
       h('details', { class: 'more', open: running || moreOpen ? '' : null, ontoggle: e => { moreOpen = e.currentTarget.open; } }, h('summary', null,
-        h('span', null, h('b', null, 'More options'), h('span', { class: 'more-hint' }, r.virtual ? 'Recite, timed, print' : 'Exam date, recite, timed, shuffle, print'))),
+        h('span', null, h('b', null, 'More options'), h('span', { class: 'more-hint' }, r.virtual ? 'Recite, blurt, quiz bee, timed, print' : 'Exam date, recite, blurt, quiz bee, timed, shuffle'))),
       !r.virtual && h('div', { class: 'row plan' },
         h('label', null, 'Exam date ', h('input', { type: 'date', 'aria-label': 'Exam date for this reviewer', value: (r.plan && r.plan.exam) || '', onchange: e => {
           const v = e.target.value;
@@ -1826,6 +1968,8 @@ function quiz() {
       h('div', { class: 'row', style: 'margin-top:8px' },
         h('button', { class: 'btn alt', onclick: () => clear(mine) }, 'Reset this part'),
         h('button', { class: 'btn alt', onclick: openRecite }, '🎧 Recite'),
+        h('button', { class: 'btn alt', onclick: blurt }, '📝 Blurt'),
+        h('button', { class: 'btn alt', onclick: beeSetup }, '🔔 Quiz Bee'),
         h('button', { class: 'btn alt', onclick: running ? () => { stopTimer(); quiz(); } : () => startTimed(mine) }, running ? 'Stop timer' : 'Timed practice (' + fmt(mine.length * 30000) + ')')),
         h('div', { class: 'row' },
           !r.virtual && h('button', { class: 'btn alt', onclick: shuffleAll }, r.src ? 'Shuffle · new questions' : 'Shuffle'),

@@ -906,5 +906,55 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   assert.strictEqual(await ctx.shareLink(huge), null, 'a reviewer too big for a link is not shared by link');
   Object.assign(sandbox, stubs); ctx.ask = stubs.ask;
 
+  // Quiz Bee: players pass one phone; each turn starts with "Pass to …" so nobody sees the next question early; a right
+  // answer scores, a timeout does not; the end shows the winner. A game does not change the owner's study progress.
+  const beeR = ctx.cleanReviewer({ ...base, title: 'Bee', items: [0, 1, 2, 3].map(i => ({ id: 'b' + i, type: 'mc', q: 'Bee question ' + i, options: ['right' + i, 'wrong' + i], answer: 0, exp: '' })) });
+  vm.runInContext('R = [' + JSON.stringify(beeR) + ']; open(R[0]);', ctx);
+  ctx.beeStart(['Ana', 'Ben'], 2, 20);
+  assert.match(screenText(appEl), /Pass the phone to\s+Ana/, 'each turn starts by passing the phone');
+  ctx.beeReady();
+  const beeQ = vm.runInContext('bee.queue[bee.turn]', ctx);
+  ctx.beeAnswer(0);
+  assert.match(screenText(appEl), /Correct/, 'a right answer is confirmed');
+  assert.strictEqual(vm.runInContext('bee.players[0].score', ctx), 1, 'Ana scores');
+  ctx.beeNext(); ctx.beeReady(); ctx.beeTimeout();
+  assert.match(screenText(appEl), /Time is up/, 'a timeout says so');
+  assert.strictEqual(vm.runInContext('bee.players[1].score', ctx), 0, 'Ben does not score on a timeout');
+  ctx.beeNext(); ctx.beeReady(); ctx.beeAnswer(0); ctx.beeNext(); ctx.beeReady(); ctx.beeAnswer(1); ctx.beeNext();
+  assert.match(screenText(appEl), /Ana\s+wins/, 'the scoreboard names the winner');
+  assert.deepStrictEqual(plain(vm.runInContext('R[0].ans', ctx)), {}, 'the game leaves the owner\'s answers alone');
+  assert.ok(beeQ && beeQ.q, 'questions come from the reviewer');
+  vm.runInContext('beeStop()', ctx);
+
+  // Blurt: write everything you remember; the check lists the key terms recalled and missed (with the note that has
+  // each missed one), forgiving a spelling slip, and offers the missed ones as flashcards.
+  const blurtR = ctx.cleanReviewer({ ...base, title: 'Cells', items: [
+    { id: 'u0', type: 'id', q: 'Which term is described? The powerhouse of the cell', answer: 'Mitochondria', exp: 'Mitochondria is the powerhouse of the cell.' },
+    { id: 'u1', type: 'id', q: 'Which term is described? The control center of the cell', answer: 'Nucleus', exp: 'The nucleus is the control center of the cell.' },
+    { id: 'u2', type: 'mc', q: 'Which term is described? Makes proteins', options: ['Ribosome', 'Vacuole'], answer: 0, exp: 'A ribosome makes proteins.' },
+    { id: 'u3', type: 'enum', q: 'Enumerate: Types of passive transport', items: ['Diffusion', 'Osmosis'], exp: '' }] });
+  vm.runInContext('R = [' + JSON.stringify(blurtR) + ']; open(R[0]);', ctx);
+  ctx.blurt();
+  assert.match(screenText(appEl), /everything you remember/i, 'the blurt page asks for everything remembered');
+  const res = ctx.blurtCheck('The mitocondria makes energy. Osmosis moves water. The nucleus controls the cell.');
+  assert.deepStrictEqual(plain(res.recalled).sort(), ['Mitochondria', 'Nucleus', 'Osmosis'], 'recalled terms, a spelling slip forgiven');
+  assert.deepStrictEqual(plain(res.missed).sort(), ['Diffusion', 'Ribosome'], 'missed terms');
+  const blurtText = screenText(appEl);
+  assert.match(blurtText, /3 of 5/, 'the score');
+  assert.ok(blurtText.includes('A ribosome makes proteins.'), 'a missed term shows the note it comes from');
+  find(appEl, e => e.tagName === 'BUTTON' && /Study the missed ones/.test(screenText(e)))[0].onclick();
+  assert.deepStrictEqual(plain(vm.runInContext('flashOrder.map(i => cur.items[i].id)', ctx)), ['u2', 'u3'], 'the missed terms become flashcards');
+
+  // First visit: one tap builds a reviewer from bundled sample notes.
+  vm.runInContext('R = []; cur = null; pending = null; files = [];', ctx);
+  ctx.home();
+  const sampleBtn = find(appEl, e => e.tagName === 'BUTTON' && /Biology sample/.test(screenText(e)))[0];
+  assert.ok(sampleBtn, 'a first-time visitor is offered sample notes');
+  await sampleBtn.onclick();
+  assert.match(screenText(appEl), /Check your questions/, 'the sample builds a reviewer to check');
+  assert.ok(vm.runInContext('pending.items.length', ctx) >= 8, 'the sample makes a real set of questions');
+  ctx.home();
+  vm.runInContext('pasteText = ""', ctx);
+
   console.log('app smoke checks passed');
 })().catch(e => { console.error(e); process.exit(1); });

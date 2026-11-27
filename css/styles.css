@@ -267,3 +267,11 @@ p.k,.card>.k:not(h2),.err+.k{font:inherit;text-transform:none;letter-spacing:0}
 /* Periodical exam: one reviewer per line, a real tap target each. */
 .picks .pick{display:flex;align-items:center;gap:10px;min-height:44px}
 .row.across{margin:0 0 12px}
+/* Quiz Bee: a big "pass the phone" line someone can read from across the table, and a simple scoreboard. */
+.bee-pass{font-size:1.5rem;margin:28px 0 12px}
+.bee-board{padding-left:22px;font-size:1.1rem}
+.bee-board li{margin:6px 0}
+.bee-names input{display:block;width:100%;margin:6px 0}
+/* Blurt results. */
+.blurt ul{padding-left:20px}
+.blurt li{margin:8px 0;overflow-wrap:anywhere}
