@@ -317,6 +317,22 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
     if (q.q === 'Fill in the blank: _____ is when two new nuclei form around the separated chromosomes.') sawWhen++;
   });
   assert(sawWhen > 0, 'the term is blanked in its own "is when" sentence');
+  // A sentence with two years asks each of them; the other year in the same sentence is never a wrong option, and the
+  // sentence is not used for two identical true/false items.
+  const twoDates = ['Spain ruled the Philippines from 1565 until 1898 under the Spanish crown.', 'Lapulapu defeated Magellan in the Battle of Mactan in 1521.',
+    'Emilio Aguinaldo declared Philippine independence in Kawit, Cavite on June 12, 1898.', 'Andres Bonifacio founded the secret society in Tondo in 1892.',
+    'The Americans took control of the islands after the Spanish-American War ended in 1899.', 'The Commonwealth government of the Philippines began in 1935.'];
+  const askedYears = new Set();
+  for (let i = 0; i < 40; i++) {
+    const out = generate(twoDates), tf = out.filter(q => /^True or false/.test(q.q)).map(q => q.q);
+    assert.strictEqual(new Set(tf).size, tf.length, 'no true/false item repeats in one set');
+    out.filter(q => /from _____ until 1898|from 1565 until _____/.test(q.q)).forEach(q => {
+      const a = q.type === 'mc' ? q.options[q.answer] : q.answer;
+      askedYears.add(a);
+      (q.options || []).forEach((o, k) => { if (k !== q.answer) assert(!/^(?:1565|1898)$/.test(o), 'the other year of the same sentence is not a wrong option: ' + q.options.join(' | ')); });
+    });
+  }
+  assert(askedYears.has('1565') && askedYears.has('1898'), 'both years of a two-date sentence are asked: ' + [...askedYears].join(', '));
   // A fact that made a question but was cut by the limit, or by a type the student turned off, says so.
   const capped = generate(skipNotes, [], { max: 1 });
   assert(capped.skipped.some(s => s.reason === 'limit'), 'items cut by the limit are reported');

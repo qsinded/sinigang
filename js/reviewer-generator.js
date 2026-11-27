@@ -420,7 +420,9 @@ function generate(rawLines, tags = [], o = {}) {
     if (!mm) { skip(s, caps.length ? 'same-term' : 'no-pattern'); continue; }
     if (objWords.size && !yr && !score(mm)) { skip(s, 'off-objectives'); continue; } // with objectives, a loose sentence must tie to one or be repeated
     if (!yr) ctoks.add(mm); // two events can share a year
-    clozes.push({ kind: 'cloze', w: score(mm), term: mm, q: 'Fill in the blank: ' + clean(s).replace(mm, '_____'), src: s, ctx: ctxOf.get(s) || '' });
+    // "from 1565 until 1898" asks each year; the other one stays in the sentence, so it is never a wrong option (fits).
+    const years = yr ? [...new Set(s.match(/\b(?:1\d|20)\d\d\b/g))].slice(0, 2) : [mm];
+    for (const t of years) clozes.push({ kind: 'cloze', w: score(t), term: t, q: 'Fill in the blank: ' + clean(s).replace(t, '_____'), src: s, ctx: ctxOf.get(s) || '' });
   }
 
   // A plain subject-verb fact ("Ribosomes build proteins…", "The law of demand states that…") asks for its subject.
@@ -507,7 +509,7 @@ function generate(rawLines, tags = [], o = {}) {
   };
   const out = [];
   let nMC = 0, nID = 0, nTF = 0, nTTrue = 0, nTFalse = 0;
-  const falseSrc = new Set(); // one false version per sentence, or the same claim gets flipped four ways
+  const falseSrc = new Set(), tfSrc = new Set(); // one false version per sentence, or the same claim gets flipped four ways
   // Wrong options are the same kind of thing as the answer: people for a person, and for a subject blank, terms that
   // agree with its verb ("_____ build" never offers "nucleus"). Too few of them makes it a typed question instead.
   // An acronym or number answer (EAX, 1898) only gets options of its own shape: one odd one out gives the answer away.
@@ -519,7 +521,9 @@ function generate(rawLines, tags = [], o = {}) {
   for (const it of all) {
     const dist = near(it.term, fresh(pool[it.kind].filter(o => fits(it, o) && sameKind(it, o)).map(o => o.term)), prefer(it));
     // True/false. A "false" statement is only made when it is certainly false (see verifiedSwap), never by luck.
-    if (!o.noTF && nTF < ITEM_CAP.tf && Math.random() < 0.2) { // with true/false off, the fact becomes a normal question instead of being dropped
+    // With true/false off, the fact becomes a normal question instead of being dropped; a sentence asked twice (two
+    // years) gives at most one true/false item.
+    if (!o.noTF && nTF < ITEM_CAP.tf && !tfSrc.has(it.src) && Math.random() < 0.2) {
       // Flipping is only worth it while "False" does not outnumber "True", and only once per sentence.
       let t = Math.random() < 0.5;
       if (!t && (falseSrc.has(it.src) || nTFalse >= nTTrue)) t = true;
@@ -527,7 +531,7 @@ function generate(rawLines, tags = [], o = {}) {
       // When this item cannot make an honest claim, fall through to a normal question instead.
       if (q) {
         out.push({ w: it.w, type: 'mc', q, options: ['True', 'False'], answer: t ? 0 : 1, exp: ex(it.src) });
-        nTF++; if (t) nTTrue++; else { nTFalse++; falseSrc.add(it.src); }
+        nTF++; tfSrc.add(it.src); if (t) nTTrue++; else { nTFalse++; falseSrc.add(it.src); }
         continue;
       }
     }
