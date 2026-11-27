@@ -47,7 +47,7 @@ function check(q, bad) {
   }
   // Not worth asking: a blank with nothing left to answer from, a label posing as a list, a made-up "A" before a
   // true claim, and a blank over a date or a cut-out list.
-  const stripped = q.q.replace(/^(?:Which term is described\?|Fill in the blank:)\s*/, '');
+  const stripped = q.q.replace(/^(?:(?:Which term|Who) is described\?|Fill in the blank:)\s*/, '');
   if (stripped !== q.q && (stripped.replace(/_+/g, ' ').match(/[A-Za-z]{4,}/g) || []).length < 2) bad.emptyBlank++;
   if (q.type === 'enum' && /^Enumerate: (?:note|notes|example|examples|tips?|hints?|remember|summary|recap|review|questions?)$/i.test(q.q)) bad.labelEnum++;
   if (q.answer === 0 && /^True or false: An? /.test(q.q) && !/^An? /i.test(rawSrc(q))) bad.articleAdded++;
@@ -103,6 +103,10 @@ function check(q, bad) {
   check({ type: 'mc', q: 'True or false: A Photosynthesis is the process plants use.', options: ['True', 'False'], answer: 0, exp: '(page 1) Photosynthesis is the process plants use.' }, b);
   check({ type: 'id', q: 'Fill in the blank: The _____ was first developed in the 1950s at IBM.', answer: 'OS', exp: '(page 1) The OS was first developed in the 1950s at IBM.' }, b);
   check({ type: 'mc', q: 'Which statement describes "Why"?', options: ['RAM considered volatile memory? (2 pts)', 'a', 'b', 'c'], answer: 0, exp: '(page 13) 3. Why is RAM considered volatile memory? (2 pts)' }, b);
+  // "Who is described?" questions get the same empty-blank check as "Which term is described?".
+  const emptyBefore = b.emptyBlank;
+  check({ type: 'id', q: 'Who is described? The _____ of it', answer: 'Jose Rizal', exp: '(page 1) Jose Rizal is the Jose Rizal of it.' }, b);
+  if (b.emptyBlank === emptyBefore) throw new Error('the empty-blank check skips "Who is described?" questions');
   // Coverage must count a line as used when a question cites it, or cites one sentence of it, and not otherwise.
   const cited = new Set([norm('The CPU runs code.'), norm('RAM holds running programs.')]);
   if (!usedLine('The CPU runs code.', cited)) throw new Error('coverage misses a cited line');

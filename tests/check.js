@@ -1,5 +1,5 @@
 // Run: node tests/check.js   (Node 18+, no packages). Checks the generator and the .pptx/.docx readers.
-const assert = require('assert'), zlib = require('zlib');
+const assert = require('assert'), zlib = require('zlib'), fs = require('fs'), path = require('path');
 const { generate, enumCheck, idOk, gradeId, norm, itemKey, carryProgress, ITEM_CAP, SKIP_REASONS } = require('../js/reviewer-generator.js');
 
 // Professor logic: the learning objectives decide what matters; jumbled text is never asked.
@@ -248,6 +248,45 @@ const pptStream = (extra = Buffer.alloc(0)) => Buffer.concat([
   assert(ip.some(q => (q.type === 'mc' ? q.options[q.answer] : q.answer) === 'instruction pointer'), '"instruction pointer" is a term, not an exam instruction');
   assert.strictEqual(reasonFor(ip, 'Instructions: Answer all the questions below carefully.'), 'instruction');
   assert.strictEqual(reasonFor(ip, 'Many cells divide every day to replace old and damaged ones.'), 'bad-term', 'the subject-verb reason replaces "no-pattern"');
+  // Question wording follows the answer: a person is asked with "Who is described?", and a person's wrong options
+  // are other people when the notes have enough of them. Things keep "Which term is described?".
+  const people = ['Si Jose Rizal ay binaril sa Bagumbayan noong Disyembre 30, 1896.', 'Si Andres Bonifacio ay nagtatag ng Katipunan sa Tondo.',
+    'Si Emilio Jacinto ay sumulat ng Kartilya ng Katipunan.', 'Si Apolinario Mabini ay tinaguriang Dakilang Lumpo ng himagsikan.',
+    'Ferdinand Magellan was a Portuguese explorer who led the first voyage around the world.',
+    'The Katipunan was a secret society founded to fight Spanish rule in the islands.', 'Ang La Liga Filipina ay samahang itinatag para sa reporma.',
+    'Ang Saligang Batas ng Malolos ay ang unang republikanong konstitusyon sa Asya.'];
+  const who = ['Jose Rizal', 'Andres Bonifacio', 'Emilio Jacinto', 'Apolinario Mabini', 'Ferdinand Magellan'];
+  const sawWho = new Set();
+  for (let i = 0; i < 40; i++) generate(people, [], { noTF: true }).forEach(q => {
+    const a = q.type === 'mc' ? q.options[q.answer] : q.answer;
+    if (/^(?:Which term|Who) is described\?/.test(q.q)) {
+      assert.strictEqual(/^Who is described\?/.test(q.q), who.includes(a), 'a person, and only a person, is asked with "Who": ' + q.q + ' => ' + a);
+      if (who.includes(a)) sawWho.add(a);
+      if (q.type === 'mc' && who.includes(a)) q.options.forEach(o => assert(who.includes(o), 'a person\'s wrong options are people: ' + q.options.join(' | ')));
+    }
+  });
+  assert(sawWho.has('Jose Rizal') && sawWho.has('Ferdinand Magellan'), '"Who" questions are asked for Filipino and English notes: ' + [...sawWho].join(', '));
+  // A fill-in-the-blank subject's wrong options agree with its verb: "_____ build" never offers "nucleus".
+  const organelles = ['Ribosomes build proteins from amino acids.', 'Lysosomes break down waste and worn-out parts inside the cell.',
+    'Chloroplasts capture light energy for photosynthesis in plant cells.', 'Vacuoles store water and nutrients for the cell.',
+    'The nucleus controls the activities and growth of the cell.', 'The cell membrane surrounds the cell and protects its contents.',
+    'The cell wall gives plant cells a fixed shape and extra support.', 'The cytoplasm holds the organelles in a jelly-like fluid.'];
+  const many = x => /[^su]s$/.test(String(x).trim().split(/\s+/).pop().toLowerCase());
+  let blanksMC = 0;
+  for (let i = 0; i < 40; i++) generate(organelles, [], { noTF: true }).filter(q => q.type === 'mc' && /^Fill in the blank: /.test(q.q)).forEach(q => {
+    blanksMC++;
+    q.options.forEach(o => assert.strictEqual(many(o), many(q.options[q.answer]), 'wrong options agree with the verb: ' + q.q + ' | ' + q.options.join(' / ')));
+  });
+  assert(blanksMC > 0, 'subject blanks still become multiple choice when enough options agree');
+  // Variety: in one set no wrong option appears more than twice; small notes ask more by typing instead of repeating.
+  for (const f of fs.readdirSync(path.join(__dirname, 'corpus')).filter(f => f.endsWith('.txt'))) {
+    const lines = fs.readFileSync(path.join(__dirname, 'corpus', f), 'utf8').split(/\r?\n/);
+    for (let i = 0; i < 10; i++) {
+      const used = new Map();
+      generate(lines).filter(q => q.type === 'mc' && !/^True or false/.test(q.q)).forEach(q => q.options.forEach((o, k) => { if (k !== q.answer) used.set(o, (used.get(o) || 0) + 1); }));
+      used.forEach((n, o) => assert(n <= 2, f + ': the wrong option "' + o + '" appears ' + n + ' times in one set'));
+    }
+  }
   // A fact that made a question but was cut by the limit, or by a type the student turned off, says so.
   const capped = generate(skipNotes, [], { max: 1 });
   assert(capped.skipped.some(s => s.reason === 'limit'), 'items cut by the limit are reported');

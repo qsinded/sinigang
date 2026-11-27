@@ -15,6 +15,11 @@ const LANGS = {
     termVerbs: ['is', 'are', 'was', 'were', 'be', 'do', 'does', 'did', 'will', 'can'], // a term containing one is a clause
     clauseWords: ['when', 'whenever', 'where', 'while', 'if', 'because', 'since', 'that', 'which', 'who', 'whom', 'whose', 'than', 'until', 'unless'],
     answerFiller: ['the', 'a', 'an', 'of', 'and', 'in', 'to', 'for', 'stage', 'phase', 'process', 'type', 'kind', 'part', 'called', 'term'], // may be added to a typed answer
+    personNouns: ['man', 'woman', 'person', 'hero', 'heroine', 'patriot', 'leader', 'president', 'king', 'queen', 'emperor', 'ruler', 'chief',
+      'scientist', 'writer', 'author', 'poet', 'novelist', 'journalist', 'general', 'soldier', 'founder', 'priest', 'friar', 'missionary',
+      'inventor', 'explorer', 'navigator', 'conquistador', 'philosopher', 'painter', 'artist', 'composer', 'revolutionary', 'reformist',
+      'propagandist', 'nationalist', 'politician', 'statesman', 'scholar', 'physician', 'doctor', 'teacher', 'lawyer', 'governor',
+      'minister', 'senator', 'saint', 'mathematician', 'chemist', 'physicist', 'biologist', 'engineer'], // "a Portuguese explorer who…"
   },
   fil: {
     articles: ['Ang mga', 'Ang', 'Sina', 'Si'],       // "Ang Katipunan ay …", "Si Rizal ay …"
@@ -24,6 +29,7 @@ const LANGS = {
     termVerbs: ['ay'],
     clauseWords: ['kung', 'kapag', 'dahil', 'habang', 'noong', 'nang', 'upang', 'sapagkat'],
     answerFiller: ['ang', 'ng', 'mga', 'si', 'ni', 'sa', 'ay', 'na'],
+    personNouns: ['bayani', 'pinuno', 'pangulo', 'hari', 'reyna', 'manunulat', 'makata', 'heneral', 'tagapagtatag', 'pari', 'ama', 'ina'],
   },
 };
 const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -158,6 +164,12 @@ const NOT_TERM = new RegExp('^(?:' + anyOf('notTerm') + ')\\b', 'i');
 const DEF = new RegExp('^(?:(?:' + anyOf('articles') + ')\\s+)?([A-Za-z0-9.][\\w .\\/\\-]{0,38}?)\\s+(?:' + anyOf('copulas') + ')\\s+(.{15,})$');
 // Filipino also puts a person first with "ang": "Si Andres Bonifacio ang tinaguriang Ama ng Katipunan."
 const SI_ANG = /^(?:Si|Sina)\s+([A-Z][\w .\-]{0,38}?)\s+ang\s+(.{15,})$/;
+// A person is asked with "Who is described?". The evidence must be strong: a "Si/Sina" sentence, or a name with no
+// article ("Ferdinand Magellan", never "The Katipunan") whose description opens with a role ("a Portuguese explorer…").
+const PERSON_HEAD = new RegExp('^(?:(?:a|an|the|isang|ang)\\s+)?(?:[\\w\\-]+\\s+){0,3}?(?:' + anyOf('personNouns') + ')s?\\b', 'i');
+const NAME_WORD = /^(?:[A-Z][a-z'’\-]+|de|del|dela|la|van|von|da|di|y|bin|ibn)$/; // "Miguel Lopez de Legazpi"
+const looksName = t => { const w = t.split(' '); return w.length >= 2 && w.length <= 5 && /^[A-Z]/.test(t) && w.every(x => NAME_WORD.test(x)); };
+const isPerson = (term, body, src) => /^(?:Si|Sina)\s/.test(src) || (looksName(term) && !/^(?:The|A|An|Ang)\s/.test(src) && PERSON_HEAD.test(body));
 const TERM_VERB = new RegExp('\\b(?:' + anyOf('termVerbs') + ')\\b', 'i'), CLAUSE = new RegExp('\\b(?:' + anyOf('clauseWords') + ')\\b', 'i');
 // A term is a short name, not a sentence opener ("This", "Many cells"), a heading word, an instruction or a clause.
 const termFine = t => t.split(' ').length <= 5 && !NOT_TERM.test(t) && !LOW.test(t) && !LABEL.test(t) && !instruction(t) && !TERM_VERB.test(t) && !CLAUSE.test(t);
@@ -197,7 +209,7 @@ const DEAD_END = /\b(?:is|are|was|were|be|to|of|the|a|an|and|or|by|for|with|from
 const VERB_IRREGULAR = new Set(('is are was were be been being has have had do does did can cannot could will would shall should may might must'
   + ' began became fought won led wrote made took gave held tore sent built found left lost met rose fell broke chose drew ran sold bought brought taught came went').split(' ')); // past tense, for history notes
 const VERB_BASE = new Set(('move store hold keep run convert allow provide contain include carry execute fetch decode direct control manage take need send receive connect measure calculate read write give make perform process represent describe combine divide split sort filter forward translate compile interpret allocate return accept require support enable prevent detect reduce increase overlap schedule load save link join separate count compare match replace remove add set act work become remain appear occur mean refer use call create produce generate store transfer change define convert consist depend belong follow precede happen exist live grow die feed protect regulate maintain balance break build destroy absorb release emit reflect transmit receive deliver route determine choose select apply assign attach bind connect update delete insert modify handle operate drive enable disable start stop begin end finish continue spread flow pass enter leave reach touch point refer apply test show tell say see look find get put bring hold cause affect allow permit require include involve relate correspond equate differ vary range total equal exceed reach strive'
-  + ' state rise fall form push pull speed').split(' '));
+  + ' state rise fall form push pull speed capture surround digest transport synthesize pump').split(' '));
 // One word is a verb form: "build", "builds", "divides", "carries", "moved", "moving", "declared". Every ending is tried,
 // because one stem rule missed "divides" ("divid") and "moved" ("mov").
 const isVerb = w => {
@@ -370,7 +382,8 @@ function generate(rawLines, tags = [], o = {}) {
         const mask = body.replace(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), '_____');
         // "The CPU is the CPU of the computer" leaves "The _____ of the computer": nothing to answer from.
         if ((mask.replace(/_____/g, ' ').match(/[A-Za-z]{4,}/g) || []).length < 2) { skip(s, 'empty-blank'); continue; }
-        defs.push({ kind: 'def', w: score(term), term, body: cap1(body), q: 'Which term is described? ' + cap1(mask), src: s, ctx: ctxOf.get(s) || '' });
+        const who = isPerson(term, body, s);
+        defs.push({ kind: 'def', w: score(term), term, body: cap1(body), who, q: (who ? 'Who is described? ' : 'Which term is described? ') + cap1(mask), src: s, ctx: ctxOf.get(s) || '' });
         used.add(s);
       }
     }
@@ -480,8 +493,16 @@ function generate(rawLines, tags = [], o = {}) {
   const out = [];
   let nMC = 0, nID = 0, nTF = 0, nTTrue = 0, nTFalse = 0;
   const falseSrc = new Set(); // one false version per sentence, or the same claim gets flipped four ways
+  // Wrong options are the same kind of thing as the answer: people for a person, and for a subject blank, terms that
+  // agree with its verb ("_____ build" never offers "nucleus"). Too few of them makes it a typed question instead.
+  // An acronym or number answer (EAX, 1898) only gets options of its own shape: one odd one out gives the answer away.
+  const sameKind = (it, o) => !!o.who === !!it.who && (it.kind !== 'fact' || plural(o.term) === plural(it.term))
+    && (!/^(?:acronym|number)$/.test(shape(it.term)) || shape(o.term) === shape(it.term));
+  // Variety: a wrong option is offered at most twice per set, so small notes do not repeat the same three every time.
+  const optUse = new Map(), fresh = xs => xs.filter(x => (optUse.get(x) || 0) < 2);
+  const spend = (opts, ans) => opts.forEach(x => { if (x !== ans) optUse.set(x, (optUse.get(x) || 0) + 1); });
   for (const it of all) {
-    const dist = near(it.term, pool[it.kind].filter(o => fits(it, o)).map(o => o.term), prefer(it));
+    const dist = near(it.term, fresh(pool[it.kind].filter(o => fits(it, o) && sameKind(it, o)).map(o => o.term)), prefer(it));
     // True/false. A "false" statement is only made when it is certainly false (see verifiedSwap), never by luck.
     if (!o.noTF && nTF < ITEM_CAP.tf && Math.random() < 0.2) { // with true/false off, the fact becomes a normal question instead of being dropped
       // Flipping is only worth it while "False" does not outnumber "True", and only once per sentence.
@@ -497,17 +518,17 @@ function generate(rawLines, tags = [], o = {}) {
     }
     // Half the time ask a definition the other way round, so a rebuilt set is not the same questions.
     if (it.kind === 'def' && dist.length === 3 && nMC < ITEM_CAP.mc && Math.random() < 0.5) {
-      const bodies = defs.filter(d => fits(it, { ...d, term: d.body }) && !norm(d.body).includes(norm(it.term))).map(d => d.body);
+      const bodies = fresh(defs.filter(d => fits(it, { ...d, term: d.body }) && !norm(d.body).includes(norm(it.term)) && sameKind(it, d)).map(d => d.body));
       const opts = shuffle([it.body, ...near(it.body, bodies, x => (ctxByText.get(x) === it.ctx ? 30 : 0))]);
       if (opts.length === 4 && keyOk(opts, it.body)) {
         out.push({ w: it.w, type: 'mc', q: 'Which statement describes "' + it.term + '"?', options: opts, answer: opts.indexOf(it.body), exp: ex(it.src) });
-        nMC++; continue;
+        spend(opts, it.body); nMC++; continue;
       }
     }
     const opts = shuffle([it.term, ...dist]);
     if (dist.length === 3 && nMC < ITEM_CAP.mc && (nMC <= nID * 1.5 || nID >= ITEM_CAP.id) && keyOk(opts, it.term)) {
       out.push({ w: it.w, type: 'mc', q: it.q, options: opts, answer: opts.indexOf(it.term), exp: ex(it.src) });
-      nMC++;
+      spend(opts, it.term); nMC++;
     } else if (nID < ITEM_CAP.id) {
       out.push({ w: it.w, type: 'id', q: it.q, answer: it.term, exp: ex(it.src) });
       nID++;

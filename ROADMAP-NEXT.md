@@ -73,6 +73,13 @@ the guard, so A4 lands with A1.
 
 ## Phase B: questions that read like a teacher wrote them
 
+**Done 2026-11-27 (B1 for people, B2):** "Who is described?" for a person (a "Si/Sina" sentence, or a name
+with no article whose description opens with a role from `LANGS.personNouns`), people as a person's options,
+subject-blank options that agree with the verb, acronym/year answers with options of their own shape, and
+at most two uses of a wrong option per set, otherwise the item is typed. Measured before: 160 of 160
+subject-blank items mixed singular and plural options; one Filipino option appeared 6 times in a set.
+Still open: "In what year…?" wording (year blanks already read well), B3 awkward option text, B4 two dates.
+
 1. **Ask by the kind of answer.** A person: "Who was executed in Bagumbayan in 1896?". A year:
    "In what year…?". A place: "Where…?". Everything else keeps "Which term is described?".
    Detect a person from the note's own wording (a capitalised name before "was", "Si …").

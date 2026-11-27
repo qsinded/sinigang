@@ -16,6 +16,10 @@ no account and no build step.
   statement is only made when the swap cannot be true. Exam-paper furniture (instructions, rubrics like
   "Write TRUE if the statement is correct", answer keys and lines that already contain blanks) is
   skipped instead of becoming a question, so a past paper yields questions only from its real content.
+- **Wrong options that do not give the answer away**: a person is asked "Who is described?" and gets other
+  people as options; a subject blank only offers terms that agree with its verb ("_____ build" never offers
+  "nucleus"); an acronym or year gets its own kind; and no wrong option appears more than twice in one set.
+  When the notes are too small for that, the item is asked by typing instead.
 - **Fair grading** of typed answers, word by word: filler such as "the" or "stage" may be added, any other
   extra word makes it wrong ("telophase lol idk", "mitosis and meiosis"), plurals count, and a small spelling
   slip in a long word ("mitocondria") is accepted with "check the spelling" — unless another answer in the
