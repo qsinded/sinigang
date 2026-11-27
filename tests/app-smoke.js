@@ -46,6 +46,7 @@ head.append = s => {
   if (s.src.includes('viewer')) { ctx.pdfjsLib = { GlobalWorkerOptions: {} }; sandbox.pdfjsLib = ctx.pdfjsLib; }
   s.onload && s.onload();
 };
+const keyHandlers = [];
 const docEl = new El('html');
 const document = {
   documentElement: docEl,
@@ -56,7 +57,8 @@ const document = {
   createElement: tag => new El(tag),
   createTextNode: t => ({ nodeType: 3, textContent: String(t) }),
   querySelector: () => new El('div'),
-  addEventListener: () => {}
+  // The app's global key handler is kept so tests can press number keys on the quiz screen.
+  addEventListener: (type, fn) => { if (type === 'keydown') keyHandlers.push(fn); }
 };
 const localStorage = {
   getItem: k => (store.has(k) ? store.get(k) : null),
@@ -424,11 +426,80 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   find(appEl, e => e.tagName === 'BUTTON' && /Cancel/.test(screenText(e)))[0].onclick();
   assert.ok(!ed.items.some(i => i.answer === 'Typo'), 'leaving the editor without saving changes nothing');
   assert.deepStrictEqual(revoked, [], 'the editor never revokes the image the reviewer still shows');
+  // Swap the picture while editing: parts, pins and progress stay; the old image goes once unused.
+  ctx.prepareImage = async () => ({ blob: new sandbox.Blob(['new pixels'], { type: 'image/webp' }), url: 'blob:new' });
+  await ctx.editDiagram(ed);
+  const replaceInput = find(appEl, e => e.tagName === 'INPUT' && e.attrs.type === 'file')[0];
+  assert.ok(replaceInput && /Replace/.test(replaceInput.attrs['aria-label']), 'the editor offers to replace the picture');
+  const partsBefore = state('diagParts');
+  await ctx.pickDiagram({ name: 'heart-2.webp', type: 'image/webp' });
+  assert.deepStrictEqual(state('diagParts'), partsBefore, 'a new picture keeps every part and pin');
+  assert.strictEqual(state('diagURL'), 'blob:new', 'the new picture is shown');
+  find(appEl, e => e.tagName === 'BUTTON' && /Cancel/.test(screenText(e)))[0].onclick();
+  assert.ok(revoked.includes('blob:new') && !revoked.includes('blob:x'), 'cancelling frees the new picture but not the saved one');
+  assert.ok(ed.items.every(i => i.imageId === 'img_demo'), 'cancelling keeps the old picture');
+  await ctx.editDiagram(ed);
+  await ctx.pickDiagram({ name: 'heart-2.webp', type: 'image/webp' });
+  await find(appEl, e => e.tagName === 'BUTTON' && screenText(e) === 'Save changes')[0].onclick();
+  const newImage = ed.items[0].imageId;
+  assert.ok(newImage !== 'img_demo' && [...ed.items, ...ed.removed].every(i => i.imageId === newImage), 'every part, removed ones too, moves to the new picture');
+  assert.ok(await ctx.idbGet(newImage), 'the new picture is stored');
+  assert.strictEqual(await ctx.idbGet('img_demo'), undefined, 'the old picture is deleted once nothing uses it');
+  assert.ok(ed.ans.img0 && ed.plan.srs.img0.box === 2, 'progress survives a new picture');
+  assert.strictEqual(shelf.length, shelfSize, 'still one reviewer');
+  await ctx.idbPut('img_demo', new sandbox.Blob(['pixels'], { type: 'image/png' })); // later checks use it
   await ctx.editDiagram(ed);
   press(placed()[0], 'Delete'); press(placed()[0], 'Delete');
   assert.strictEqual(find(appEl, e => e.tagName === 'BUTTON' && screenText(e) === 'Save changes')[0].attrs.disabled, '', 'an edit needs at least 3 parts too');
   ctx.clearDiagram();
   shelf.shift();
+  // Choice mode: answer a diagram part by picking from the picture's own labels.
+  const sixParts = () => six.items.filter(i => i.type === 'img');
+  const opts0 = ctx.diagramChoices(six, sixParts()[0]);
+  assert.strictEqual(new Set(opts0).size, 4, 'four different labels to choose from');
+  assert.ok(opts0.includes(sixParts()[0].answer), 'one of them is the answer');
+  assert.deepStrictEqual(plain(ctx.diagramChoices(six, sixParts()[0])), plain(opts0), 'the same part gets the same options every time');
+  const three = ctx.cleanReviewer({ title: 'Three', items: [imgItem(0, 'A'), imgItem(1, 'B'), imgItem(2, 'C')] });
+  assert.strictEqual(ctx.diagramChoices(three, three.items[0]).length, 3, 'three labels give three options');
+  assert.strictEqual(ctx.cleanReviewer({ ...plain(three), opts: { diagramAnswer: 'choice' } }).opts.diagramAnswer, 'choice', 'the setting survives export and import');
+  assert.strictEqual(ctx.cleanReviewer({ ...plain(three), opts: { diagramAnswer: 'nonsense' } }).opts.diagramAnswer, undefined, 'a bad setting is dropped');
+  six.ans = {}; ctx.open(six);
+  const answerMode = label => find(appEl, e => e.tagName === 'BUTTON' && e.attrs['aria-pressed'] && screenText(e) === label)[0];
+  assert.ok(answerMode('Type the name') && answerMode('Choose from labels'), 'the reviewer offers both answer modes');
+  answerMode('Choose from labels').onclick();
+  assert.strictEqual(six.opts.diagramAnswer, 'choice', 'choosing the mode saves it on the reviewer');
+  const opts = () => find(appEl, e => e.tagName === 'BUTTON' && String(e.className).split(' ')[0] === 'opt');
+  assert.ok(opts().length >= 4 && !find(appEl, e => e.tagName === 'INPUT' && e.attrs.placeholder === 'Your answer').length, 'diagram parts show options instead of a text box');
+  const q0 = sixParts()[0];
+  opts().slice(0, 4).find(b => screenText(b).includes(q0.answer)).onclick();
+  assert.ok(six.ans[q0.id] && six.ans[q0.id].ok, 'picking the right label is correct');
+  const q1 = sixParts()[1], wrong = ctx.diagramChoices(six, q1).find(l => l !== q1.answer);
+  keyHandlers.forEach(f => f({ key: String(ctx.diagramChoices(six, q1).indexOf(wrong) + 1), target: { tagName: 'BODY' }, preventDefault() {} }));
+  assert.ok(six.ans[q1.id] && !six.ans[q1.id].ok && six.ans[q1.id].val === wrong, 'number keys pick an option, and a wrong label is wrong');
+  assert.match(ctx.reciteQuestion(q1), /Options: A\. /, 'recitation reads the options aloud');
+  answerMode('Type the name').onclick();
+  assert.ok(!six.opts.diagramAnswer && find(appEl, e => e.tagName === 'INPUT' && e.attrs.placeholder === 'Your answer').length, 'typing comes back');
+  assert.doesNotMatch(ctx.reciteQuestion(q1), /Options/, 'typed mode recites as before');
+  // Zoom: pure geometry, then the controls on a practice diagram.
+  assert.strictEqual(ctx.clampZoom(0.5), 1); assert.strictEqual(ctx.clampZoom(9), 4);
+  assert.strictEqual(ctx.clampPan(0.1, 2), 0.25, 'the view cannot pan past the image edge');
+  assert.strictEqual(ctx.clampPan(0.9, 1), 0.5, 'at 100% there is nothing to pan');
+  const onScreen = ctx.hotspotToScreen({ x: 0.8, y: 0.5 }, { k: 2, cx: 0.75, cy: 0.5 });
+  assert.ok(Math.abs(onScreen.x - 0.6) < 1e-9 && onScreen.y === 0.5, 'a hotspot maps to its place in the zoomed view');
+  ctx.open(six);
+  const zoomBtn = label => find(appEl, e => e.tagName === 'BUTTON' && e.attrs['aria-label'] === label)[0];
+  const layer = () => find(appEl, e => String(e.className) === 'zoom-layer')[0];
+  assert.ok(zoomBtn('Zoom in') && zoomBtn('Zoom out') && zoomBtn('Fit the diagram'), 'a practice diagram has zoom controls');
+  const zp = sixParts()[0], hotBefore = plain(zp.hotspot);
+  zoomBtn('Zoom in').onclick(); zoomBtn('Zoom in').onclick();
+  assert.match(layer().style.transform, /scale\(2\.25\)/, 'zoom in scales the diagram');
+  const zoomedPin = find(layer(), e => String(e.className).split(' ')[0] === 'pin')[0];
+  assert.match(zoomedPin.style.transform, /scale\(0\.44/, 'the pin keeps its size on screen');
+  assert.deepStrictEqual(plain(zp.hotspot), hotBefore, 'zooming never moves the saved hotspot');
+  zoomBtn('Hide pin').onclick();
+  assert.strictEqual(zoomedPin.hidden, true, 'the pin can be hidden to read what is under it');
+  zoomBtn('Fit the diagram').onclick();
+  assert.match(layer().style.transform, /scale\(1\)/, 'Fit returns to 100%');
   ctx.open(imgReviewer); // the cover editor is opened from the reviewer on screen
   ctx.openCovers(imgReviewer);
   assert.match(screenText(appEl), /Hide printed labels/, 'the label-cover editor renders');

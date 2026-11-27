@@ -285,3 +285,11 @@ p.k,.card>.k:not(h2),.err+.k{font:inherit;text-transform:none;letter-spacing:0}
 .directions{border-left:3px solid var(--acc);padding:4px 0 4px 12px;margin:12px 0;max-width:65ch}
 /* Delete sits apart from the everyday buttons on a saved reviewer, in the warning colour. */
 .card.saved .danger{margin-left:auto;color:var(--bad);border-color:var(--bad)}
+/* Diagram zoom: the view clips a scaled layer; dragging pans only while zoomed, so the page still scrolls at 100%. */
+.zoom-box{display:block}
+.diagram.zoom{overflow:hidden;border-radius:8px}
+.zoom-layer{display:block;position:relative;transform-origin:0 0}
+.diagram.zoomed{cursor:grab;touch-action:none}
+.diagram.zoom:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+.zoom-tools{margin:0 0 10px;line-height:normal}
+.row.zoom-tools>.btn.alt{flex:0 0 auto;min-width:44px}

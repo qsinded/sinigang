@@ -4,7 +4,18 @@ Seven reports about diagram reviewers, ordered into three releases. Each item na
 current behaviour, the cause in the code, the smallest change that fixes it, how to test it,
 and what would count as done.
 
-Status: Release 1 (R1.1–R1.3) shipped in sw.js v30; Release 2 (R2.1) in v31. Release 3 is still planned.
+Status: all three releases are built. Release 1 (R1.1–R1.3) in sw.js v30, Release 2 (R2.1) in v31,
+Release 3 (R3.1, R3.2) and R2.1 item 6 (replace the image while editing) in v32.
+
+Release 3 as built: `opts.diagramAnswer = 'choice'` (whitelisted in `cleanReviewer()`), set per reviewer
+under More options. `diagramChoices(r, it)` takes the answer plus up to three labels on the same image,
+picked and ordered by `seedRank(item id)`. A pick is stored as the label (`answer(it, { pick })`, exact
+match, never `gradeId()`), keys 1–4 work, recitation reads the options. Zoom: `imageBlock(it, big,
+zoomable)` wraps image, covers and pin in `.zoom-layer`, scaled with `translate(0.5 - k·c) scale(k)`;
+`clampZoom`, `clampPan`, `hotspotToScreen` are the pure helpers; state per item in `zooms`, cleared by
+`open()`. No pinch gesture of its own (page pinch still works) and no wheel zoom.
+Image replacement: `pickDiagram()` keeps the parts while editing; `saveDiagramEdit()` stores the new
+picture first, moves items and removed items to it, then drops the old one if `imagesInUse()` lacks it.
 
 Release 2 as built: `editDiagram(r)` loads the saved parts (with ids) into the same editor; `diagEditing`
 holds the reviewer and stops `clearDiagram()` revoking the cached image URL. `saveDiagramEdit()` keeps ids,

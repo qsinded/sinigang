@@ -209,20 +209,77 @@ function dataURLToBlob(data) {
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return new Blob([bytes], { type: m[1] });
 }
-function imageBlock(it, big) {
+function imageBlock(it, big, zoomable) {
   const wrap = h('span', { class: 'diagram' });
   const img = h('img', { alt: 'Diagram with the part to identify marked', decoding: 'async' });
   const pin = h('span', { class: 'pin' + (big ? ' big' : ''), 'aria-hidden': 'true' });
   if (it.hotspot) { pin.style.left = (it.hotspot.x * 100) + '%'; pin.style.top = (it.hotspot.y * 100) + '%'; }
   // Printed labels give the answer away, so the reviewer's covers sit between the image and the pin.
   const masks = cur && Array.isArray(cur.masks) ? cur.masks : [];
-  wrap.append(img, ...coverSpans(masks, true), pin);
+  const layer = zoomable ? h('span', { class: 'zoom-layer' }) : wrap;
+  layer.append(img, ...coverSpans(masks, true), pin);
   imageURL(it.imageId).then(url => {
     if (url) { img.src = url; return; }
     pin.remove();
     wrap.append(h('span', { class: 'err' }, 'Diagram image is not on this device.'));
   });
-  return wrap;
+  return zoomable ? zoomView(it, wrap, layer, pin) : wrap;
+}
+// Zoom for dense diagrams. The layer holding image, covers and pin is scaled; (cx, cy) is the image point
+// at the centre of the view, so hotspots are never recomputed and the saved ones never move. Zooming
+// centres on the marker, because the detail under it is the reason to zoom. Page pinch-zoom still works.
+const zooms = new Map(); // per part, so answering one question keeps the zoom of the others; cleared by open()
+function clampZoom(k) { return Math.min(4, Math.max(1, k)); }
+function clampPan(c, k) { return Math.min(1 - 0.5 / k, Math.max(0.5 / k, c)); }
+function hotspotToScreen(p, z) { return { x: 0.5 + z.k * (p.x - z.cx), y: 0.5 + z.k * (p.y - z.cy) }; }
+function zoomView(it, view, layer, pin) {
+  if (!zooms.has(it.id)) zooms.set(it.id, { k: 1, cx: 0.5, cy: 0.5, hide: false });
+  const z = zooms.get(it.id), spot = it.hotspot || { x: 0.5, y: 0.5 };
+  const level = h('span', { class: 'mono', 'aria-live': 'polite' });
+  const hideBtn = h('button', { class: 'btn alt', 'aria-label': 'Hide pin', 'aria-pressed': 'false', onclick: () => { z.hide = !z.hide; apply(); } }, 'Hide pin');
+  const apply = () => {
+    z.k = clampZoom(z.k); z.cx = clampPan(z.cx, z.k); z.cy = clampPan(z.cy, z.k);
+    layer.style.transform = 'translate(' + (0.5 - z.k * z.cx) * 100 + '%,' + (0.5 - z.k * z.cy) * 100 + '%) scale(' + z.k + ')';
+    pin.style.transform = 'translate(-50%,-50%) scale(' + 1 / z.k + ')'; // same size on screen at any zoom
+    pin.hidden = z.hide;
+    hideBtn.setAttribute('aria-pressed', z.hide ? 'true' : 'false');
+    view.className = 'diagram zoom' + (z.k > 1 ? ' zoomed' : '');
+    level.textContent = Math.round(z.k * 100) + '%';
+  };
+  const zoomTo = k => { z.k = clampZoom(k); z.cx = spot.x; z.cy = spot.y; apply(); };
+  const fit = () => { z.k = 1; apply(); };
+  const pan = (dx, dy) => { z.cx += dx; z.cy += dy; apply(); };
+  let drag = null;
+  view.setAttribute('tabindex', '0');
+  view.setAttribute('aria-label', 'Diagram. Plus and minus zoom on the marker, 0 fits it, arrow keys move around when zoomed.');
+  view.append(layer);
+  view.onkeydown = e => {
+    const step = 0.1 / z.k, arrows = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
+    if (e.key === '+' || e.key === '=') zoomTo(z.k * 1.5);
+    else if (e.key === '-') zoomTo(z.k / 1.5);
+    else if (e.key === '0') fit();
+    else if (arrows[e.key] && z.k > 1) pan(...arrows[e.key]);
+    else return;
+    e.preventDefault(); e.stopPropagation(); // arrows here pan; they must not move to the next question
+  };
+  view.onpointerdown = e => {
+    if (z.k <= 1 || e.button) return;
+    drag = { x: e.clientX, y: e.clientY };
+    if (view.setPointerCapture) view.setPointerCapture(e.pointerId);
+  };
+  view.onpointermove = e => {
+    if (!drag) return;
+    const r = view.getBoundingClientRect(); if (!r.width || !r.height) return;
+    pan(-(e.clientX - drag.x) / (r.width * z.k), -(e.clientY - drag.y) / (r.height * z.k));
+    drag = { x: e.clientX, y: e.clientY };
+  };
+  view.onpointerup = view.onpointercancel = () => { drag = null; };
+  apply();
+  return h('span', { class: 'zoom-box' }, view,
+    h('span', { class: 'row zoom-tools' },
+      h('button', { class: 'btn alt', 'aria-label': 'Zoom out', onclick: () => zoomTo(z.k / 1.5) }, '−'), level,
+      h('button', { class: 'btn alt', 'aria-label': 'Zoom in', onclick: () => zoomTo(z.k * 1.5) }, '+'),
+      h('button', { class: 'btn alt', 'aria-label': 'Fit the diagram', onclick: fit }, 'Fit'), hideBtn));
 }
 
 // Study plan: a light Leitner schedule per reviewer plus an optional exam date. Boxes 0-4 wait
@@ -519,6 +576,7 @@ function cleanReviewer(x) {
   let tags = src && Array.isArray(x.tags) && x.tags.length === src.length && x.tags.every(g => typeof g === 'string') ? x.tags : undefined;
   if (src) { src = capSrc(src); tags = tags && tags.slice(0, src.length); }
   const o = x.opts || {}, opts = { max: Number.isInteger(o.max) && o.max > 0 ? o.max : 0, mcOnly: o.mcOnly === true, noTF: o.noTF === true, noEnum: o.noEnum === true };
+  if (o.diagramAnswer === 'choice') opts.diagramAnswer = 'choice'; // diagram parts answered by picking a label
   // A backup may carry a study plan; keep only a valid date and entries for items that exist.
   const raw = x.plan && typeof x.plan === 'object' && !Array.isArray(x.plan) ? x.plan : {};
   const savedSrs = raw.srs && typeof raw.srs === 'object' && !Array.isArray(raw.srs) ? raw.srs : {};
@@ -787,8 +845,7 @@ function sameReviewer(a, b) {
 }
 function deleteReviewer(r) {
   R = R.filter(x => x !== r);
-  const used = new Set();
-  R.forEach(x => [...x.items, ...(x.removed || [])].forEach(it => { if (it.type === 'img' && it.imageId) used.add(it.imageId); }));
+  const used = imagesInUse();
   [...r.items, ...(r.removed || [])].forEach(it => { if (it.type === 'img' && it.imageId && !used.has(it.imageId)) dropImage(it.imageId); });
   save(); home();
 }
@@ -1025,12 +1082,18 @@ function removedScreen(r) {
 
 // Diagram reviewer: one image, tap the parts, name each one, then practice naming them offline.
 let diagBlob = null, diagURL = '', diagTitleText = '', diagParts = [], diagPending = null, diagNameText = '', diagBusy = false, diagErr = '', diagToken = 0;
-// diagEditing = the saved reviewer being edited. Its image URL belongs to imageURL()'s cache and other
-// screens may show it, so the editor must never revoke it.
+// diagEditing = the saved reviewer being edited. Only a picture picked here (diagBlob) has a URL the editor
+// owns; a saved reviewer's URL belongs to imageURL()'s cache and other screens may show it.
 let diagEditing = null;
+const newImageId = () => 'img_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+function imagesInUse() {
+  const used = new Set();
+  R.forEach(x => [...x.items, ...(x.removed || [])].forEach(it => { if (it.type === 'img' && it.imageId) used.add(it.imageId); }));
+  return used;
+}
 function clearDiagram() {
   diagToken++;
-  if (diagURL && !diagEditing) URL.revokeObjectURL(diagURL);
+  if (diagURL && diagBlob) URL.revokeObjectURL(diagURL);
   diagBlob = null; diagURL = ''; diagTitleText = ''; diagParts = []; diagPending = null; diagNameText = ''; diagBusy = false; diagErr = ''; diagEditing = null;
 }
 async function editDiagram(r) {
@@ -1053,25 +1116,38 @@ function partNames() {
 }
 // Saving keeps every id, so answers, cards and the plan stay with their part. A removed part goes
 // through removeItem(): its progress is pruned and it can be restored from Removed questions.
-function saveDiagramEdit() {
+async function saveDiagramEdit() {
   const r = diagEditing;
   if (!R.includes(r)) { diagErr = 'This reviewer was deleted.'; diagramSetup(); return; }
   const names = diagParts.length >= 3 && partNames(); if (!names) return;
   const old = new Map(r.items.filter(i => i.type === 'img').map(i => [i.id, i]));
-  const imageId = [...old.values()][0].imageId;
+  const oldImage = [...old.values()][0].imageId;
+  let imageId = oldImage;
+  if (diagBlob) { // a new picture was chosen: store it before any part points at it
+    const token = ++diagToken;
+    diagBusy = true; diagErr = ''; diagramSetup();
+    imageId = newImageId();
+    try { await idbPut(imageId, diagBlob); }
+    catch (e) { if (token === diagToken) { diagBusy = false; diagErr = e && e.message ? e.message : 'Could not save the new picture.'; diagramSetup(); } return; }
+    if (token !== diagToken || !R.includes(r)) { dropImage(imageId); return; }
+    diagBusy = false;
+  }
   const parts = diagParts.map((p, k) => {
     const was = p.id && old.get(p.id), hotspot = { x: p.x, y: p.y };
     if (!was) return { id: newItemId(), type: 'img', q: 'Identify the part marked on the diagram.', answer: names[k], imageId, hotspot, exp: '' };
     // A renamed part keeps its schedule, but the stored answer was graded against the old label.
     if (was.answer !== names[k]) delete r.ans[was.id];
-    return { ...was, answer: names[k], hotspot };
+    return { ...was, answer: names[k], hotspot, imageId };
   });
-  const kept = new Set(parts.map(p => p.id)), gone = [...old.values()].filter(i => !kept.has(i.id));
+  // Removed parts move to the new picture too, so restoring one later still shows the diagram.
+  (r.removed || []).forEach(it => { if (it.type === 'img' && it.imageId === oldImage) it.imageId = imageId; });
+  const kept = new Set(parts.map(p => p.id)), gone = [...old.values()].filter(i => !kept.has(i.id)).map(i => ({ ...i, imageId }));
   r.items = [...parts, ...r.items.filter(i => i.type !== 'img'), ...gone];
   gone.forEach(it => removeItem(r, it));
   const live = new Set(r.items.map(itemKey)); // a part removed and added back must not stay hidden from Shuffle
   r.hidden = (r.hidden || []).filter(k => !live.has(k));
   r.title = (diagTitleText.trim() || r.title).slice(0, 120);
+  if (imageId !== oldImage && !imagesInUse().has(oldImage)) dropImage(oldImage);
   save(); clearDiagram(); open(r);
   say('Changes saved.');
 }
@@ -1117,8 +1193,10 @@ async function pickDiagram(file) {
     const { blob, url } = await prepareImage(file);
     // The student may have gone home or picked another image while this was decoding.
     if (token !== diagToken) { URL.revokeObjectURL(url); return; }
-    if (diagURL) URL.revokeObjectURL(diagURL);
-    diagBlob = blob; diagURL = url; diagParts = []; diagPending = null; diagNameText = '';
+    if (diagURL && diagBlob) URL.revokeObjectURL(diagURL);
+    diagBlob = blob; diagURL = url;
+    // Hotspots are fractions of the picture, so an edited reviewer keeps its parts on a new copy of it.
+    if (!diagEditing) { diagParts = []; diagPending = null; diagNameText = ''; }
     if (!diagTitleText) diagTitleText = file.name.replace(/\.[^.]+$/, '').slice(0, 120);
   } catch (e) { if (token === diagToken) diagErr = e && e.message ? e.message : 'Could not read that image.'; }
   if (token !== diagToken) return;
@@ -1141,7 +1219,7 @@ async function createDiagram() {
   const token = ++diagToken;
   diagBusy = true; diagErr = ''; diagramSetup();
   try {
-    const imageId = 'img_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    const imageId = newImageId();
     await idbPut(imageId, diagBlob);
     if (token !== diagToken) { dropImage(imageId); return; }
     const title = (diagTitleText.trim() || 'Diagram').slice(0, 120);
@@ -1213,13 +1291,13 @@ function diagramSetup() {
     warn(),
     h('div', { class: 'card' },
       h('h2', { class: 'k' }, '1 · Image'),
-      // shortcut: editing keeps the saved image; a different picture means a new reviewer (ROADMAP R2.1 item 6).
-      !editing && h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp', 'aria-label': 'Choose a diagram image', onchange: e => pickDiagram(e.target.files[0]) }),
+      editing && h('p', { class: 'k' }, 'Replace the picture with a clearer or corrected copy of the same diagram. Every marker stays where it is and keeps its progress; drag any that need to move.'),
+      h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp', 'aria-label': editing ? 'Replace the diagram image' : 'Choose a diagram image', onchange: e => pickDiagram(e.target.files[0]) }),
       diagURL
         ? h('span', { class: 'diagram' }, img, pins)
         : h('p', { class: 'k' }, diagBusy ? 'Preparing the image…' : 'No image chosen yet. PNG, JPEG or WebP.'),
       diagURL && h('p', null, h('button', { class: 'btn alt', onclick: placeMarker }, 'Place a marker at the centre')),
-      diagURL && h('p', { class: 'k' }, 'Tap the image to place a marker, then drag it or use the arrow keys to fine-tune. Choosing another image starts over; images are resized to 1600 px and stay on this device.')),
+      diagURL && h('p', { class: 'k' }, 'Tap the image to place a marker, then drag it or use the arrow keys to fine-tune. ' + (editing ? 'Nothing changes until you save; images' : 'Choosing another image starts over; images') + ' are resized to 1600 px and stay on this device.')),
     diagURL && h('div', { class: 'card' },
       h('h2', { class: 'k' }, '2 · Parts'),
       diagParts.length
@@ -1708,7 +1786,7 @@ function open(r) {
   // Drafts are keyed by item id, and item ids restart at id0 in every reviewer, so a half-typed answer
   // from another reviewer would appear here if they were kept.
   wipe();
-  cur = r; moreOpen = false; srcOpen.clear(); const ts = Object.keys(TABS).filter(k => r.items.some(i => i.type === k)); tab = ts[0]; quizIndex = 0;
+  cur = r; moreOpen = false; srcOpen.clear(); zooms.clear(); const ts = Object.keys(TABS).filter(k => r.items.some(i => i.type === k)); tab = ts[0]; quizIndex = 0;
   r.flashKnown ||= []; flashIndex = 0; flashRevealed = false; r.flashLearn ||= []; r.flags ||= [];
   r.plan = planOf(r); r.plan.srs ||= {};
   // Diagram parts come in a new order each session, or the pin's place becomes the answer. Answers,
@@ -1794,7 +1872,22 @@ function nextFlash(items) { flashIndex = flashIndex < items.length - 1 ? flashIn
 let reciteIndex = 0, reciteToken = 0, reciteActive = false, recitePhase = 'idle';
 let reciteRate = 1, reciteThink = 4000, reciteAnswers = true, reciteAuto = true;
 function ttsReady() { return 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined'; }
+// Choice mode for diagrams: the answer plus up to three other labels from the same picture. Both picks and
+// order are seeded by the item id, so options never move when the quiz redraws after an answer.
+// Trade-off (README): the other questions' labels can sometimes be answered by elimination, hence opt-in.
+const choiceMode = r => !!(r && r.opts && r.opts.diagramAnswer === 'choice');
+function seedRank(seed, text) {
+  let x = 2166136261;
+  for (const c of seed + '|' + text) x = Math.imul(x ^ c.charCodeAt(0), 16777619);
+  return x >>> 0;
+}
+function diagramChoices(r, it) {
+  const rank = seed => (a, b) => seedRank(seed, a) - seedRank(seed, b);
+  const others = [...new Set(r.items.filter(i => i.type === 'img' && i.imageId === it.imageId && i.answer !== it.answer).map(i => i.answer))];
+  return [it.answer, ...others.sort(rank(it.id)).slice(0, 3)].sort(rank(it.id + '#order'));
+}
 function reciteQuestion(it) {
+  if (it.type === 'img' && choiceMode(cur)) return 'Look at the diagram. Which part is marked? Options: ' + diagramChoices(cur, it).map((o, i) => 'ABCD'[i] + '. ' + o).join('. ') + '.';
   if (it.type === 'img') return 'Look at the diagram. Identify the part marked.';
   const q = shownQ(it).replace(/_{3,}/g, 'blank') + (it.type === 'mtf' ? ' Say true, or the word that should replace the one in brackets.' : '');
   if (it.type === 'match') return q + ' ' + it.pairs.map((p, i) => (i + 1) + '. ' + p.desc).join('. ') + '. The terms are: ' + it.terms.join(', ') + '.';
@@ -1957,6 +2050,7 @@ function markCorrect(r, it) {
 function answer(it, val) {
   let ok, exp, part;
   if (it.type === 'mc') { ok = val === it.answer; exp = it.options[it.answer]; }
+  else if (it.type === 'img' && val && val.pick != null) { val = val.pick; ok = val === it.answer; exp = it.answer; }
   else if (it.type === 'match') {
     // One term per description; each right pair earns its share, like an enumeration.
     const picks = (Array.isArray(val) ? val : String(val).split('\n')).map(v => String(v || ''));
@@ -2015,8 +2109,11 @@ function quizItem(r, it, idx, one) {
     h('div', { class: 'q', id: 'q-' + it.id }, shownQ(it)),
     it.type === 'mc'
       ? h('div', { role: 'group', 'aria-labelledby': 'q-' + it.id }, it.options.map((o, oi) => h('button', { class: 'opt' + (a ? (oi === it.answer ? ' ok' : oi === a.val ? ' bad' : '') : ''), disabled: a || over ? '' : null, onclick: () => answer(it, oi) }, h('b', null, 'ABCD'[oi]), capFirst(o), a && oi === it.answer && h('span', { class: 'mark' }, '✓ Correct answer'), a && oi === a.val && oi !== it.answer && h('span', { class: 'mark' }, '✗ Your answer'))))
+      : it.type === 'img' && choiceMode(r)
+      ? h('div', null, imageBlock(it, false, true),
+          h('div', { role: 'group', 'aria-labelledby': 'q-' + it.id }, diagramChoices(r, it).map((o, oi) => h('button', { class: 'opt' + (a ? (o === it.answer ? ' ok' : o === a.val ? ' bad' : '') : ''), disabled: a || over ? '' : null, onclick: () => answer(it, { pick: o }) }, h('b', null, 'ABCD'[oi]), o, a && o === it.answer && h('span', { class: 'mark' }, '✓ Correct answer'), a && o === a.val && o !== it.answer && h('span', { class: 'mark' }, '✗ Your answer')))))
       : h('div', null,
-        it.type === 'img' && imageBlock(it),
+        it.type === 'img' && imageBlock(it, false, true),
         // The labels are right there in front of the reader, so the way to hide them belongs here
         // too, not only in a menu above the first question.
         it.type === 'img' && !(r.masks && r.masks.length) && h('p', { class: 'k' }, 'The printed labels give the answer away. ',
@@ -2035,7 +2132,7 @@ function quizItem(r, it, idx, one) {
     a && h('div', { class: 'fb' + (a.ok ? '' : ' bad'), id: 'fb-' + it.id, tabindex: '-1' }, h('b', null, a.ok ? 'Correct.' : 'Not quite.'),
       h('div', null, 'Answer: ' + a.exp + '.'),
       a.part != null && a.part < 1 && h('div', null, Math.round(a.part * (it.items || it.pairs).length) + ' of ' + (it.items || it.pairs).length + (it.type === 'match' ? ' pairs were right.' : ' required answers were right.')),
-      !a.ok && it.type !== 'mc' && h('button', { class: 'btn alt', onclick: () => markCorrect(r, it) }, 'Count it correct'),
+      !a.ok && it.type !== 'mc' && !(it.type === 'img' && choiceMode(r)) && h('button', { class: 'btn alt', onclick: () => markCorrect(r, it) }, 'Count it correct'),
       lastUndo && lastUndo.r === r && lastUndo.id === it.id && h('button', { class: 'btn alt', onclick: undoAnswer }, 'Undo')),
     a && it.type !== 'img' && sourcePanel(r, it),
     h('div', { class: 'ans-print' }, 'Answer: ' + flashAnswer(it)));
@@ -2089,7 +2186,16 @@ function quiz() {
           (r.removed && r.removed.length) && h('button', { class: 'btn alt', onclick: () => removedScreen(r) }, 'Removed questions (' + r.removed.length + ')'),
           !r.virtual && ts.includes('img') && h('button', { class: 'btn alt', onclick: () => openCovers(r) }, r.masks && r.masks.length ? 'Edit label covers' : 'Hide printed labels'),
           !r.virtual && ts.includes('img') && h('button', { class: 'btn alt', onclick: () => editDiagram(r) }, 'Edit parts'),
-          h('button', { class: 'btn alt', onclick: printPart }, 'Print this part')))
+          h('button', { class: 'btn alt', onclick: printPart }, 'Print this part')),
+        !r.virtual && ts.includes('img') && h('div', { class: 'row', style: 'margin-top:8px' }, h('span', { class: 'k', id: 'diag-answer' }, 'Diagram answers'),
+          h('div', { class: 'seg', role: 'group', 'aria-labelledby': 'diag-answer' }, [['type', 'Type the name'], ['choice', 'Choose from labels']].map(([mode, label]) => {
+            const on = (mode === 'choice') === choiceMode(r);
+            return h('button', { class: 'seg-btn' + (on ? ' on' : ''), 'aria-pressed': on ? 'true' : 'false', onclick: () => {
+              r.opts = r.opts || {};
+              if (mode === 'choice') r.opts.diagramAnswer = 'choice'; else delete r.opts.diagramAnswer;
+              save(); quiz(); say(mode === 'choice' ? 'Diagram parts now show options.' : 'Diagram parts are typed again.');
+            } }, label);
+          }))))
   ];
   const node = h('div', null,
     h('div', { class: 'row quiz-head' },
@@ -2158,12 +2264,14 @@ document.addEventListener('keydown', e => {
   }
   const pick = Number(e.key) - 1;
   let it = null;
-  if (tab === 'mc' && !(timed && timed.over)) {
-    const list = cur.items.filter(i => i.type === 'mc');
+  const byKeys = tab === 'mc' || (tab === 'img' && choiceMode(cur));
+  if (byKeys && !(timed && timed.over)) {
+    const list = cur.items.filter(i => i.type === tab);
     it = viewMode() === 'one' ? list[quizIndex] : list.find(i => !cur.ans[i.id]);
     if (it && cur.ans[it.id]) it = null;
   }
-  if (it && pick >= 0 && pick < it.options.length) answer(it, pick);
+  const options = it && (it.type === 'img' ? diagramChoices(cur, it) : it.options);
+  if (it && pick >= 0 && pick < options.length) answer(it, it.type === 'img' ? { pick: options[pick] } : pick);
 });
 if (typeof matchMedia === 'function') {
   const mq = matchMedia('(max-width: 520px)');
