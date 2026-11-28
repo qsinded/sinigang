@@ -2569,12 +2569,11 @@ function quiz() {
           }))))
   ];
   const node = h('div', null,
-    h('div', { class: 'row quiz-head' },
-      h('button', { class: 'btn alt', onclick: home }, '← Back'),
+    h('div', { class: 'row quiz-head' }, // title and layout toggle share a row; no Back: the header's Home goes back
+      h('h1', null, r.title),
       h('div', { class: 'seg', role: 'group', 'aria-label': 'Quiz layout' },
         h('button', { class: 'seg-btn' + (view === 'one' ? ' on' : ''), 'aria-pressed': view === 'one' ? 'true' : 'false', onclick: () => setQuizView('one') }, 'One'),
         h('button', { class: 'seg-btn' + (view === 'list' ? ' on' : ''), 'aria-pressed': view === 'list' ? 'true' : 'false', onclick: () => setQuizView('list') }, 'List'))),
-    h('h1', null, r.title),
     view !== 'one' && h('p', { class: 'sub' }, 'Answer each item. You get the result and an explanation right away. Missed items stay marked so you can retry them.'),
     warn(),
     // One question at a time: the part tabs (each with its own score) come first, then "Q n of m" for that part right

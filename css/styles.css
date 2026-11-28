@@ -189,7 +189,7 @@ p.k,.card>.k:not(h2),.err+.k{font:inherit;text-transform:none;letter-spacing:0}
 
 /* One-question quiz: a single card at a time, a persistent Previous / Jump / Next bar, and a
    colour-coded jump grid. The bar sits above the fixed focus timer, never over it. */
-.quiz-head{justify-content:space-between;margin:4px 0 2px}
+.quiz-head{flex-wrap:nowrap;align-items:flex-start;justify-content:space-between;margin:4px 0 2px}
 .seg{display:inline-flex;border:1.5px solid var(--edge);border-radius:10px;overflow:hidden;background:var(--card)}
 .seg-btn{min-height:44px;padding:6px 14px;border:0;background:none;color:var(--mut);font:600 .9rem/1 system-ui,sans-serif;cursor:pointer}
 .seg-btn+.seg-btn{border-left:1px solid var(--line)}
@@ -259,7 +259,7 @@ p.k,.card>.k:not(h2),.err+.k{font:inherit;text-transform:none;letter-spacing:0}
   .focusbar[data-phase=idle] .btn{border-radius:0 10px 10px 0}
   body:has(.focusbar[data-phase=idle]){padding-bottom:0}
   /* Quiz on a phone: less above the question. Smaller title and counter, tighter tabs. */
-  .quiz-head+h1{font-size:1.2rem;margin:2px 0 0}
+  .quiz-head>h1{font-size:1.2rem;margin:8px 0 0}
   .one-meta{margin:2px 0 8px}.one-meta .big{font-size:1.15rem}
   .tabs{margin:8px 0}
   /* Flashcards: "1 / 18" and the counts on one line, the progress bar under them. */
@@ -310,4 +310,6 @@ p.k,.card>.k:not(h2),.err+.k{font:inherit;text-transform:none;letter-spacing:0}
 .item>.k:first-child .btn:not([aria-pressed=true]):hover{color:var(--ink);background:color-mix(in srgb,var(--ink) 6%,transparent)}
 .item>.k:first-child .flag-btn{margin-left:auto}
 .stats>.card{margin-top:8px}
+.quiz-head>h1{flex:1;min-width:0;margin:6px 0 0}
+.quiz-head>.seg{flex:0 0 auto}
 @media(max-width:520px){.theme-btn{min-width:44px;padding-left:12px;padding-right:12px}.theme-word{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}}

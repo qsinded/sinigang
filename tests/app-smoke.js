@@ -196,6 +196,7 @@ const live = ctx.cleanReviewer({ ...base, src: srcReviewer.src, tags: srcReviewe
 ctx.open(live);
 assert.match(screenText(appEl), /Exam date/, 'quiz screen offers an exam date');
 const find = (el, pred, out = []) => { if (pred(el)) out.push(el); for (const c of el.children) if (c.children) find(c, pred, out); return out; };
+assert.ok(!find(appEl, e => e.tagName === 'BUTTON' && screenText(e) === '← Back').length, 'no Back button: the header Home does the same');
 const dateInput = find(appEl, e => e.tagName === 'INPUT' && e.attrs.type === 'date')[0];
 assert.ok(dateInput, 'the date field is rendered');
 dateInput.onchange({ target: { value: iso } });
