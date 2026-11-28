@@ -682,6 +682,7 @@ function cleanReviewer(x) {
   if (src) { src = capSrc(src); tags = tags && tags.slice(0, src.length); }
   const o = x.opts || {}, opts = { max: Number.isInteger(o.max) && o.max > 0 ? o.max : 0, mcOnly: o.mcOnly === true, noTF: o.noTF === true, noEnum: o.noEnum === true };
   if (o.diagramAnswer === 'choice') opts.diagramAnswer = 'choice'; // diagram parts answered by picking a label
+  if (o.hideChoices === true) opts.hideChoices = true; // "Think first": multiple-choice options wait for a tap
   // A backup may carry a study plan; keep only a valid date and entries for items that exist.
   const raw = x.plan && typeof x.plan === 'object' && !Array.isArray(x.plan) ? x.plan : {};
   const savedSrs = raw.srs && typeof raw.srs === 'object' && !Array.isArray(raw.srs) ? raw.srs : {};
@@ -2121,7 +2122,7 @@ function open(r) {
   // Drafts are keyed by item id, and item ids restart at id0 in every reviewer, so a half-typed answer
   // from another reviewer would appear here if they were kept.
   wipe();
-  cur = r; moreOpen = false; srcOpen.clear(); zooms.clear(); const ts = Object.keys(TABS).filter(k => r.items.some(i => i.type === k)); tab = ts[0]; quizIndex = 0;
+  cur = r; moreOpen = false; srcOpen.clear(); zooms.clear(); shownChoices.clear();const ts = Object.keys(TABS).filter(k => r.items.some(i => i.type === k)); tab = ts[0]; quizIndex = 0;
   r.flashKnown ||= []; flashIndex = 0; flashRevealed = false; r.flashLearn ||= []; r.flags ||= [];
   r.plan = planOf(r); r.plan.srs ||= {};
   // Diagram parts come in a new order each session, or the pin's place becomes the answer. Answers,
@@ -2211,6 +2212,12 @@ function ttsReady() { return 'speechSynthesis' in window && typeof SpeechSynthes
 // order are seeded by the item id, so options never move when the quiz redraws after an answer.
 // Trade-off (README): the other questions' labels can sometimes be answered by elimination, hence opt-in.
 const choiceMode = r => !!(r && r.opts && r.opts.diagramAnswer === 'choice');
+// "Think first": a multiple-choice question hides its options until revealed (recall before recognition).
+// True/false keeps its two buttons. Revealed ids last until the reviewer is opened again.
+const shownChoices = new Set();
+function choicesHidden(r, it) {
+  return !!(r && r.opts && r.opts.hideChoices) && it.type === 'mc' && it.options.length > 2 && !r.ans[it.id] && !shownChoices.has(it.id);
+}
 function seedRank(seed, text) {
   let x = 2166136261;
   for (const c of seed + '|' + text) x = Math.imul(x ^ c.charCodeAt(0), 16777619);
@@ -2444,8 +2451,13 @@ function quizItem(r, it, idx, one) {
       h('button', { class: 'btn alt flag-btn', 'aria-pressed': flagged ? 'true' : 'false', onclick: () => toggleFlag(r, it) }, flagged ? '⚑ Flagged' : '⚑ Flag'),
       !['match', 'mtf'].includes(it.type) && !r.virtual && h('button', { class: 'btn alt', onclick: () => openItemEditor({ items: r.items, hidden: r.hidden || (r.hidden = []), reviewer: r, index: r.items.indexOf(it), back: quiz }) }, 'Edit')),
     (one ? (oneQEl = h('div', { class: 'q', id: 'q-' + it.id, tabindex: '-1' }, shownQ(it))) : h('div', { class: 'q', id: 'q-' + it.id }, shownQ(it))),
-    it.type === 'mc'
-      ? h('div', { role: 'group', 'aria-labelledby': 'q-' + it.id }, it.options.map((o, oi) => h('button', { class: 'opt' + (a ? (oi === it.answer ? ' ok' : oi === a.val ? ' bad' : '') : ''), disabled: a || over ? '' : null, onclick: () => answer(it, oi) }, h('b', null, 'ABCD'[oi]), capFirst(o), a && oi === it.answer && h('span', { class: 'mark' }, '✓ Correct answer'), a && oi === a.val && oi !== it.answer && h('span', { class: 'mark' }, '✗ Your answer'))))
+    it.type === 'mc' && !over && choicesHidden(r, it)
+      ? h('p', { class: 'k' }, 'Think of the answer first. ', h('button', { class: 'btn alt', onclick: () => {
+          shownChoices.add(it.id); quiz();
+          const g = document.getElementById('opts-' + it.id); if (g) g.focus({ preventScroll: true });
+        } }, 'Show choices'))
+      : it.type === 'mc'
+      ? h('div', { role: 'group', id: 'opts-' + it.id, tabindex: '-1', 'aria-labelledby': 'q-' + it.id }, it.options.map((o, oi) => h('button', { class: 'opt' + (a ? (oi === it.answer ? ' ok' : oi === a.val ? ' bad' : '') : ''), disabled: a || over ? '' : null, onclick: () => answer(it, oi) }, h('b', null, 'ABCD'[oi]), capFirst(o), a && oi === it.answer && h('span', { class: 'mark' }, '✓ Correct answer'), a && oi === a.val && oi !== it.answer && h('span', { class: 'mark' }, '✗ Your answer'))))
       : it.type === 'img' && choiceMode(r)
       ? h('div', null, imageBlock(it, false, true),
           h('div', { role: 'group', 'aria-labelledby': 'q-' + it.id }, diagramChoices(r, it).map((o, oi) => h('button', { class: 'opt' + (a ? (o === it.answer ? ' ok' : o === a.val ? ' bad' : '') : ''), disabled: a || over ? '' : null, onclick: () => answer(it, { pick: o }) }, h('b', null, 'ABCD'[oi]), o, a && o === it.answer && h('span', { class: 'mark' }, '✓ Correct answer'), a && o === a.val && o !== it.answer && h('span', { class: 'mark' }, '✗ Your answer')))))
@@ -2534,6 +2546,15 @@ function quiz() {
               if (mode === 'choice') r.opts.diagramAnswer = 'choice'; else delete r.opts.diagramAnswer;
               save(); quiz(); say(mode === 'choice' ? 'Diagram parts now show options.' : 'Diagram parts are typed again.');
             } }, label);
+          }))),
+        !r.virtual && ts.includes('mc') && h('div', { class: 'row', style: 'margin-top:8px' }, h('span', { class: 'k', id: 'mc-choices' }, 'Multiple-choice options'),
+          h('div', { class: 'seg', role: 'group', 'aria-labelledby': 'mc-choices' }, [[false, 'Show right away'], [true, 'Think first']].map(([hide, label]) => {
+            const on = hide === !!(r.opts && r.opts.hideChoices);
+            return h('button', { class: 'seg-btn' + (on ? ' on' : ''), 'aria-pressed': on ? 'true' : 'false', onclick: () => {
+              r.opts = r.opts || {};
+              if (hide) r.opts.hideChoices = true; else delete r.opts.hideChoices;
+              save(); quiz(); say(hide ? 'Options now stay hidden until you tap Show choices.' : 'Options show right away again.');
+            } }, label);
           }))))
   ];
   const node = h('div', null,
@@ -2611,7 +2632,7 @@ document.addEventListener('keydown', e => {
   if (byKeys && !(timed && timed.over)) {
     const list = cur.items.filter(i => i.type === tab);
     it = viewMode() === 'one' ? list[quizIndex] : list.find(i => !cur.ans[i.id]);
-    if (it && cur.ans[it.id]) it = null;
+    if (it && (cur.ans[it.id] || choicesHidden(cur, it))) it = null;
   }
   const options = it && (it.type === 'img' ? diagramChoices(cur, it) : it.options);
   if (it && pick >= 0 && pick < options.length) answer(it, it.type === 'img' ? { pick: options[pick] } : pick);

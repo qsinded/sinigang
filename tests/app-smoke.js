@@ -206,6 +206,33 @@ assert.match(screenText(appEl), /Show in my notes/, 'answered items offer the so
 ctx.startFlash('due');
 assert.match(screenText(appEl), /FLASHCARDS/, 'the due session opens flashcards');
 
+// 6b. "Think first": multiple-choice options stay hidden until the student asks for them (recall before recognition)
+const mcR = ctx.cleanReviewer({ title: 'MC', opts: {}, items: ['CPU', 'RAM', 'ROM'].map((k, i) => ({ id: 'mc' + i, type: 'mc', q: 'Which is ' + k + '?', options: ['CPU', 'RAM', 'ROM', 'GPU'], answer: i, exp: '' })) });
+const mcCopy = () => JSON.parse(JSON.stringify(mcR));
+assert.strictEqual(ctx.cleanReviewer({ ...mcCopy(), opts: { hideChoices: true } }).opts.hideChoices, true, 'the setting survives export and import');
+assert.strictEqual(ctx.cleanReviewer({ ...mcCopy(), opts: { hideChoices: 'yes' } }).opts.hideChoices, undefined, 'a bad setting is dropped');
+ctx.open(mcR);
+const mcOpts = () => find(appEl, e => e.tagName === 'BUTTON' && String(e.className).split(' ')[0] === 'opt');
+const choicesMode = label => find(appEl, e => e.tagName === 'BUTTON' && e.attrs['aria-pressed'] && screenText(e) === label)[0];
+const reveal = () => find(appEl, e => e.tagName === 'BUTTON' && screenText(e) === 'Show choices');
+assert.ok(mcOpts().length >= 4 && !reveal().length, 'choices show by default');
+choicesMode('Think first').onclick();
+assert.strictEqual(mcR.opts.hideChoices, true, 'choosing Think first saves it on the reviewer');
+assert.strictEqual(mcOpts().length, 0, 'the choices are hidden');
+assert.strictEqual(ctx.choicesHidden(mcR, { id: 'tf', type: 'mc', q: 'True or false: x', options: ['True', 'False'], answer: 0 }), false, 'true/false keeps its two buttons: there is nothing to recall first');
+keyHandlers.forEach(f => f({ key: '1', target: { tagName: 'BODY' }, preventDefault() {} }));
+assert.ok(!mcR.ans.mc0, 'a number key cannot answer a question whose choices are hidden');
+reveal()[0].onclick();
+assert.strictEqual(mcOpts().length, 4, 'Show choices reveals that one question');
+mcOpts()[0].onclick();
+assert.ok(mcR.ans.mc0 && mcR.ans.mc0.ok, 'a revealed question is answered as usual');
+assert.strictEqual(mcOpts().length, 4, 'an answered question keeps showing its choices');
+mcR.ans = {}; ctx.open(mcR);
+assert.strictEqual(mcOpts().length, 0, 'choices hide again the next time the reviewer opens');
+choicesMode('Show right away').onclick();
+assert.ok(!mcR.opts.hideChoices && mcOpts().length >= 4, 'switching back shows the choices');
+ctx.open(live); // later checks read the open reviewer
+
 // 7. oral recitation wording and the graceful no-voice fallback
 assert.strictEqual(ctx.reciteAnswer({ type: 'id', answer: 'CPU' }), 'The answer is CPU.');
 assert.strictEqual(ctx.reciteAnswer({ type: 'mc', options: ['CPU', 'RAM'], answer: 1 }), 'The answer is B: RAM.');
