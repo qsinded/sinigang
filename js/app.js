@@ -2215,8 +2215,13 @@ const choiceMode = r => !!(r && r.opts && r.opts.diagramAnswer === 'choice');
 // "Think first": a multiple-choice question hides its options until revealed (recall before recognition).
 // True/false keeps its two buttons. Revealed ids last until the reviewer is opened again.
 const shownChoices = new Set();
+let printing = false; // a printed reviewer is a paper test: every choice shows
 function choicesHidden(r, it) {
-  return !!(r && r.opts && r.opts.hideChoices) && it.type === 'mc' && it.options.length > 2 && !r.ans[it.id] && !shownChoices.has(it.id);
+  return !printing && !!(r && r.opts && r.opts.hideChoices) && it.type === 'mc' && it.options.length > 2 && !r.ans[it.id] && !shownChoices.has(it.id);
+}
+// beforeprint also catches Ctrl+P, not just the Print button; redraw only when something is hidden.
+for (const [type, on] of [['beforeprint', true], ['afterprint', false]]) {
+  window.addEventListener(type, () => { printing = on; if (lastScreen === 'quiz' && cur && cur.opts && cur.opts.hideChoices) quiz(); });
 }
 function seedRank(seed, text) {
   let x = 2166136261;
@@ -2452,7 +2457,7 @@ function quizItem(r, it, idx, one) {
       !['match', 'mtf'].includes(it.type) && !r.virtual && h('button', { class: 'btn alt', onclick: () => openItemEditor({ items: r.items, hidden: r.hidden || (r.hidden = []), reviewer: r, index: r.items.indexOf(it), back: quiz }) }, 'Edit')),
     (one ? (oneQEl = h('div', { class: 'q', id: 'q-' + it.id, tabindex: '-1' }, shownQ(it))) : h('div', { class: 'q', id: 'q-' + it.id }, shownQ(it))),
     it.type === 'mc' && !over && choicesHidden(r, it)
-      ? h('p', { class: 'k' }, 'Think of the answer first. ', h('button', { class: 'btn alt', onclick: () => {
+      ? h('p', { class: 'k row' }, 'Think of the answer first.', h('button', { class: 'btn alt', onclick: () => {
           shownChoices.add(it.id); quiz();
           const g = document.getElementById('opts-' + it.id); if (g) g.focus({ preventScroll: true });
         } }, 'Show choices'))

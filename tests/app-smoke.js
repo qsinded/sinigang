@@ -65,9 +65,11 @@ const localStorage = {
   setItem: (k, v) => store.set(k, String(v)),
   removeItem: k => store.delete(k)
 };
+const winHandlers = {}; // window events (beforeprint/afterprint) by type, so tests can fire them
 const sandbox = {
   document, localStorage, console,
   window: {},
+  addEventListener: (type, fn) => { (winHandlers[type] = winHandlers[type] || []).push(fn); },
   matchMedia: () => ({ matches: false }),
   scrollTo: () => {},
   scrollY: 0,
@@ -229,6 +231,10 @@ assert.ok(mcR.ans.mc0 && mcR.ans.mc0.ok, 'a revealed question is answered as usu
 assert.strictEqual(mcOpts().length, 4, 'an answered question keeps showing its choices');
 mcR.ans = {}; ctx.open(mcR);
 assert.strictEqual(mcOpts().length, 0, 'choices hide again the next time the reviewer opens');
+(winHandlers.beforeprint || []).forEach(f => f());
+assert.ok(mcOpts().length >= 4 && !reveal().length, 'a printed reviewer shows its choices (Print button or Ctrl+P)');
+(winHandlers.afterprint || []).forEach(f => f());
+assert.strictEqual(mcOpts().length, 0, 'after printing the choices hide again');
 choicesMode('Show right away').onclick();
 assert.ok(!mcR.opts.hideChoices && mcOpts().length >= 4, 'switching back shows the choices');
 ctx.open(live); // later checks read the open reviewer
