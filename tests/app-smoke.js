@@ -264,6 +264,53 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   await ctx.playFrom(0);
   assert.deepStrictEqual(spoken, ['q0', 'The answer is a.', 'q1', 'The answer is b.', 'q2', 'The answer is c.'], 'question and answer are read in order');
   assert.match(screenText(appEl), /Finished/, 'the session ends on the finished state');
+  const rc = expr => vm.runInContext(expr, ctx);
+  const recR = rc('cur'), srsOf = id => (recR.plan.srs || {})[id];
+  assert.ok(!srsOf('id1') && !srsOf('id2'), 'hands-free with no tap records nothing');
+  // Say it, then grade yourself: Got it / Missed it feed the study schedule like a flashcard does.
+  const gradeBtn = label => find(appEl, e => e.tagName === 'BUTTON' && screenText(e).includes(label))[0];
+  rc('reciteAuto = false');
+  await ctx.playFrom(0);
+  assert.strictEqual(rc('recitePhase'), 'grade', 'without auto-advance it waits for a grade after the answer');
+  assert.ok(gradeBtn('Got it') && gradeBtn('Missed it'), 'the grade buttons show');
+  assert.ok(gradeBtn('Continue'), 'the main button offers to continue without grading');
+  await ctx.resumeRecite();
+  assert.ok(rc('reciteIndex') === 1 && rc('recitePhase') === 'grade' && !srsOf('id1'), 'Continue skips the grade and plays the next question');
+  await ctx.playFrom(0);
+  await gradeBtn('Missed it').onclick();
+  assert.strictEqual(srsOf('id0').box, 0, 'Missed it sends the question back to box 0');
+  assert.ok(srsOf('id0').due <= rc('todayNumber()'), 'a missed question is due again now');
+  assert.strictEqual(rc('reciteIndex'), 1, 'grading moves on to the next question');
+  await gradeBtn('Got it').onclick();
+  assert.ok(srsOf('id1').box >= 1, 'Got it moves the question up a box');
+  await gradeBtn('Got it').onclick();
+  assert.strictEqual(rc('recitePhase'), 'done', 'grading the last question finishes');
+  assert.match(screenText(appEl), /You knew 2 of 3/, 'the end shows how many were known');
+  rc('reciteAuto = true');
+  // With auto-advance a tap in the grade window counts too.
+  const tick = () => new Promise(r => setTimeout(r, 1));
+  const run = ctx.playFrom(0);
+  for (let i = 0; i < 200 && rc('recitePhase') !== 'grade'; i++) await tick();
+  delete recR.plan.srs.id0; gradeBtn('Got it').onclick(); await run;
+  assert.ok(srsOf('id0') && srsOf('id0').box >= 1, 'a tap while it runs hands-free is recorded');
+  // A voice that fails twice in a row pauses with a plain message instead of racing through silently.
+  const realSpeak = sandbox.speechSynthesis.speak;
+  sandbox.speechSynthesis.speak = u => setTimeout(() => u.onerror && u.onerror({ error: 'synthesis-failed' }), 1);
+  await ctx.playFrom(0);
+  assert.strictEqual(rc('recitePhase'), 'paused', 'two failures pause the recitation');
+  assert.strictEqual(rc('reciteIndex'), 0, 'it stays on the first question');
+  assert.match(screenText(appEl), /didn.t play the voice/, 'the student is told the voice did not play');
+  sandbox.speechSynthesis.speak = () => {}; // no start, no end, no error: a stuck engine
+  await ctx.playFrom(0);
+  assert.strictEqual(rc('recitePhase'), 'paused', 'a voice that never starts counts as a failure');
+  sandbox.speechSynthesis.speak = u => setTimeout(() => u.onerror && u.onerror({ error: 'not-allowed' }), 1);
+  await ctx.playFrom(0);
+  assert.match(screenText(appEl), /blocked the voice/, 'a blocked voice gets its own message');
+  sandbox.speechSynthesis.speak = u => setTimeout(() => u.onerror && u.onerror({ error: 'interrupted' }), 1);
+  rc('reciteAuto = false'); await ctx.playFrom(0); rc('reciteAuto = true');
+  assert.strictEqual(rc('recitePhase'), 'grade', 'an interrupted line (from Stop or Skip) is not a failure');
+  assert.ok(!/didn.t play|blocked/.test(screenText(appEl)), 'a fresh start clears the old message');
+  sandbox.speechSynthesis.speak = realSpeak; rc('stopVoice()');
 
   // 8. image storage, diagrams: validation, backup envelope, setup and quiz rendering
   function fakeIndexedDB() {

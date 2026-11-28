@@ -2225,6 +2225,10 @@ function nextFlash(items) { flashIndex = flashIndex < items.length - 1 ? flashIn
 // student thinks, reads the answer, then moves on. No audio and no notes leave the device.
 let reciteIndex = 0, reciteToken = 0, reciteActive = false, recitePhase = 'idle';
 let reciteRate = 1, reciteThink = 4000, reciteAnswers = true, reciteAuto = true;
+// Say it, then grade yourself: after the answer, Got it / Missed it go into the study schedule (like a flashcard).
+// Hands-free, the buttons wait GRADE_MS; no tap records nothing. voiceFails counts failed lines in a row.
+let gradeWake = null, reciteTally = { got: 0, missed: 0 }, voiceFails = 0, reciteErr = '';
+const GRADE_MS = 3000;
 function ttsReady() { return 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined'; }
 // Choice mode for diagrams: the answer plus up to three other labels from the same picture. Both picks and
 // order are seeded by the item id, so options never move when the quiz redraws after an answer.
@@ -2271,14 +2275,17 @@ function voice() {
 }
 function speak(text, token) {
   return new Promise(resolve => {
-    let guard = 0, finished = false;
-    const finish = () => { if (finished) return; finished = true; clearTimeout(guard); resolve(); };
+    let guard = 0, finished = false, started = false;
+    const finish = (res = true) => { if (finished) return; finished = true; clearTimeout(guard); resolve(res); };
     if (!text || token !== reciteToken || !ttsReady()) return finish();
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'en-US'; u.rate = reciteRate;
     const v = voice(); if (v) u.voice = v;
-    u.onend = finish; u.onerror = finish;
-    guard = setTimeout(finish, Math.max(6000, text.length * 200 / reciteRate));
+    // 'interrupted'/'canceled' come from our own Stop, Skip and Repeat: not a failure. A line that never even
+    // starts before the guard fires is one (no voice installed, a stuck engine).
+    u.onstart = () => { started = true; }; u.onend = () => finish();
+    u.onerror = e => finish(e && /interrupted|canceled/.test(e.error) ? true : (e && e.error) || 'failed');
+    guard = setTimeout(() => finish(started || 'silent'), Math.max(6000, text.length * 200 / reciteRate));
     const synth = window.speechSynthesis;
     const go = () => { if (token === reciteToken && !finished) synth.speak(u); else finish(); };
     // Speak immediately when idle (keeps the user gesture alive on iOS); only wait after a cancel,
@@ -2287,10 +2294,35 @@ function speak(text, token) {
   });
 }
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
-function stopVoice() { reciteToken++; reciteActive = false; if (ttsReady()) window.speechSynthesis.cancel(); }
+function stopVoice() { reciteToken++; reciteActive = false; gradeWake = null; if (ttsReady()) window.speechSynthesis.cancel(); }
+// Two failed lines in a row: stop and say why, instead of racing on in silence showing answers.
+function voiceTrouble(why) {
+  reciteActive = false; recitePhase = 'paused';
+  reciteErr = why === 'not-allowed'
+    ? 'The browser blocked the voice. Tap Start to try again.'
+    : 'Your phone didn’t play the voice. Turn the volume up and check that a text-to-speech voice is installed in your phone’s settings, then tap Start.';
+  recite(); say(reciteErr);
+}
+function gradeRecite(ok) {
+  const it = cur && cur.items[reciteIndex]; if (!it) return;
+  reviewItem(cur, it.id, ok); writeBack(cur, it.id); save(); // a combined session's grade counts in the reviewer it came from
+  reciteTally[ok ? 'got' : 'missed']++;
+  say(ok ? 'Marked as known.' : 'Marked to review again.');
+  if (gradeWake) { const w = gradeWake; gradeWake = null; w(); return; } // hands-free: the running loop moves on
+  if (reciteIndex >= cur.items.length - 1) { recitePhase = 'done'; recite(); return; }
+  return playFrom(reciteIndex + 1);
+}
 async function playFrom(index) {
   if (!cur || !cur.items.length || !ttsReady()) return;
   const token = ++reciteToken;
+  voiceFails = 0; reciteErr = ''; gradeWake = null;
+  const said = async text => { // false: stop the loop (superseded, or the voice keeps failing)
+    const res = await speak(text, token);
+    if (token !== reciteToken) return false;
+    if (res === true) { voiceFails = 0; return true; }
+    if (++voiceFails >= 2) { voiceTrouble(res); return false; }
+    return true;
+  };
   if (window.speechSynthesis.speaking || window.speechSynthesis.pending) window.speechSynthesis.cancel();
   reciteIndex = Math.max(0, Math.min(index, cur.items.length - 1));
   reciteActive = true; recitePhase = 'question'; recite();
@@ -2298,35 +2330,47 @@ async function playFrom(index) {
   while (token === reciteToken && reciteIndex < cur.items.length) {
     const it = cur.items[reciteIndex];
     recitePhase = 'question'; recite();
-    await speak(reciteQuestion(it), token);
-    if (token !== reciteToken) return;
+    if (!await said(reciteQuestion(it))) return;
     if (reciteAnswers) {
       recitePhase = 'think'; recite();
       await wait(reciteThink);
       if (token !== reciteToken) return;
       recitePhase = 'answer'; recite();
-      await speak(reciteAnswer(it), token);
-      if (token !== reciteToken) return;
+      if (!await said(reciteAnswer(it))) return;
     }
+    if (!reciteAuto && reciteAnswers) { reciteActive = false; recitePhase = 'grade'; recite(); return; } // waits for Got it / Missed it
     if (!reciteAuto) {
       reciteActive = false;
       // Resume should start the next question, not replay the one just answered.
       if (reciteIndex >= cur.items.length - 1) { recitePhase = 'done'; recite(); return; }
       reciteIndex++; recitePhase = 'paused'; recite(); return;
     }
+    if (reciteAnswers) { // hands-free: a short window to grade; no tap is a skip
+      recitePhase = 'grade'; recite();
+      await new Promise(res => { gradeWake = res; setTimeout(res, GRADE_MS); });
+      gradeWake = null;
+      if (token !== reciteToken) return;
+    }
     reciteIndex++;
-    if (reciteIndex < cur.items.length) await wait(800);
+    if (reciteIndex < cur.items.length && !reciteAnswers) await wait(800);
   }
   if (token !== reciteToken) return;
   reciteActive = false; recitePhase = 'done'; recite(); say('Recitation finished.');
 }
 function openRecite() {
-  reciteIndex = 0; recitePhase = 'idle'; reciteActive = false;
+  reciteIndex = 0; recitePhase = 'idle'; reciteActive = false; reciteTally = { got: 0, missed: 0 }; reciteErr = '';
   recite();
   if (ttsReady()) playFrom(0); else say('Spoken recitation is not available in this browser.');
 }
 function pauseRecite() { stopVoice(); recitePhase = 'paused'; recite(); say('Paused.'); }
-function resumeRecite() { if (recitePhase === 'done') reciteIndex = 0; playFrom(reciteIndex); }
+function resumeRecite() {
+  if (recitePhase === 'done') { reciteIndex = 0; reciteTally = { got: 0, missed: 0 }; }
+  else if (recitePhase === 'grade') { // Continue without grading: on to the next question
+    if (reciteIndex >= cur.items.length - 1) { recitePhase = 'done'; recite(); return; }
+    reciteIndex++;
+  }
+  return playFrom(reciteIndex);
+}
 function stopRecite() { stopVoice(); recitePhase = 'idle'; recite(); say('Voice stopped.'); }
 function skipRecite(delta) {
   if (!cur) return;
@@ -2339,22 +2383,27 @@ function skipRecite(delta) {
 function recite() {
   const r = cur; if (!r) return;
   const items = r.items, idx = Math.min(reciteIndex, items.length - 1), it = items[idx];
-  const showAnswer = recitePhase === 'answer' || recitePhase === 'done';
-  const label = { question: 'Reading the question', think: 'Think about your answer', answer: 'Reading the answer', paused: 'Paused', done: 'Finished', idle: 'Ready' }[recitePhase] || 'Ready';
+  const showAnswer = recitePhase === 'answer' || recitePhase === 'grade' || recitePhase === 'done', graded = reciteTally.got + reciteTally.missed;
+  const label = { question: 'Reading the question', think: 'Think about your answer', answer: 'Reading the answer', grade: 'Did you get it?', paused: 'Paused', done: 'Finished', idle: 'Ready' }[recitePhase] || 'Ready';
   draw(h('div', null,
     h('div', { class: 'row' }, h('button', { class: 'btn alt', onclick: () => { stopVoice(); quiz(); } }, '← Back'), h('span', { class: 'k' }, 'ORAL RECITATION')),
     h('h1', null, r.title),
     h('p', { class: 'sub' }, 'Listen hands-free: each question is read aloud, then the answer after a short pause. Space pauses, ← → skip, Esc stops.'),
     warn(),
     !ttsReady() && h('p', { class: 'err', role: 'alert' }, 'This browser has no speech voice available, so questions cannot be read aloud here.'),
+    reciteErr && h('p', { class: 'err', role: 'alert' }, reciteErr),
     h('div', { class: 'flip-progress-row' }, h('span', { class: 'mono' }, (idx + 1) + ' / ' + items.length), h('span', { class: 'k', role: 'status' }, label), bar((idx + 1) / items.length * 100, 'Recitation progress')),
     h('div', { class: 'recite-card' },
       h('div', { class: 'k' }, kindName(it) + (showAnswer ? ' · ANSWER' : ' · QUESTION')),
       it.type === 'img' && imageBlock(it, showAnswer),
       h('p', { class: 'recite-text' }, showAnswer ? flashAnswer(it) : it.q),
       showAnswer && it.exp && h('p', { class: 'k' }, it.exp)),
+    recitePhase === 'grade' && h('div', { class: 'row grade-row' },
+      h('button', { class: 'btn', onclick: () => gradeRecite(true) }, '✓ Got it'),
+      h('button', { class: 'btn alt', onclick: () => gradeRecite(false) }, '✗ Missed it')),
+    recitePhase === 'done' && graded > 0 && h('p', { class: 'recite-tally' }, 'You knew ' + reciteTally.got + ' of ' + graded + '.' + (reciteTally.missed ? ' The ones you missed are back in Review due.' : '')),
     h('div', { class: 'row' },
-      h('button', { class: 'btn', disabled: ttsReady() ? null : '', onclick: () => { if (reciteActive) pauseRecite(); else resumeRecite(); } }, reciteActive ? 'Pause' : recitePhase === 'done' ? 'Start again' : 'Start / Resume'),
+      h('button', { class: 'btn', disabled: ttsReady() ? null : '', onclick: () => { if (reciteActive) pauseRecite(); else resumeRecite(); } }, reciteActive ? 'Pause' : recitePhase === 'done' ? 'Start again' : recitePhase === 'grade' ? 'Continue' : 'Start / Resume'),
       h('button', { class: 'btn alt', disabled: idx === 0 ? '' : null, onclick: () => skipRecite(-1) }, '← Previous'),
       h('button', { class: 'btn alt', disabled: idx >= items.length - 1 ? '' : null, onclick: () => skipRecite(1) }, 'Next →'),
       h('button', { class: 'btn alt', onclick: () => playFrom(reciteIndex) }, '↻ Repeat'),
