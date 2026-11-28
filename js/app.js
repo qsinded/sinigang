@@ -27,6 +27,7 @@ try { const c = Number(localStorage.getItem('reviewer_cap_v1')); if ([10, 20, 40
 const draft = {};
 let lastSkips = null; // why the last build made too few questions; shown under its error
 let moreOpen = false; // the quiz's More options panel stays open across redraws
+let statsOpen = false; // so does the folded Stats panel
 const srcOpen = new Set(); // items whose "Show in my notes" panel is open
 
 function h(tag, p, ...kids) {
@@ -44,14 +45,15 @@ const say = msg => { live.textContent = ''; live.textContent = msg; };
 const THEME = 'reviewer_theme', root = document.documentElement;
 try { const t = localStorage.getItem(THEME); if (t === 'dark' || t === 'light') root.dataset.theme = t; } catch (e) { /* no storage: follow the system */ }
 const dark = () => (root.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark';
-const themeLabel = () => dark() ? '☀ Light mode' : '☾ Dark mode';
-const themeBtn = h('button', { class: 'btn alt', onclick: () => {
+// On a phone only the icon shows (the words stay for screen readers), so the header fits one row.
+const themeLabel = () => [h('span', { 'aria-hidden': 'true' }, dark() ? '☀' : '☾'), h('span', { class: 'theme-word' }, dark() ? ' Light mode' : ' Dark mode')];
+const themeBtn = h('button', { class: 'btn alt theme-btn', onclick: () => {
   root.dataset.theme = dark() ? 'light' : 'dark';
   try { localStorage.setItem(THEME, root.dataset.theme); } catch (e) { /* kept for this visit only */ }
-  themeBtn.textContent = themeLabel();
+  themeBtn.replaceChildren(...themeLabel());
 } }, themeLabel());
 // A phone can switch to dark by itself (at sunset); with no choice made in the app, the button follows it.
-function syncTheme() { themeBtn.replaceChildren(themeLabel()); }
+function syncTheme() { themeBtn.replaceChildren(...themeLabel()); }
 if (typeof matchMedia === 'function') { const mq = matchMedia('(prefers-color-scheme: dark)'); if (mq && mq.addEventListener) mq.addEventListener('change', syncTheme); }
 app.tabIndex = -1; // lets the skip link move focus into the page
 app.before(h('header', { class: 'site' }, h('a', { class: 'skip', href: '#app' }, 'Skip to content'), h('nav', { 'aria-label': 'Main' }, h('button', { class: 'btn alt', onclick: () => home() }, 'Home'), themeBtn), live));
@@ -2122,7 +2124,7 @@ function open(r) {
   // Drafts are keyed by item id, and item ids restart at id0 in every reviewer, so a half-typed answer
   // from another reviewer would appear here if they were kept.
   wipe();
-  cur = r; moreOpen = false; srcOpen.clear(); zooms.clear(); shownChoices.clear();const ts = Object.keys(TABS).filter(k => r.items.some(i => i.type === k)); tab = ts[0]; quizIndex = 0;
+  cur = r; moreOpen = false; statsOpen = false; srcOpen.clear(); zooms.clear(); shownChoices.clear();const ts = Object.keys(TABS).filter(k => r.items.some(i => i.type === k)); tab = ts[0]; quizIndex = 0;
   r.flashKnown ||= []; flashIndex = 0; flashRevealed = false; r.flashLearn ||= []; r.flags ||= [];
   r.plan = planOf(r); r.plan.srs ||= {};
   // Diagram parts come in a new order each session, or the pin's place becomes the answer. Answers,
@@ -2433,8 +2435,11 @@ function statsPanel(r) {
     cell(t.accuracy == null ? '—' : t.accuracy + '%'),
     cell(t.due, t.due ? 'due' : null),
     cell(t.flagged, t.flagged ? 'flag' : null));
-  return h('section', { class: 'card stats', id: 'stats', 'aria-labelledby': 'stats-title' },
-    h('h2', { class: 'k', id: 'stats-title' }, 'Stats'),
+  // Folded like More options, so the quiz screen ends calmly; the summary carries the one number most want.
+  const hint = (s.all.accuracy == null ? 'Nothing answered yet' : s.all.accuracy + '% correct') + ' · ' + s.all.due + ' due';
+  return h('details', { class: 'more stats', id: 'stats', open: statsOpen ? '' : null, ontoggle: e => { statsOpen = e.currentTarget.open; } },
+    h('summary', null, h('span', null, h('b', null, 'Stats'), h('span', { class: 'more-hint' }, hint))),
+    h('div', { class: 'card' },
     h('p', { class: 'k stats-lede' }, 'By question type'),
     h('div', { class: 'stats-wrap' },
       h('table', { class: 'stats-table' },
@@ -2445,7 +2450,7 @@ function statsPanel(r) {
           h('th', { scope: 'col', class: 'num' }, 'Due'),
           h('th', { scope: 'col', class: 'num' }, 'Flagged'))),
         h('tbody', null, s.types.map(row), s.types.length > 1 && row(s.all)))),
-    h('p', { class: 'stats-note' }, 'Accuracy uses partial enumeration credit. Due includes items scheduled for today or earlier; an item with no schedule is due now.'));
+    h('p', { class: 'stats-note' }, 'Accuracy uses partial enumeration credit. Due includes items scheduled for today or earlier; an item with no schedule is due now.')));
 }
 // One-question view: the question shown, so Next and Previous can put focus on it (not the top of the page).
 let oneQEl = null;
@@ -2514,8 +2519,9 @@ function quiz() {
   const tools = [
       h('div', { class: 'row' },
         cram !== null && h('button', { class: 'btn', onclick: () => startFlash('cram') }, '⚡ Cram for ' + (cram ? 'tomorrow' : 'today') + ' (' + r.items.filter(i => !(r.flashKnown || []).includes(i.id)).length + ')'),
-        !r.virtual && h('button', { class: 'btn alt', disabled: dueCount(r) ? null : '', onclick: () => startFlash('due', optCap) }, 'Review due (' + dueCount(r) + ')'),
-        h('button', { class: 'btn', disabled: missed.length ? null : '', onclick: () => clear(missed) }, 'Retry missed (' + missed.length + ')')),
+        // A button with nothing to do is noise ("Retry missed (0)"); it appears once there is something.
+        !r.virtual && dueCount(r) > 0 && h('button', { class: 'btn alt', onclick: () => startFlash('due', optCap) }, 'Review due (' + dueCount(r) + ')'),
+        missed.length > 0 && h('button', { class: 'btn', onclick: () => clear(missed) }, 'Retry missed (' + missed.length + ')')),
       h('details', { class: 'more', open: running || moreOpen ? '' : null, ontoggle: e => { moreOpen = e.currentTarget.open; } }, h('summary', null,
         h('span', null, h('b', null, 'More options'), h('span', { class: 'more-hint' }, r.virtual ? 'Recite, blurt, quiz bee, timed, print' : 'Exam date, recite, blurt, quiz bee, timed, shuffle'))),
       h('h3', { class: 'k opt-group' }, 'Practise'),

@@ -1198,6 +1198,18 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   assert.match(screenText(appEl), /50%/, 'the panel shows the partial-credit percentage');
   const tables = find(appEl, e => e.tagName === 'TABLE');
   assert.strictEqual(tables.length, 1, 'the stats panel renders one table');
+  // A calmer quiz screen: stats fold away (and stay as the student left them), and buttons with nothing to do are not shown.
+  const statsBox = () => find(appEl, e => e.tagName === 'DETAILS' && String(e.className).split(' ').includes('stats'))[0];
+  assert.ok(statsBox() && statsBox().attrs.open == null, 'stats start folded');
+  statsBox().ontoggle({ currentTarget: { open: true } }); ctx.quiz();
+  assert.strictEqual(statsBox().attrs.open, '', 'opened stats stay open when the screen redraws');
+  const btnText = label => find(appEl, e => e.tagName === 'BUTTON' && screenText(e).startsWith(label));
+  const calm = ctx.cleanReviewer({ ...base }); calm.plan.srs = Object.fromEntries(calm.items.map(i => [i.id, { box: 1, due: 1e9 }]));
+  ctx.open(calm);
+  assert.ok(statsBox().attrs.open == null, 'a newly opened reviewer starts with stats folded');
+  assert.ok(!btnText('Retry missed').length && !btnText('Review due').length, 'no "Retry missed (0)" or "Review due (0)" buttons');
+  ctx.answer(calm.items[0], 'wrong');
+  assert.ok(btnText('Retry missed (1)').length, 'Retry missed appears once something is missed');
 
   // A small spelling slip in a long answer is accepted, and the feedback says so; a different real term is still wrong.
   const spellR = ctx.cleanReviewer({ ...base, title: 'Spelling', items: ['Mitochondria', 'Photosynthesis', 'Meiosis'].map((k, i) => ({ id: 'sp' + i, type: 'id', q: 'q' + i, answer: k, exp: '' })) });

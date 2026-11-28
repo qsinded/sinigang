@@ -304,3 +304,10 @@ p.k,.card>.k:not(h2),.err+.k{font:inherit;text-transform:none;letter-spacing:0}
 .diagram.zoom:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
 .zoom-tools{margin:0 0 10px;line-height:normal}
 .row.zoom-tools>.btn.alt{flex:0 0 auto;min-width:44px}
+
+/* Calmer quiz screen: the question leads; Flag and Edit are quiet text buttons at the right of the Q line. */
+.item>.k:first-child .btn:not([aria-pressed=true]){border-color:transparent;background:none;box-shadow:none;color:var(--mut)}
+.item>.k:first-child .btn:not([aria-pressed=true]):hover{color:var(--ink);background:color-mix(in srgb,var(--ink) 6%,transparent)}
+.item>.k:first-child .flag-btn{margin-left:auto}
+.stats>.card{margin-top:8px}
+@media(max-width:520px){.theme-btn{min-width:44px;padding-left:12px;padding-right:12px}.theme-word{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}}
