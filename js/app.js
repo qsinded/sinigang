@@ -56,7 +56,7 @@ const themeBtn = h('button', { class: 'btn alt theme-btn', onclick: () => {
 function syncTheme() { themeBtn.replaceChildren(...themeLabel()); }
 if (typeof matchMedia === 'function') { const mq = matchMedia('(prefers-color-scheme: dark)'); if (mq && mq.addEventListener) mq.addEventListener('change', syncTheme); }
 app.tabIndex = -1; // lets the skip link move focus into the page
-app.before(h('header', { class: 'site' }, h('a', { class: 'skip', href: '#app' }, 'Skip to content'), h('nav', { 'aria-label': 'Main' }, h('button', { class: 'btn alt', onclick: () => home() }, 'Home'), themeBtn), live));
+app.before(h('header', { class: 'site' }, h('a', { class: 'skip', href: '#app' }, 'Skip to content'), h('nav', { 'aria-label': 'Main' }, h('button', { class: 'btn alt menu-btn', 'aria-label': 'Menu', onclick: () => openMenu() }, '☰'), h('button', { class: 'btn alt home-btn', onclick: () => home() }, 'Home'), themeBtn), live));
 app.after(h('footer', { class: 'site' }, 'Works offline. Progress is saved on this device only. ',
   h('span', { class: 'keys' }, 'Keys: 1–4 pick an answer, Ctrl+Enter checks a list, ← → cards, Space flips or pauses, Esc stops the voice.')));
 // A new screen gets its own page title and focus on its heading, so screen readers hear the change. Redraws of the same screen keep focus alone.
@@ -65,21 +65,36 @@ const BRAND = 'SINEGENG';
 function pageTitle(h1) { return h1 && h1 !== BRAND ? h1 + ' · ' + BRAND : BRAND; }
 let lastScreen = '';
 // On-page replacement for confirm() and prompt(): phone viewers and webviews block those, so the button did nothing.
-function dialog(build) {
+function dialog(build, side = false) {
   return new Promise(resolve => {
-    const back = document.activeElement, veil = h('div', { class: 'veil' });
+    const back = document.activeElement, veil = h('div', { class: 'veil' + (side ? ' side' : '') });
     const close = v => { veil.remove(); if (back && back.focus) back.focus(); resolve(v); };
     const box = build(close);
     veil.append(box); document.body.append(veil);
+    if (side) veil.onclick = e => { if (e.target === veil) close(null); }; // tap beside the side menu closes it
     veil.onkeydown = e => {
       if (e.key === 'Escape') { e.preventDefault(); close(null); }
       if (e.key === 'Tab') { // keep keyboard focus inside the box
-        const f = [...box.querySelectorAll('input,button')], i = f.indexOf(document.activeElement);
+        const f = [...box.querySelectorAll('input,button,summary')], i = f.indexOf(document.activeElement);
         if (e.shiftKey ? i <= 0 : i === f.length - 1) { e.preventDefault(); f[e.shiftKey ? f.length - 1 : 0].focus(); }
       }
     };
     const first = box.querySelector('[data-first]'); if (first) first.focus();
   });
+}
+// Phones: ☰ opens a menu from the left with Home on top and, on a quiz, the reviewer's tools and stats.
+let menuExtra = null;
+function openMenu() {
+  return dialog(close => {
+    const box = h('div', { class: 'modal drawer', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Menu' },
+      h('div', { class: 'row drawer-top' },
+        h('button', { class: 'btn', 'data-first': '', onclick: () => { close(null); home(); } }, '⌂ Home'),
+        h('button', { class: 'btn alt', 'aria-label': 'Close menu', onclick: () => close(null) }, '✕')),
+      menuExtra);
+    // A tool closes the menu before it runs, so the student sees what it did (a new screen, a reshuffle).
+    box.addEventListener('click', e => { if (e.target.closest && e.target.closest('button')) close(null); }, true);
+    return box;
+  }, true);
 }
 function ask(message, ok = 'OK') {
   return dialog(close => h('div', { class: 'modal', role: 'alertdialog', 'aria-modal': 'true', 'aria-label': message },
@@ -94,6 +109,7 @@ function askText(message, value = '') {
   });
 }
 function draw(node, screen) {
+  menuExtra = null; // a quiz sets its tools again after drawing
   const y = scrollY, first = !lastScreen; app.replaceChildren(node); scrollTo(0, y);
   if (!screen || screen === lastScreen) return;
   lastScreen = screen;
@@ -2522,8 +2538,9 @@ function quiz() {
         // A button with nothing to do is noise ("Retry missed (0)"); it appears once there is something.
         !r.virtual && dueCount(r) > 0 && h('button', { class: 'btn alt', onclick: () => startFlash('due', optCap) }, 'Review due (' + dueCount(r) + ')'),
         missed.length > 0 && h('button', { class: 'btn', onclick: () => clear(missed) }, 'Retry missed (' + missed.length + ')')),
-      h('details', { class: 'more', open: running || moreOpen ? '' : null, ontoggle: e => { moreOpen = e.currentTarget.open; } }, h('summary', null,
-        h('span', null, h('b', null, 'More options'), h('span', { class: 'more-hint' }, r.virtual ? 'Recite, blurt, quiz bee, timed, print' : 'Exam date, recite, blurt, quiz bee, timed, shuffle'))),
+  ];
+  // Everything behind More options. A phone keeps it in the ☰ menu with Stats (openMenu), so answering stays clean.
+  const moreKids = [
       h('h3', { class: 'k opt-group' }, 'Practise'),
       h('div', { class: 'row' },
         h('button', { class: 'btn alt', onclick: openRecite }, '🎧 Recite'),
@@ -2566,8 +2583,11 @@ function quiz() {
               if (hide) r.opts.hideChoices = true; else delete r.opts.hideChoices;
               save(); quiz(); say(hide ? 'Options now stay hidden until you tap Show choices.' : 'Options show right away again.');
             } }, label);
-          }))))
+          })))
   ];
+  const phone = narrowQuiz();
+  if (!phone) tools.push(h('details', { class: 'more', open: running || moreOpen ? '' : null, ontoggle: e => { moreOpen = e.currentTarget.open; } }, h('summary', null,
+    h('span', null, h('b', null, 'More options'), h('span', { class: 'more-hint' }, r.virtual ? 'Recite, blurt, quiz bee, timed, print' : 'Exam date, recite, blurt, quiz bee, timed, shuffle'))), moreKids));
   const node = h('div', null,
     h('div', { class: 'row quiz-head' }, // title and layout toggle share a row; no Back: the header's Home goes back
       h('h1', null, r.title),
@@ -2604,9 +2624,10 @@ function quiz() {
     (done || over) && h('div', { class: 'card done', role: 'status' }, h('b', null, (over && !done ? 'Time is up. ' : '') + 'Part score: ' + scoreText(partGood) + ' of ' + mine.length + ' correct (' + Math.round(partGood / mine.length * 100) + '%)'),
       h('p', null, partGood === mine.length ? 'Perfect. Try another part or the flashcards.' : 'Use "Retry missed" to practice the ones you got wrong.')),
     r.virtual === 'exam' && examSummary(r, ts),
-    statsPanel(r));
+    !phone && statsPanel(r));
   flashing = false;
   draw(node, 'quiz');
+  if (phone) menuExtra = [...moreKids, statsPanel(r)];
   // The tab row scrolls sideways on a phone; bring the active tab into view without moving the page.
   const onTab = [...tabs.children].find(c => String(c.className).split(' ').includes('on'));
   if (onTab && tabs.scrollWidth > tabs.clientWidth) tabs.scrollLeft = tabScrollLeft(onTab.offsetLeft, onTab.offsetWidth, tabs.clientWidth);
@@ -2649,7 +2670,7 @@ document.addEventListener('keydown', e => {
 });
 if (typeof matchMedia === 'function') {
   const mq = matchMedia('(max-width: 520px)');
-  const resize = () => { if (!quizView && cur && lastScreen === 'quiz') quiz(); };
+  const resize = () => { if (cur && lastScreen === 'quiz') quiz(); };
   if (mq.addEventListener) mq.addEventListener('change', resize); else if (mq.addListener) mq.addListener(resize);
 }
 // A shared reviewer arrives in the link (#share=...); otherwise the app starts at home.

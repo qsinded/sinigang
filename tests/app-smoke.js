@@ -1303,7 +1303,7 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   assert.strictEqual(vm.runInContext('viewMode()', ctx), 'one', 'the phone test runs in the one-question view');
   const qText = screenText(appEl);
   assert.ok(qText.indexOf('controls what enters') < qText.indexOf('Review due'), 'the question comes before "Review due" on a phone');
-  assert.ok(qText.indexOf('controls what enters') < qText.indexOf('More options'), 'the question comes before "More options" on a phone');
+  assert.ok(!qText.includes('More options') && !qText.includes('Stats') && !qText.includes('Quiz Bee'), 'on a phone the extra tools and stats leave the quiz screen');
   const optTexts = find(appEl, e => e.tagName === 'BUTTON' && String(e.className).split(' ').includes('opt')).map(screenText);
   assert.ok(optTexts.length === 4 && optTexts.every(t => /^[A-D]\s*[A-Z]/.test(t.trim())), 'options start with a capital: ' + optTexts.join(' | '));
   vm.runInContext("tab = 'id'; quizIndex = 0;", ctx);
@@ -1316,7 +1316,20 @@ assert.match(screenText(appEl), /no speech voice/, 'a browser without speech is 
   ctx.quiz();
   const srcWrap = find(appEl, e => e.attrs && e.attrs.id === 'src-p1')[0];
   assert.ok(srcWrap && srcWrap.attrs.hidden === undefined, 'the notes panel is still open after a redraw');
+  // The phone menu (☰) slides in from the left: Home on top, then the reviewer's tools and stats.
+  const lastBox = () => document.body.children[document.body.children.length - 1];
+  ctx.open(phoneR); ctx.openMenu();
+  const menuText = screenText(lastBox());
+  assert.ok(menuText.includes('Home') && menuText.indexOf('Home') < menuText.indexOf('Recite'), 'Home is at the top of the menu, above the tools');
+  assert.ok(/Quiz Bee/.test(menuText) && /Exam date/.test(menuText) && /Think first/.test(menuText) && /Stats/.test(menuText), 'the menu holds every tool from More options plus Stats');
+  find(lastBox(), e => e.tagName === 'BUTTON' && screenText(e).includes('Home'))[0].onclick();
+  assert.strictEqual(vm.runInContext('lastScreen', ctx), 'home', 'Home in the menu goes home');
+  ctx.openMenu();
+  assert.ok(!/Recite/.test(screenText(lastBox())), 'away from a quiz the menu has only Home');
+  find(lastBox(), e => e.tagName === 'BUTTON' && e.attrs['aria-label'] === 'Close menu')[0].onclick();
   sandbox.matchMedia = wideMedia;
+  ctx.open(phoneR);
+  assert.match(screenText(appEl), /More options/, 'a laptop keeps More options on the quiz screen');
 
   // Filipino exam formats in the app: Matching type and Modified true or false get their own tabs, are graded, survive a
   // reload, and show up in flashcards and recitation.
